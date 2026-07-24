@@ -70,9 +70,9 @@ blind_sweep_warning() { # $1 = unreadable PRs, $2 = all open PRs, $3 = sampled r
   if [ "$2" -gt 0 ] && [ "$1" -eq "$2" ]; then
     local reason="${3:-}"
     if [ -n "$reason" ]; then
-      echo "::warning::labels: every open PR was unreadable; sampled reason: $reason — one candidate is missing checks: read and statuses: read in the caller (private repos do not imply them)"
+      echo "::warning::labels: every open PR was unreadable; sampled reason: $reason — one candidate is missing checks: read, statuses: read and actions: read in the caller (private repos do not imply them)"
     else
-      echo "::warning::labels: every open PR was unreadable; no reason was captured — one candidate is missing checks: read and statuses: read in the caller (private repos do not imply them)"
+      echo "::warning::labels: every open PR was unreadable; no reason was captured — one candidate is missing checks: read, statuses: read and actions: read in the caller (private repos do not imply them)"
     fi
   fi
 }

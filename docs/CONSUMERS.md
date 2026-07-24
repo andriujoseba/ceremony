@@ -314,6 +314,7 @@ permissions:
   contents: read
   checks: read          # mergeability/check-rollup read for PR state
   statuses: read        # commit-status rollup read for PR state
+  actions: read         # workflow-run nodes inside the check rollup — private repos do not imply it (incubator#60)
   issues: write
   pull-requests: write
 jobs:
@@ -323,7 +324,7 @@ jobs:
 
 Naming any permission sets every unnamed permission to `none`. Public
 repositories allow check data to be read regardless, but a private consumer
-needs both explicit reads above; without them the failure appears as an empty
+needs all three explicit reads above; without them the failure appears as an empty
 `state:*` axis on the board rather than a red workflow run.
 
 The `issues:` trigger is available at `0.2.0` and later — `0.2.0` is the

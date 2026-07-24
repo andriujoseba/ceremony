@@ -41,7 +41,7 @@ reviews() { jq -s '.' <<<"$*"; } # collect review objects into an array
 # -- a sweep-wide read failure is visible without changing any PR ------------
 warning="$(blind_sweep_warning 3 3 "HTTP 403: Resource not accessible by integration")"
 expect "a wholly blind sweep warns, leading with the observed reason" \
-  "::warning::labels: every open PR was unreadable; sampled reason: HTTP 403: Resource not accessible by integration — one candidate is missing checks: read and statuses: read in the caller (private repos do not imply them)" \
+  "::warning::labels: every open PR was unreadable; sampled reason: HTTP 403: Resource not accessible by integration — one candidate is missing checks: read, statuses: read and actions: read in the caller (private repos do not imply them)" \
   "$warning"
 expect "the blind warning names checks: read" named \
   "$(grep -qF "checks: read" <<<"$warning" && echo named || echo missing)"
