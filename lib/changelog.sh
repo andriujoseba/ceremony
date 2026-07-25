@@ -199,9 +199,31 @@ changelog_fragment_problem() {
 # definition shared by the PR-time guard and the release-time assembler:
 # fragments may not mix grouped headings with ungrouped bullets, and a
 # non-empty set must match the newest published section when one exists.
+#
+# The anchor is declarable (#182): an optional sentinel '<dir>/shape',
+# holding exactly 'flat' or 'grouped' on one line, pins the set's shape and
+# outranks the newest-published-section inference — the door a deliberate
+# flip walks through, while undeclared drift stays red (#159). Absent, the
+# inference binds unchanged. Any other content — empty, trailing junk, an
+# unknown word — is a diagnosis naming the file, never a silent fallback.
+# The sentinel lives in the fragments dir so it binds in both callers: the
+# assembler calls with changelog="" and still sees it. It is not a fragment
+# — changelog_fragments matches *.md only, so 'shape' never enters the list.
 changelog_shape_problem() {
   local changelog="$1" dir="$2"
   local fragments f grouped_in="" ungrouped_in="" published="" published_body=""
+  local sentinel="$dir/shape" declared=""
+
+  if [ -f "$sentinel" ]; then
+    declared="$(cat "$sentinel")"
+    case "$declared" in
+      flat | grouped) ;;
+      *)
+        printf "'%s' declares neither shape — its whole content must be 'flat' or 'grouped', one line\n" "$sentinel"
+        return 1
+        ;;
+    esac
+  fi
 
   fragments="$(changelog_fragments "$dir")"
   [ -n "$fragments" ] || return 0
@@ -225,6 +247,20 @@ changelog_shape_problem() {
       printf "fragment '%s' is grouped but fragment '%s' is not — a repo is one shape or the other\n" "$grouped_in" "$ungrouped_in"
     fi
     return 1
+  fi
+
+  if [ -n "$declared" ]; then
+    if [ "$declared" = "grouped" ] && [ -n "$ungrouped_in" ]; then
+      printf "fragment '%s' is flat but '%s' declares grouped — a repo is one shape or the other\n" \
+        "$ungrouped_in" "$sentinel"
+      return 1
+    fi
+    if [ "$declared" = "flat" ] && [ -n "$grouped_in" ]; then
+      printf "fragment '%s' is grouped but '%s' declares flat — a repo is one shape or the other\n" \
+        "$grouped_in" "$sentinel"
+      return 1
+    fi
+    return 0
   fi
 
   if [ -f "$changelog" ]; then
