@@ -472,6 +472,7 @@ release|0E8A16|Release flow and version/packaging work
 needs-triage|FBCA04|Did not come through triage — owes normalization or conversion to a discussion
 ready|0E8A16|Triaged, spec complete, unblocked — a builder can start now and succeed
 claimed|1D76DB|A builder owns it: assignee set, draft PR expected shortly
+post-merge|006B75|Refs-linked PR merged; post-merge criteria remain and triage owns completion
 epic|5319E7|Organizes other issues via a dependency-ordered task list — builders never pick it
 EOF
 }

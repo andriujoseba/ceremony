@@ -43,6 +43,10 @@ check "one ready queue label is valid" 0 "KEEP" queue_decision <<<"ready"
 check "zero queue labels is derivably needs-triage" 0 "ADD_NEEDS_TRIAGE" queue_decision <<<"enhancement"
 check "multiple queue labels are ambiguous" 0 "FLAG_CONFLICT" queue_decision <<< $'ready\nblocked'
 check "needs-triage plus queue is a conflict" 0 "FLAG_CONFLICT" queue_decision <<< $'needs-triage\nready'
+check "claimed plus post-merge is a conflict" 0 "FLAG_CONFLICT" \
+  queue_decision <<< $'claimed\npost-merge'
+check "post-merge plus needs-ruling is healthy" 0 "KEEP" \
+  queue_decision <<< $'post-merge\nneeds-ruling'
 
 # Invariant 2: claims have an owner and either a PR or recent activity.
 check "claim with open PR stays claimed" 0 "KEEP" claim_decision 1 true 999999
@@ -78,6 +82,20 @@ check "attention does not exempt a claimed issue" 0 "SWEEP" \
   claim_clock_exempt <<<"attention"
 check "ready does not exempt a claimed issue" 0 "SWEEP" claim_clock_exempt <<<"ready"
 check "empty labels do not exempt a claimed issue" 0 "SWEEP" claim_clock_exempt </dev/null
+refs_body=$'Refs #12\nAlso refs: #8 and heavy-duty/rig#4.\nCloses #99\nNot refs-ish #7\nfix refs parsing from #200\nCloses #40; refs: none\nRefs #175 (split from #150)'
+check "Refs parser returns only references owned by a valid Refs marker" 0 "" \
+  test "$(refs_references <<<"$refs_body")" = $'8\n12\n175'
+check "unchecked criteria preserve their source lines verbatim" 0 \
+  $'- [ ] first criterion\n  * [ ] indented criterion\n1. [ ] numbered criterion' \
+  unchecked_criteria <<< $'- [x] done\n- [ ] first criterion\r\n  * [ ] indented criterion\n1. [ ] numbered criterion'
+check "merged Refs with unchecked criteria transitions" 0 "TRANSITION" \
+  post_merge_decision 12 false false <<<"- [ ] verify after merge"
+check "open Refs does not transition" 0 "KEEP" \
+  post_merge_decision 12 true false <<<"- [ ] verify after merge"
+check "a handled merged Refs episode does not transition again" 0 "KEEP" \
+  post_merge_decision 12 false true <<<"- [ ] verify after merge"
+check "merged Refs with all criteria checked does not transition" 0 "KEEP" \
+  post_merge_decision 12 false false </dev/null
 check "one closed offsite PR nudges" 0 "NUDGE" offsite_resolved_decision <<<"CLOSED"
 check "two closed offsite PRs nudge" 0 "NUDGE" offsite_resolved_decision <<< $'CLOSED\nCLOSED'
 check "one open offsite PR keeps quiet" 0 "QUIET" offsite_resolved_decision <<< $'CLOSED\nOPEN'
@@ -234,16 +252,22 @@ issue_stub_gh() {
   fi
 }
 
-issue_probe() { # $1 issue, $2 labels, $3 assignees (default 1), $4 open PR
+issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged PR, $6 body
   (
-    local assignees="${3:-1}" open_pr="${4:-false}" assignee_json='[]'
+    local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_pr="${5:-}"
+    local body="${6:-}" assignee_json='[]'
     [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
     REPO=owner/repo NOW="$INOW"
     ISSUE_LABELS="$2"
     ISSUE_JSON="$(jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
-      --argjson assignees "$assignee_json" \
-      '{created_at: $at, assignees: $assignees, body: ""}')"
+      --argjson assignees "$assignee_json" --arg body "$body" \
+      '{created_at: $at, assignees: $assignees, body: $body}')"
     if [ "$open_pr" = true ]; then OPEN_PR_ISSUES="$1"; else OPEN_PR_ISSUES=""; fi
+    if [ -n "$merged_ref_pr" ]; then
+      MERGED_REF_PR_RECORDS="$(printf '%s\t%s\n' "$1" "$merged_ref_pr")"
+    else
+      MERGED_REF_PR_RECORDS=""
+    fi
     run() { "$@"; }
     gh() { issue_stub_gh "$@"; }
     reconcile_issue "$1" 2>&1
@@ -290,6 +314,108 @@ printf '[]\n' >"$(cfix 22)"
 control="$(issue_probe 22 claimed)"
 check "the flag-free control is reclaimed (the clock still runs elsewhere)" 0 "" \
   grep -q 'stale claim reclaimed -> ready' <<<"$control"
+
+# -- merged Refs work releases the claim before the reclaim clock ------------
+printf '[]\n' >"$(cfix 35)"
+transition="$(issue_probe 35 claimed 1 false 350 $'- [x] built\n- [ ] verify dispatch\n  * [ ] confirm warning clears')"
+check "merged Refs + unchecked criteria transitions in the sweep body" 0 "" \
+  grep -q 'merged Refs PR -> post-merge; claim released' <<<"$transition"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...names every remaining criterion verbatim in the comment" 0 "" \
+  bash -c 'grep -qF -- "- [ ] verify dispatch" "$1" &&
+    grep -qF -- "  * [ ] confirm warning clears" "$1"' _ "$TMP/posted-35"
+check "...states triage owes completion with owner and wake condition" 0 "" \
+  grep -qF 'Triage owes completion in a follow-up comment that names the owner and wake condition.' \
+  "$TMP/posted-35"
+check "...unassigns and swaps claimed to post-merge" 0 "" \
+  grep -qF -- '--remove-assignee owner-bot --remove-label claimed --add-label post-merge' \
+  "$TMP/issue-edits"
+
+printf '[]\n' >"$(cfix 36)"
+post_merge_quiet="$(issue_probe 36 post-merge 0)"
+check "quiet unassigned post-merge work is not reclaimed" 1 "" \
+  grep -q 'reclaimed' <<<"$post_merge_quiet"
+check "...and causes no comment or edit" 1 "" test -f "$TMP/posted-36"
+
+printf '[]\n' >"$(cfix 37)"
+issue_probe 37 post-merge 1 >/dev/null
+check "assigned post-merge is flagged" 0 "" \
+  grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-37"
+check "...and the hand-assignment is not repaired" 1 "" \
+  grep -qF -- 'issue edit 37' "$TMP/issue-edits"
+
+# -- non-triggers stay byte-for-byte outside the transition ------------------
+recent_timeline() {
+  jq -n --arg at "$(iso_at $((INOW - 60)))" \
+    '[{"event":"assigned","created_at":$at}]' >"$(tfix "$1")"
+  printf '[]\n' >"$(cfix "$1")"
+}
+edit_count_before="$(wc -l <"$TMP/issue-edits")"
+recent_timeline 38
+open_refs="$(issue_probe 38 claimed 1 true 380 '- [ ] verify after merge')"
+check "open Refs PR leaves the issue exactly as found" 0 "" \
+  test -z "$open_refs"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...with no edit or comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-38"
+
+recent_timeline 39
+merged_closes="$(issue_probe 39 claimed 1 false "" '- [ ] verify after merge')"
+check "merged Closes PR leaves a recent claim exactly as found" 0 "" \
+  test -z "$merged_closes"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...with no edit or comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-39"
+
+recent_timeline 40
+all_checked="$(issue_probe 40 claimed 1 false 400 '- [x] verified after merge')"
+check "merged Refs with zero unchecked boxes leaves the issue exactly as found" 0 "" \
+  test -z "$all_checked"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...with no edit or comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-40"
+
+printf '[]\n' >"$(cfix 41)"
+attention_transition="$(issue_probe 41 $'claimed\nattention' 1 false 410 '- [ ] verify')"
+check "derived post-merge transition clears attention with the released claim" 0 "" \
+  grep -qF -- '--remove-label claimed,attention --add-label post-merge' "$TMP/issue-edits"
+check "...still completes the transition" 0 "" \
+  grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$attention_transition"
+
+recent_timeline 43
+jq -n --arg b '<!-- issueflow:post-merge-transition-pr-430 -->' \
+  --arg at "$(iso_at $((INOW - 60)))" \
+  '[{"body":$b,"created_at":$at}]' >"$(cfix 43)"
+reentry_edit_count="$(wc -l <"$TMP/issue-edits")"
+historical="$(issue_probe 43 claimed 1 false 430 '- [ ] corrective verification')"
+check "a handled historical Refs merge cannot steal a re-entered claim" 0 "" \
+  test -z "$historical"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and re-entry produces no edit or duplicate transition comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$reentry_edit_count" "$TMP/issue-edits" "$TMP/posted-43"
+
+printf '[]\n' >"$(cfix 44)"
+second_transition="$(issue_probe 44 claimed 1 false 441 '- [ ] second verification')"
+check "a later merged Refs PR gets an episode-specific transition comment" 0 "" \
+  grep -qF '<!-- issueflow:post-merge-transition-pr-441 -->' "$TMP/posted-44"
+check "...and the later episode still transitions" 0 "" \
+  grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$second_transition"
+
+printf '[]\n' >"$(cfix 45)"
+issue_probe 45 $'claimed\npost-merge' >/dev/null
+# shellcheck disable=SC2016 # Markdown backticks are literal evidence
+check "queue-conflict evidence lists every category including post-merge" 0 "" \
+  grep -qF 'needs-triage`, `epic`, `ready`, `claimed`, `blocked`, or `post-merge`' \
+  "$TMP/posted-45"
+
+printf '[]\n' >"$(cfix 42)"
+issue_probe 42 $'post-merge\nattention' 0 >/dev/null
+check "hand-created post-merge plus attention is flagged, not rewritten" 0 "" \
+  grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-42"
 
 # -- offsite stops only the reclaim clock ------------------------------------
 offsite="$(issue_probe 25 $'claimed\noffsite')"
@@ -474,6 +600,33 @@ check "a PR arrival exits 0" 0 "" test "$pr_rc" -eq 0
 check "...stands down without minting" 1 "" test -s "$ARRIVAL/fixtures/edits"
 check "...and the sweep still runs" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$pr_out"
+
+# The merged-Refs transition must survive the executable's set -e path too.
+# Keep this at main() granularity: the GraphQL gather and loop are the code
+# a sourced decision probe cannot exercise (#91's lesson).
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql.json"
+printf '[{"number":40}]\n' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
+jq -n --arg at "$(iso_at "$INOW")" \
+  '{number:40,user:{login:"triage-one"},created_at:$at,body:"- [x] built\n- [ ] verify live label",labels:[{name:"claimed"}],assignees:[{login:"builder"}]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_40.json"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_40_comments.json"
+: >"$ARRIVAL/fixtures/edits"
+subprocess_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+subprocess_rc=$?
+check "executable sweep transitions merged Refs work" 0 "" \
+  test "$subprocess_rc" -eq 0
+check "...reaches the transition through GraphQL and the issue loop" 0 "" \
+  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$subprocess_out"
+check "...and performs the release edit from the executable path" 0 "" \
+  grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
+  "$ARRIVAL/fixtures/edits"
 
 # D2 preserved: only the deliberate stand-downs changed; a genuine failure on
 # the arrival path still kills the run loudly.

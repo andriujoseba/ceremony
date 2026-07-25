@@ -52,13 +52,31 @@ strips it on sight).
 | `ready` | `#0E8A16` | triaged, spec complete, unblocked — a builder can start now and succeed | triage |
 | `claimed` | `#1D76DB` | a builder owns it: assignee set, a draft PR expected shortly | the claiming builder |
 | `blocked` | `#6A737D` | waiting on another issue or PR (`Blocked by #N` in the body names it) | triage; anyone may correct it |
+| `post-merge` | `#006B75` | the Refs-linked PR merged; post-merge acceptance criteria remain; the claim is released — nothing here is buildable and nobody owes a draft | the sweep or triage |
 | `epic` | `#5319E7` | organizes other issues via a dependency-ordered task list; **builders never pick an epic** | triage |
 
 The work-queue sweep enforces the invariant a board scan relies on: every open issue is either
 `needs-triage`, `epic`, or carries exactly one of `ready` / `claimed` /
-`blocked`. It flags conflicts rather than guessing intent. A `claimed` issue
+`blocked` / `post-merge`. It flags conflicts rather than guessing intent. A `claimed` issue
 with no open PR and no activity for 48 hours is reclaimed by the sweep: it
 comments, unassigns the stale owner, and restores `ready`.
+
+When a merged PR references a `claimed` issue with `Refs #N` and unchecked
+criteria remain, the sweep moves the issue to `post-merge`, clears the
+assignee, and comments with the remaining criteria verbatim. The comment says
+that the claim is released and that triage owes a follow-up naming the owner
+and wake condition for completion. Triage writes that full transition comment
+in the same tick when it or the operator makes the move by hand. The sweep
+never reclaims `post-merge`: weeks of quiet can be the state working.
+
+`post-merge` never composes with `blocked`; the transition comment carries the
+wait. It never composes with `attention`, because releasing the claim clears
+the assignee and leaves nobody parked-for. An assigned `post-merge` issue is
+flagged rather than repaired: a hand-assignment is intent. `needs-ruling`
+still composes. When the remainder becomes buildable, triage moves
+`post-merge` to `ready` or mints a fresh `ready` issue. Any builder may claim
+that work from current `main`; the original builder has no special standing,
+and re-entry does not set `attention`.
 
 ## Cross-cutting (PRs and issues)
 
@@ -155,7 +173,12 @@ unanswered `attention` is exactly the silence the 48-hour reclaim should
 take. It is hand-set doctrine only: nothing in `actions/` sets, clears,
 reads, or validates it, and no reconciler enforces the assignee requirement.
 An `attention` issue without an assignee is therefore a board bug, not a
-demand; anyone may assign it or remove the flag.
+demand; anyone may assign it or remove the flag. It never composes with
+`post-merge`, whose released claim has no assignee to answer the demand. The
+one machine-clear exception is the derived `claimed` → `post-merge`
+transition: releasing the assignee clears a carried `attention` in the same
+edit. A hand-created `post-merge` + `attention` composition is flagged, not
+rewritten.
 
 The three signals are mutually distinct: `attention` means an assignee owes
 a move; `needs-ruling` means a human owes a decision under

@@ -77,6 +77,9 @@ expect "a 300-char reason passes through whole" 300 "${#exact_reason}"
 # -- a missing core taxonomy row is visible without mutating labels ----------
 core_rows="$(core_label_rows)"
 core_names="$(cut -d'|' -f1 <<<"$core_rows")"
+expect "post-merge core row is byte-exact" \
+  "post-merge|006B75|Refs-linked PR merged; post-merge criteria remain and triage owns completion" \
+  "$(grep '^post-merge|' <<<"$core_rows")"
 expect "a complete core taxonomy does not warn" "" \
   "$(missing_core_labels_warning "$core_rows" "$core_names")"
 expect "one missing core label is named exactly" \

@@ -21,7 +21,7 @@ ISSUEFLOW_STALE_HOURS="${ISSUEFLOW_STALE_HOURS:-48}"
 }
 NOW="$ISSUEFLOW_NOW"
 STALE_AFTER=$((ISSUEFLOW_STALE_HOURS * 3600))
-QUEUE_LABELS=(ready claimed blocked)
+QUEUE_LABELS=(ready claimed blocked post-merge)
 TRIAGE_ACTORS=()
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
@@ -122,6 +122,50 @@ claim_reclaim_marker() { # $1 = last activity epoch
   printf 'claim-reclaimed-%s\n' "$1"
 }
 
+refs_references() { # PR body on stdin -> local issue numbers named by Refs
+  awk '
+    {
+      line = $0
+      lower = tolower(line)
+      if (match(lower, /(^|[^[:alnum:]_-])refs[[:space:]:]+/)) {
+        line = substr(line, RSTART + RLENGTH)
+        if (line ~ /^(#|([[:alnum:]_.-]+\/)?[[:alnum:]_.-]+#)[0-9]+/) {
+          sub(/[.(;].*/, "", line)
+          print line
+        }
+      }
+    }
+  ' | issue_references \
+    | awk -F '\t' '$1 == "LOCAL" { print $2 }' | sort -nu
+}
+
+unchecked_criteria() { # issue body on stdin -> unchecked task-list lines verbatim
+  awk '
+    /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+\[[[:space:]]\]/ {
+      sub(/\r$/, "")
+      print
+    }
+  '
+}
+
+post_merge_decision() { # $1 merged Refs PR, $2 linked open PR, $3 already handled
+  local merged="$1" open_pr="$2" handled="$3" unchecked
+  unchecked="$(cat)"
+  if [ -n "$merged" ] && [ "$open_pr" = false ] && [ "$handled" = false ] \
+      && [ -n "$unchecked" ]; then echo TRANSITION
+  else echo KEEP
+  fi
+}
+
+post_merge_pr_for_issue() { # $1 issue; records are ISSUE<TAB>PR
+  awk -F '\t' -v issue="$1" '$1 == issue { print $2 }' \
+    <<<"${MERGED_REF_PR_RECORDS:-}" | sort -n | tail -n1
+}
+
+post_merge_transition_marker() { # $1 merged PR number
+  printf 'post-merge-transition-pr-%s\n' "$1"
+}
+
 issue_references() { # text on stdin -> LOCAL/CROSS<TAB>reference
   # A qualified reference belongs to another repository. Classify the whole
   # token before extracting numbers so rig#112 can never become local #112.
@@ -216,10 +260,14 @@ offsite_resolved_decision() { # PR states on stdin -> NUDGE | QUIET
 # API edge. Marker comments make warnings and nudges idempotent across sweeps.
 ensure_comment() { # $1 issue, $2 marker, $3 message
   local n="$1" marker="$2" message="$3"
-  if gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].body' \
-      | grep -qF "<!-- issueflow:$marker -->"; then return; fi
+  if issue_comment_has_marker "$n" "$marker"; then return; fi
   run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 $message" >/dev/null
+}
+
+issue_comment_has_marker() { # $1 issue, $2 marker
+  gh api --paginate "repos/$REPO/issues/$1/comments" --jq '.[].body' \
+    | grep -qF "<!-- issueflow:$2 -->"
 }
 
 reference_states() {
@@ -262,6 +310,8 @@ last_issue_activity() {
 
 reconcile_issue() {
   local n="$1" decision refs cross_refs states age assignees open_pr=false label owners
+  local merged_ref_pr="" transition_marker="" transition_handled=false
+  local unchecked="" remove_claimed=claimed
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
   case "$decision" in
     ADD_NEEDS_TRIAGE)
@@ -269,7 +319,7 @@ reconcile_issue() {
       log "#$n: needs-triage (no queue state)" ;;
     FLAG_CONFLICT)
       ensure_comment "$n" queue-conflict \
-        'The issue-flow sweep found conflicting queue labels. It cannot infer intent safely; triage must leave exactly one of `needs-triage`, `epic`, `ready`, `claimed`, or `blocked`.'
+        'The issue-flow sweep found conflicting queue labels. It cannot infer intent safely; triage must leave exactly one of `needs-triage`, `epic`, `ready`, `claimed`, `blocked`, or `post-merge`.'
       log "#$n: conflicting queue labels; flagged"
       return ;;
   esac
@@ -277,45 +327,82 @@ reconcile_issue() {
   if has_issue_label claimed; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
     grep -qxF "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
-    age="$(last_issue_activity "$n" "$(jq -r '.created_at' <<<"$ISSUE_JSON")")"
-    if [ "$(claim_clock_exempt <<<"$ISSUE_LABELS")" = EXEMPT ]; then
-      # Legitimately quiet work does not run the reclaim clock. Only the
-      # clock stops: an unassigned claim is still a repair the decision must
-      # see, so it runs on a zero age rather than being skipped.
-      decision="$(claim_decision "$assignees" "$open_pr" 0)"
-    else
-      decision="$(claim_decision_at "$assignees" "$open_pr" "$age")"
+    merged_ref_pr="$(post_merge_pr_for_issue "$n")"
+    if [ -n "$merged_ref_pr" ]; then
+      transition_marker="$(post_merge_transition_marker "$merged_ref_pr")"
+      issue_comment_has_marker "$n" "$transition_marker" \
+        && transition_handled=true
     fi
-    case "$decision" in
-      FLAG_UNASSIGNED)
-        ensure_comment "$n" claimed-unassigned \
-          'This issue is `claimed` but has no assignee. The sweep cannot infer an owner; triage must repair the claim.' ;;
-      RECLAIM)
-        # The last-activity epoch identifies a claim episode. A fixed marker
-        # hid the required comment when the same issue was later claimed and
-        # reclaimed again.
-        ensure_comment "$n" "$(claim_reclaim_marker "$age")" \
-          'This claim has no linked open PR and no activity for 48 hours. The sweep is reclaiming it for the ready queue.'
-        owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
-        if [ -n "$owners" ]; then
-          run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
-            --remove-label claimed --add-label ready >/dev/null
-        else
-          run gh issue edit "$n" -R "$REPO" --remove-label claimed --add-label ready >/dev/null
-        fi
-        log "#$n: stale claim reclaimed -> ready" ;;
-    esac
-    if has_issue_label offsite; then
-      local timeline
-      if timeline="$(offsite_timeline "$n")"; then
-        refs="$(offsite_cross_referenced_prs <<<"$timeline")"
-        states="$(offsite_pr_states <<<"$refs")"
-        if [ "$(offsite_resolved_decision <<<"$states")" = NUDGE ]; then
-          ensure_comment "$n" offsite-resolved \
-            "$(tr '\n' ' ' <<<"$refs" | sed 's/[[:space:]]*$//') is closed; this issue's \`offsite\` flag is still up. Clear it and close the issue, or say what is still outstanding. @$(jq -r '.assignees[0].login' <<<"$ISSUE_JSON")"
-          log "#$n: resolved offsite PRs nudged"
+    unchecked="$(unchecked_criteria <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
+    if [ "$(post_merge_decision "$merged_ref_pr" "$open_pr" "$transition_handled" \
+        <<<"$unchecked")" = TRANSITION ]; then
+      ensure_comment "$n" "$transition_marker" \
+        "The Refs-linked PR merged with these acceptance criteria still unchecked:
+
+$unchecked
+
+The merge releases the claim; no builder owes a draft. Triage owes completion in a follow-up comment that names the owner and wake condition."
+      owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
+      # `attention` is a demand for the assigned builder. The derived
+      # transition releases that builder, so carrying the demand forward
+      # would create an impossible parked-for state (#175 D4).
+      has_issue_label attention && remove_claimed=claimed,attention
+      if [ -n "$owners" ]; then
+        run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
+          --remove-label "$remove_claimed" --add-label post-merge >/dev/null
+      else
+        run gh issue edit "$n" -R "$REPO" \
+          --remove-label "$remove_claimed" --add-label post-merge >/dev/null
+      fi
+      log "#$n: merged Refs PR -> post-merge; claim released"
+    else
+      age="$(last_issue_activity "$n" "$(jq -r '.created_at' <<<"$ISSUE_JSON")")"
+      if [ "$(claim_clock_exempt <<<"$ISSUE_LABELS")" = EXEMPT ]; then
+        # Legitimately quiet work does not run the reclaim clock. Only the
+        # clock stops: an unassigned claim is still a repair the decision must
+        # see, so it runs on a zero age rather than being skipped.
+        decision="$(claim_decision "$assignees" "$open_pr" 0)"
+      else
+        decision="$(claim_decision_at "$assignees" "$open_pr" "$age")"
+      fi
+      case "$decision" in
+        FLAG_UNASSIGNED)
+          ensure_comment "$n" claimed-unassigned \
+            'This issue is `claimed` but has no assignee. The sweep cannot infer an owner; triage must repair the claim.' ;;
+        RECLAIM)
+          # The last-activity epoch identifies a claim episode. A fixed marker
+          # hid the required comment when the same issue was later claimed and
+          # reclaimed again.
+          ensure_comment "$n" "$(claim_reclaim_marker "$age")" \
+            'This claim has no linked open PR and no activity for 48 hours. The sweep is reclaiming it for the ready queue.'
+          owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
+          if [ -n "$owners" ]; then
+            run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
+              --remove-label claimed --add-label ready >/dev/null
+          else
+            run gh issue edit "$n" -R "$REPO" --remove-label claimed --add-label ready >/dev/null
+          fi
+          log "#$n: stale claim reclaimed -> ready" ;;
+      esac
+      if has_issue_label offsite; then
+        local timeline
+        if timeline="$(offsite_timeline "$n")"; then
+          refs="$(offsite_cross_referenced_prs <<<"$timeline")"
+          states="$(offsite_pr_states <<<"$refs")"
+          if [ "$(offsite_resolved_decision <<<"$states")" = NUDGE ]; then
+            ensure_comment "$n" offsite-resolved \
+              "$(tr '\n' ' ' <<<"$refs" | sed 's/[[:space:]]*$//') is closed; this issue's \`offsite\` flag is still up. Clear it and close the issue, or say what is still outstanding. @$(jq -r '.assignees[0].login' <<<"$ISSUE_JSON")"
+            log "#$n: resolved offsite PRs nudged"
+          fi
         fi
       fi
+    fi
+  elif has_issue_label post-merge; then
+    assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
+    if [ "$assignees" -gt 0 ] || has_issue_label attention; then
+      ensure_comment "$n" post-merge-assigned \
+        'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
+      log "#$n: assigned or attention-bearing post-merge issue flagged"
     fi
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
@@ -406,6 +493,22 @@ main() {
       }
     }' --jq '.data.repository.pullRequests.nodes[].closingIssuesReferences.nodes[].number' \
     | sort -nu)"
+  MERGED_REF_PR_RECORDS="$(gh api graphql --paginate -f owner="$owner" -f name="$name" -f query='
+    query($owner: String!, $name: String!, $endCursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequests(first: 100, states: MERGED, after: $endCursor) {
+          nodes { number body }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }' --jq '.data.repository.pullRequests.nodes[]
+      | .number as $pr | .body | split("\n")[]
+      | [$pr, .] | @tsv' \
+    | while IFS=$'\t' read -r pr body; do
+        while IFS= read -r issue; do
+          [ -n "$issue" ] && printf '%s\t%s\n' "$issue" "$pr"
+        done < <(refs_references <<<"$body")
+      done)"
 
   local n
   for n in $(gh api --paginate "repos/$REPO/issues?state=open&per_page=100" \
