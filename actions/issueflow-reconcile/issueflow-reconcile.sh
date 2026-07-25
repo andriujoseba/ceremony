@@ -281,7 +281,7 @@ last_issue_activity() {
 
 reconcile_issue() {
   local n="$1" decision refs cross_refs states age assignees open_pr=false label owners
-  local merged_ref=false unchecked=""
+  local merged_ref=false unchecked="" remove_claimed=claimed
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
   case "$decision" in
     ADD_NEEDS_TRIAGE)
@@ -307,12 +307,16 @@ $unchecked
 
 The merge releases the claim; no builder owes a draft. Triage owes completion in a follow-up comment that names the owner and wake condition."
       owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
+      # `attention` is a demand for the assigned builder. The derived
+      # transition releases that builder, so carrying the demand forward
+      # would create an impossible parked-for state (#175 D4).
+      has_issue_label attention && remove_claimed=claimed,attention
       if [ -n "$owners" ]; then
         run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
-          --remove-label claimed --add-label post-merge >/dev/null
+          --remove-label "$remove_claimed" --add-label post-merge >/dev/null
       else
         run gh issue edit "$n" -R "$REPO" \
-          --remove-label claimed --add-label post-merge >/dev/null
+          --remove-label "$remove_claimed" --add-label post-merge >/dev/null
       fi
       log "#$n: merged Refs PR -> post-merge; claim released"
     else
@@ -359,10 +363,10 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     fi
   elif has_issue_label post-merge; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
-    if [ "$assignees" -gt 0 ]; then
+    if [ "$assignees" -gt 0 ] || has_issue_label attention; then
       ensure_comment "$n" post-merge-assigned \
-        'This `post-merge` issue has an assignee. The sweep will not undo a hand-assignment; triage must either clear it or move the issue back into buildable queue state.'
-      log "#$n: assigned post-merge issue flagged"
+        'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
+      log "#$n: assigned or attention-bearing post-merge issue flagged"
     fi
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"

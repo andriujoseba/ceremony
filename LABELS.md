@@ -174,7 +174,11 @@ take. It is hand-set doctrine only: nothing in `actions/` sets, clears,
 reads, or validates it, and no reconciler enforces the assignee requirement.
 An `attention` issue without an assignee is therefore a board bug, not a
 demand; anyone may assign it or remove the flag. It never composes with
-`post-merge`, whose released claim has no assignee to answer the demand.
+`post-merge`, whose released claim has no assignee to answer the demand. The
+one machine-clear exception is the derived `claimed` → `post-merge`
+transition: releasing the assignee clears a carried `attention` in the same
+edit. A hand-created `post-merge` + `attention` composition is flagged, not
+rewritten.
 
 The three signals are mutually distinct: `attention` means an assignee owes
 a move; `needs-ruling` means a human owes a decision under

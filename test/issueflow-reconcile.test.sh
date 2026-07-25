@@ -314,6 +314,7 @@ printf '[]\n' >"$(cfix 35)"
 transition="$(issue_probe 35 claimed 1 false true $'- [x] built\n- [ ] verify dispatch\n  * [ ] confirm warning clears')"
 check "merged Refs + unchecked criteria transitions in the sweep body" 0 "" \
   grep -q 'merged Refs PR -> post-merge; claim released' <<<"$transition"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
 check "...names every remaining criterion verbatim in the comment" 0 "" \
   bash -c 'grep -qF -- "- [ ] verify dispatch" "$1" &&
     grep -qF -- "  * [ ] confirm warning clears" "$1"' _ "$TMP/posted-35"
@@ -336,6 +337,52 @@ check "assigned post-merge is flagged" 0 "" \
   grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-37"
 check "...and the hand-assignment is not repaired" 1 "" \
   grep -qF -- 'issue edit 37' "$TMP/issue-edits"
+
+# -- non-triggers stay byte-for-byte outside the transition ------------------
+recent_timeline() {
+  jq -n --arg at "$(iso_at $((INOW - 60)))" \
+    '[{"event":"assigned","created_at":$at}]' >"$(tfix "$1")"
+  printf '[]\n' >"$(cfix "$1")"
+}
+edit_count_before="$(wc -l <"$TMP/issue-edits")"
+recent_timeline 38
+open_refs="$(issue_probe 38 claimed 1 true false '- [ ] verify after merge')"
+check "open Refs PR leaves the issue exactly as found" 0 "" \
+  test -z "$open_refs"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...with no edit or comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-38"
+
+recent_timeline 39
+merged_closes="$(issue_probe 39 claimed 1 false false '- [ ] verify after merge')"
+check "merged Closes PR leaves a recent claim exactly as found" 0 "" \
+  test -z "$merged_closes"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...with no edit or comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-39"
+
+recent_timeline 40
+all_checked="$(issue_probe 40 claimed 1 false true '- [x] verified after merge')"
+check "merged Refs with zero unchecked boxes leaves the issue exactly as found" 0 "" \
+  test -z "$all_checked"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...with no edit or comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-40"
+
+printf '[]\n' >"$(cfix 41)"
+attention_transition="$(issue_probe 41 $'claimed\nattention' 1 false true '- [ ] verify')"
+check "derived post-merge transition clears attention with the released claim" 0 "" \
+  grep -qF -- '--remove-label claimed,attention --add-label post-merge' "$TMP/issue-edits"
+check "...still completes the transition" 0 "" \
+  grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$attention_transition"
+
+printf '[]\n' >"$(cfix 42)"
+issue_probe 42 $'post-merge\nattention' 0 >/dev/null
+check "hand-created post-merge plus attention is flagged, not rewritten" 0 "" \
+  grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-42"
 
 # -- offsite stops only the reclaim clock ------------------------------------
 offsite="$(issue_probe 25 $'claimed\noffsite')"
