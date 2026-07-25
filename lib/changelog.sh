@@ -215,6 +215,13 @@ changelog_shape_problem() {
   local sentinel="$dir/shape" declared=""
 
   if [ -f "$sentinel" ]; then
+    # The one-line contract is checked on the file itself: command
+    # substitution strips every trailing newline, so the captured word
+    # cannot tell 'grouped' from 'grouped' plus blank lines.
+    if [ "$(wc -l <"$sentinel")" -gt 1 ]; then
+      printf "'%s' declares neither shape — its whole content must be 'flat' or 'grouped', one line\n" "$sentinel"
+      return 1
+    fi
     declared="$(cat "$sentinel")"
     case "$declared" in
       flat | grouped) ;;

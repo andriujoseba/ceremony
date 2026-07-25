@@ -404,6 +404,11 @@ check "fragment mode: a malformed sentinel is refused, file named" 1 \
   "'changelog.d/shape' declares neither shape" \
   in_tree fragments-dev-flip
 
+printf 'grouped\n\n' >"$TMP/fragments-dev-flip/changelog.d/shape"
+check "fragment mode: a sentinel with a trailing blank line is refused, file named" 1 \
+  "'changelog.d/shape' declares neither shape" \
+  in_tree fragments-dev-flip
+
 fragment_tree fragments-dev-no-published 1.2.4-dev <<'EOF'
 # Changelog
 

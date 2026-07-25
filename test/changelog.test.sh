@@ -540,6 +540,16 @@ printf 'grouped\nflat\n' >"$SHAPE_DIR/shape"
 check "shape: a two-line sentinel is refused" 1 \
   "'$SHAPE_DIR/shape' declares neither shape" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+# Trailing blank lines are the case command substitution launders away: the
+# captured word is a clean 'grouped', only the file's line count still knows.
+printf 'grouped\n\n' >"$SHAPE_DIR/shape"
+check "shape: 'grouped' with a trailing blank line is refused, file named" 1 \
+  "'$SHAPE_DIR/shape' declares neither shape" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+printf 'flat\n\n' >"$SHAPE_DIR/shape"
+check "shape: 'flat' with a trailing blank line is refused, file named" 1 \
+  "'$SHAPE_DIR/shape' declares neither shape" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
 
 # The sentinel is not a fragment (#182 D3): the *.md glob is the mechanism,
 # but the assertion is on the list itself, so a glob change cannot silently
