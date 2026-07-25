@@ -7,4 +7,5 @@ published, nothing else — and the release PR folds them all into the next
 filenames never conflict, which is this directory's whole reason to exist.
 This README is the marker that keeps the directory tracked when it holds no
 fragments (#112 D1) — `changelog-armed` refuses a tree without it; do not
-delete it.
+delete it. The `shape` sentinel beside it declares the set's shape —
+`grouped` here, so every fragment carries `### ` headings (#182).

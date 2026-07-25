@@ -143,6 +143,51 @@ check "grouped: the written file is exact" 0 "" \
   assert_file "$TMP/grouped/CHANGELOG.md" \
   $'# Changelog\n\nPreamble prose belongs to no section.\n\n## 0.2.0 — 2026-07-24\n\n'"$GROUPED_BODY"$'\n\n## 0.1.0 — 2026-07-01\n\n### Fixed\n\n- The shipped entry.'
 
+# --- the declared anchor: the first grouped release over a flat history ------
+# The flip ceremony (#182): a 'grouped' sentinel admits grouped fragments
+# over a flat newest published section, the sentinel is never a stray file,
+# and it survives the consumption (D5) — the next -dev tree still declares
+# its shape.
+
+tree flip <<EOF
+$BASE_CHANGELOG
+EOF
+printf 'grouped\n' >"$TMP/flip/changelog.d/shape"
+frag flip 40.md <<'EOF'
+### Added
+
+- Forty landed.
+EOF
+check "sentinel: the flip release assembles grouped over a flat published section" 0 \
+  "consumed 1 fragment" in_tree flip 0.2.0 2026-07-24
+check "sentinel: the written flip section is exact" 0 "" \
+  assert_file "$TMP/flip/CHANGELOG.md" \
+  $'# Changelog\n\nPreamble prose belongs to no section.\n\n## 0.2.0 — 2026-07-24\n\n### Added\n\n- Forty landed.\n\n## 0.1.0 — 2026-07-01\n\n- The shipped entry.'
+check "sentinel: changelog.d/shape survives consumption" 0 "" \
+  test -e "$TMP/flip/changelog.d/shape"
+
+tree flip-flat-frag <<EOF
+$BASE_CHANGELOG
+EOF
+printf 'grouped\n' >"$TMP/flip-flat-frag/changelog.d/shape"
+frag flip-flat-frag 41.md <<'EOF'
+- Flat forty-one.
+EOF
+check "sentinel: a flat fragment under 'grouped' refuses, sentinel named" 1 \
+  "changelog.d/shape' declares grouped" in_tree flip-flat-frag 0.2.0 2026-07-24
+
+tree flip-malformed <<EOF
+$BASE_CHANGELOG
+EOF
+printf 'Grouped\n' >"$TMP/flip-malformed/changelog.d/shape"
+frag flip-malformed 42.md <<'EOF'
+### Added
+
+- Forty-two.
+EOF
+check "sentinel: a malformed sentinel refuses, file named" 1 \
+  "changelog.d/shape' declares neither shape" in_tree flip-malformed 0.2.0 2026-07-24
+
 # --- a changelog holding only its preamble -----------------------------------
 
 tree preamble-only <<'EOF'

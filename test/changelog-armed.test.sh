@@ -362,6 +362,53 @@ check "fragment mode refuses a flat set over a grouped published section" 1 \
   "changelog.d/115.md' is flat but newest published section '1.2.3'" \
   in_tree fragments-dev-flat-over-grouped
 
+# The declared anchor (#182): the flip tree — a grouped set under a
+# 'grouped' sentinel over a flat published section — is green, where the
+# same tree minus the sentinel is the all-grouped-over-flat red row above.
+fragment_tree fragments-dev-flip 1.2.4-dev <<'EOF'
+# Changelog
+
+## 1.2.3 — 2026-07-20
+
+- The shipped entry.
+EOF
+printf '%s\n' "grouped" >"$TMP/fragments-dev-flip/changelog.d/shape"
+cat >"$TMP/fragments-dev-flip/changelog.d/115.md" <<'EOF'
+### Fixed
+
+- Grouped fragment.
+EOF
+check "fragment mode: 'grouped' sentinel admits the flip tree over a flat published section" 0 \
+  "fragment mode" in_tree fragments-dev-flip
+
+# Post-flip drift is refused on its own PR: a flat probe fragment atop the
+# flip tree goes red — beside grouped fragments the mix rule names it first.
+printf '%s\n' "- Flat probe." >"$TMP/fragments-dev-flip/changelog.d/116.md"
+check "fragment mode: a flat probe atop the flip tree is refused" 1 \
+  "changelog.d/115.md' is grouped but fragment 'changelog.d/116.md' is not" \
+  in_tree fragments-dev-flip
+rm "$TMP/fragments-dev-flip/changelog.d/116.md"
+
+# And once the grouped fragments are consumed, the sentinel alone still
+# holds the shape: an all-flat set under 'grouped' is refused, sentinel
+# named — the published-section inference never gets a say.
+rm "$TMP/fragments-dev-flip/changelog.d/115.md"
+printf '%s\n' "- Flat probe." >"$TMP/fragments-dev-flip/changelog.d/116.md"
+check "fragment mode: a flat set under the 'grouped' sentinel refused, sentinel named" 1 \
+  "changelog.d/116.md' is flat but 'changelog.d/shape' declares grouped" \
+  in_tree fragments-dev-flip
+rm "$TMP/fragments-dev-flip/changelog.d/116.md"
+
+printf '%s\n' "Grouped" >"$TMP/fragments-dev-flip/changelog.d/shape"
+check "fragment mode: a malformed sentinel is refused, file named" 1 \
+  "'changelog.d/shape' declares neither shape" \
+  in_tree fragments-dev-flip
+
+printf 'grouped\n\n' >"$TMP/fragments-dev-flip/changelog.d/shape"
+check "fragment mode: a sentinel with a trailing blank line is refused, file named" 1 \
+  "'changelog.d/shape' declares neither shape" \
+  in_tree fragments-dev-flip
+
 fragment_tree fragments-dev-no-published 1.2.4-dev <<'EOF'
 # Changelog
 

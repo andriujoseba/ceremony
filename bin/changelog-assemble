@@ -62,12 +62,15 @@ done
 
 # Every entry in the directory must be a publishable fragment. A stray file
 # in a machine-assembled directory is a mistake to surface, never to skip —
-# except README.md, the directory's marker (#112 D1). This runs before the
-# zero-fragments check so a directory holding only 'notes.txt' names the
-# stray file instead of claiming emptiness.
+# except README.md, the directory's marker (#112 D1), and 'shape', the
+# declared anchor (#182), which changelog_shape_problem validates below and
+# which deliberately survives the consumption: it is the declaration a
+# reader in the directory finds, and it must still be there after the
+# release empties the fragments out.
 for f in "$dir"/*; do
   [ -e "$f" ] || continue
   [ "${f##*/}" = "README.md" ] && continue
+  [ "${f##*/}" = "shape" ] && continue
   if ! diagnosis="$(changelog_fragment_problem "$f")"; then
     refuse "$diagnosis"
   fi

@@ -480,7 +480,13 @@ CONTRIBUTING may sharpen it, but this is the floor the guards assume:
   kind. A repo is grouped or flat, never both (#112 D4). The assembler
   merges groups in canonical order — Added, Changed, Fixed, Removed,
   Deprecated, Security, then anything else first-seen — and inside a
-  group entries read newest issue first (#112 D5).
+  group entries read newest issue first (#112 D5). Which shape binds is
+  inferred from the newest published section, unless an optional sentinel
+  `changelog.d/shape` — one line, exactly `flat` or `grouped` — declares
+  it and outranks the inference (#182). To flip a repo's shape, land one
+  PR that adds the sentinel and converts every pending fragment to the
+  declared shape, bullets byte-identical; the sentinel stays after the
+  release, as the declaration a reader in the directory finds.
 - **One line: say what changed, and stop.** Lead with the surface, not
   the mechanism — "`state:needs-human` is set at handoff" beats "the
   labels workflow now also wakes on `labeled`". The why and the how

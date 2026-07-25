@@ -469,4 +469,129 @@ rm "$SHAPE_DIR/1.md"
 check "shape: empty fragment set makes the anchor rule vacuous" 0 "" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
 
+# --- the declarable anchor: <dir>/shape (#182) -------------------------------
+# The sentinel pins the set's shape and outranks the newest-published-section
+# inference — the door a deliberate flip walks through, while the undeclared
+# drift rows above stay red, verbatim.
+
+cat >"$SHAPE_CHANGELOG" <<'EOF'
+# Changelog
+
+## 2.0.0 — 2026-07-24
+
+- Newest section is flat.
+EOF
+cat >"$SHAPE_DIR/1.md" <<'EOF'
+### Fixed
+
+- Grouped fragment.
+EOF
+printf 'grouped\n' >"$SHAPE_DIR/shape"
+check "shape: 'grouped' sentinel admits a grouped set over a flat published section" 0 "" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+check "shape: the sentinel binds with no changelog at all — the assembler's call" 0 "" \
+  changelog_shape_problem "" "$SHAPE_DIR"
+
+printf -- '- Flat fragment.\n' >"$SHAPE_DIR/1.md"
+check "shape: flat fragment under a 'grouped' sentinel refused, fragment and sentinel named" 1 \
+  "fragment '$SHAPE_DIR/1.md' is flat but '$SHAPE_DIR/shape' declares grouped" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+
+cat >"$SHAPE_CHANGELOG" <<'EOF'
+# Changelog
+
+## 2.0.0 — 2026-07-24
+
+### Fixed
+
+- Newest section is grouped.
+EOF
+printf 'flat\n' >"$SHAPE_DIR/shape"
+check "shape: 'flat' sentinel admits a flat set over a grouped published section" 0 "" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+cat >"$SHAPE_DIR/1.md" <<'EOF'
+### Fixed
+
+- Grouped fragment.
+EOF
+check "shape: grouped fragment under a 'flat' sentinel refused, fragment and sentinel named" 1 \
+  "fragment '$SHAPE_DIR/1.md' is grouped but '$SHAPE_DIR/shape' declares flat" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+
+printf 'grouped\n' >"$SHAPE_DIR/shape"
+printf -- '- Flat two.\n' >"$SHAPE_DIR/2.md"
+check "shape: a mixed set is refused regardless of the sentinel" 1 \
+  "fragment '$SHAPE_DIR/1.md' is grouped but fragment '$SHAPE_DIR/2.md' is not" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+rm "$SHAPE_DIR/1.md" "$SHAPE_DIR/2.md"
+
+check "shape: empty fragment set with a valid sentinel passes" 0 "" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+
+printf 'Grouped\n' >"$SHAPE_DIR/shape"
+check "shape: a capitalized sentinel is refused, file named" 1 \
+  "'$SHAPE_DIR/shape' declares neither shape" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+: >"$SHAPE_DIR/shape"
+check "shape: an empty sentinel is refused — never a silent fallback" 1 \
+  "'$SHAPE_DIR/shape' declares neither shape" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+printf 'grouped\nflat\n' >"$SHAPE_DIR/shape"
+check "shape: a two-line sentinel is refused" 1 \
+  "'$SHAPE_DIR/shape' declares neither shape" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+# Trailing blank lines are the case command substitution launders away: the
+# captured word is a clean 'grouped', only the file's line count still knows.
+printf 'grouped\n\n' >"$SHAPE_DIR/shape"
+check "shape: 'grouped' with a trailing blank line is refused, file named" 1 \
+  "'$SHAPE_DIR/shape' declares neither shape" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+printf 'flat\n\n' >"$SHAPE_DIR/shape"
+check "shape: 'flat' with a trailing blank line is refused, file named" 1 \
+  "'$SHAPE_DIR/shape' declares neither shape" \
+  changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
+
+# The sentinel is not a fragment (#182 D3): the *.md glob is the mechanism,
+# but the assertion is on the list itself, so a glob change cannot silently
+# start publishing the sentinel.
+printf 'grouped\n' >"$SHAPE_DIR/shape"
+cat >"$SHAPE_DIR/1.md" <<'EOF'
+### Fixed
+
+- Grouped fragment.
+EOF
+assert_fragments_exclude_sentinel() {
+  local out
+  out="$(changelog_fragments "$SHAPE_DIR")"
+  [ -n "$out" ] || { echo "wanted a non-empty fragment list"; return 1; }
+  if printf '%s\n' "$out" | grep -q '/shape$'; then
+    printf 'the sentinel leaked into the fragment list:\n%s\n' "$out"
+    return 1
+  fi
+}
+check "fragments: the shape sentinel never enters the fragment list" 0 "" \
+  assert_fragments_exclude_sentinel
+rm "$SHAPE_DIR/1.md" "$SHAPE_DIR/shape"
+
+AS="$TMP/assemble-sentinel"
+mkdir -p "$AS"
+printf 'grouped\n' >"$AS/shape"
+cat >"$AS/30.md" <<'EOF'
+### Fixed
+
+- Fixed thirty.
+EOF
+cat >"$AS/31.md" <<'EOF'
+### Added
+
+- Added thirty-one.
+EOF
+check "assemble: the sentinel never assembles, and canonical order holds under it" 0 "" \
+  assert_assemble "$AS" $'### Added\n\n- Added thirty-one.\n\n### Fixed\n\n- Fixed thirty.'
+rm "$AS/30.md" "$AS/31.md"
+printf -- '- Flat probe.\n' >"$AS/29.md"
+check "assemble: a flat set under a 'grouped' sentinel refuses to assemble" 1 \
+  "declares grouped" \
+  changelog_assemble "$AS"
+
 summary
