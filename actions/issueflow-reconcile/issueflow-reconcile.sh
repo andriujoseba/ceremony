@@ -177,27 +177,37 @@ issue_references() { # text on stdin -> LOCAL/CROSS<TAB>reference
 }
 
 blocked_reference_records() { # body on stdin -> classified reference records
-  # Dependency declarations sometimes soft-wrap after a comma. Continue
-  # through the first sentence terminator; if prose omits one, conservatively
-  # retain later references so ambiguity can keep an issue blocked, never
-  # promote it prematurely.
+  # Every occurrence of the marker contributes a clause. Binding to the first
+  # occurrence alone dropped the later sentences of a repeated declaration
+  # ("Blocked by #152. Blocked by #153. Blocked by #148 — …") and let earlier
+  # prose that merely mentioned being blocked hijack the parse — the false
+  # `ready` promotion on rig#154 (#184). Each clause runs to its own first
+  # sentence terminator; declarations sometimes soft-wrap after a comma, so
+  # an open clause continues across lines, and if prose omits the terminator
+  # it retains to end of input. Unioning can over-retain — prose like "this
+  # was blocked by #9 before the split" now contributes #9 — and that is the
+  # correct direction of error: a stale `blocked` is a triage comment away,
+  # a false `ready` sends a builder into work that cannot merge (#184).
   awk '
+    BEGIN { marker = "blocked by" }
     {
       line = $0
-      lower = tolower(line)
-      if (!active) {
-        marker = "blocked by"
-        start = index(lower, marker)
-        if (!start) next
-        line = substr(line, start + length(marker))
-        active = 1
+      while (1) {
+        if (!active) {
+          start = index(tolower(line), marker)
+          if (!start) next
+          line = substr(line, start + length(marker))
+          active = 1
+        }
+        if (match(line, /[.;]/)) {
+          print substr(line, 1, RSTART - 1)
+          line = substr(line, RSTART + 1)
+          active = 0
+        } else {
+          print line
+          next
+        }
       }
-      if (line ~ /[.;]/) {
-        sub(/[.;].*/, "", line)
-        print line
-        exit
-      }
-      print line
     }
   ' | issue_references
 }
