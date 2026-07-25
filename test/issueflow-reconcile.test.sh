@@ -142,6 +142,23 @@ check "slash-adjacent local references survive" 0 $'14\n15' \
   blocked_references <<<"Blocked by #14/#15."
 check "comma-adjacent local references survive" 0 $'11\n12' \
   blocked_references <<<"Blocked by #11, #12."
+# A repeated declaration contributes every sentence, not just the first —
+# rig#154's body promoted on `#152` alone while #153 and #148 were open (#184).
+body="Part of #151. Blocked by #152. Blocked by #153. Blocked by #148 — the registry PR merges under landed governance. Blocks #155."
+check "repeated blocker sentences all contribute" 0 "" test \
+  "$(blocked_references <<<"$body")" = $'148\n152\n153'
+body=$'Note: restored because it is blocked by an operator act. See below.\nBlocked by #152, #153, #148.'
+check "earlier blocked-by prose does not hijack the declaration" 0 "" test \
+  "$(blocked_references <<<"$body")" = $'148\n152\n153'
+body=$'This was blocked by #9 before the split.\nBlocked by #12.'
+check "prose refs are retained beside the declaration, never substituted" 0 "" test \
+  "$(blocked_references <<<"$body")" = $'9\n12'
+repeated_refs="$(blocked_references <<<"Blocked by #152. Blocked by #153.")"
+check "repeated declaration with one open blocker keeps issue blocked" 0 "KEEP" \
+  blocked_decision "$repeated_refs" $'CLOSED\nOPEN'
+check "cross-repo ref in a later clause still flags" 0 "FLAG_CROSS_REPO" \
+  blocked_decision "12" "CLOSED" \
+  "$(blocked_cross_references <<<"Blocked by #12. Blocked by rig#7.")"
 check "open blocker keeps issue blocked" 0 "KEEP" blocked_decision "$refs" $'CLOSED\nOPEN'
 check "all closed blockers release issue" 0 "READY" blocked_decision "$refs" $'CLOSED\nCLOSED'
 check "missing blocked declaration is flagged" 0 "FLAG_UNPARSEABLE" blocked_decision "" ""
