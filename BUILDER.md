@@ -84,6 +84,22 @@ triage bug, and the move is to say so on the issue, not to guess.
   owns the next move (the human), and both are visible to any scan as a
   `labeled` event with the summary beside it. No second comment is owed
   on the issue. Every other shape still declares as above.
+  Declared once, the declaration **stands** until the park's facts change:
+  a resumption that finds nothing changed posts nothing — the standing
+  declaration is the record, and silence while parked is compliant, not
+  abandonment-shaped. Re-declaring on every resume is the flood
+  [rig#145](https://github.com/heavy-duty/rig/pull/145) drowned in — 38
+  near-identical audits in one night, each saying nothing changed
+  ([#177](https://github.com/heavy-duty/ceremony/discussions/177)). What
+  re-opens the duty to comment is the facts changing — the named wait
+  resolves or changes hands, the parked shape changes, or the claim
+  unparks — and each owes one new comment. The one place silence has a
+  cost: a parked claim with **no open PR** still feeds the 48-hour
+  reclaim clock, so there the builder refreshes the declaration before
+  the window closes. That refresh is the only repeat a park ever owes,
+  and its cadence is the reclaim window's, not any duty loop's. None of
+  this loosens the abandonment rule below: a claim that was never parked
+  and has simply stopped moving is abandoned, not silent.
 - **Pick up `attention` before anything else.** On your claim, first post a
   short pickup comment and remove `attention`; the removal is the ack. A
   demand on a parked claim is usually its unpark, so take the slot back under
