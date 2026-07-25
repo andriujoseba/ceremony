@@ -82,18 +82,20 @@ check "attention does not exempt a claimed issue" 0 "SWEEP" \
   claim_clock_exempt <<<"attention"
 check "ready does not exempt a claimed issue" 0 "SWEEP" claim_clock_exempt <<<"ready"
 check "empty labels do not exempt a claimed issue" 0 "SWEEP" claim_clock_exempt </dev/null
-refs_body=$'Refs #12\nAlso refs: #8 and heavy-duty/rig#4.\nCloses #99\nNot refs-ish #7'
-check "Refs parser returns only local issues on Refs lines" 0 $'8\n12' \
-  refs_references <<<"$refs_body"
+refs_body=$'Refs #12\nAlso refs: #8 and heavy-duty/rig#4.\nCloses #99\nNot refs-ish #7\nfix refs parsing from #200\nCloses #40; refs: none\nRefs #175 (split from #150)'
+check "Refs parser returns only references owned by a valid Refs marker" 0 "" \
+  test "$(refs_references <<<"$refs_body")" = $'8\n12\n175'
 check "unchecked criteria preserve their source lines verbatim" 0 \
-  $'- [ ] first criterion\n  * [ ] indented criterion' \
-  unchecked_criteria <<< $'- [x] done\n- [ ] first criterion\n  * [ ] indented criterion'
+  $'- [ ] first criterion\n  * [ ] indented criterion\n1. [ ] numbered criterion' \
+  unchecked_criteria <<< $'- [x] done\n- [ ] first criterion\r\n  * [ ] indented criterion\n1. [ ] numbered criterion'
 check "merged Refs with unchecked criteria transitions" 0 "TRANSITION" \
-  post_merge_decision true <<<"- [ ] verify after merge"
+  post_merge_decision 12 false false <<<"- [ ] verify after merge"
 check "open Refs does not transition" 0 "KEEP" \
-  post_merge_decision false <<<"- [ ] verify after merge"
+  post_merge_decision 12 true false <<<"- [ ] verify after merge"
+check "a handled merged Refs episode does not transition again" 0 "KEEP" \
+  post_merge_decision 12 false true <<<"- [ ] verify after merge"
 check "merged Refs with all criteria checked does not transition" 0 "KEEP" \
-  post_merge_decision true </dev/null
+  post_merge_decision 12 false false </dev/null
 check "one closed offsite PR nudges" 0 "NUDGE" offsite_resolved_decision <<<"CLOSED"
 check "two closed offsite PRs nudge" 0 "NUDGE" offsite_resolved_decision <<< $'CLOSED\nCLOSED'
 check "one open offsite PR keeps quiet" 0 "QUIET" offsite_resolved_decision <<< $'CLOSED\nOPEN'
@@ -250,9 +252,9 @@ issue_stub_gh() {
   fi
 }
 
-issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged Refs, $6 body
+issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged PR, $6 body
   (
-    local assignees="${3:-1}" open_pr="${4:-false}" merged_ref="${5:-false}"
+    local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_pr="${5:-}"
     local body="${6:-}" assignee_json='[]'
     [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
     REPO=owner/repo NOW="$INOW"
@@ -261,7 +263,11 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged Refs,
       --argjson assignees "$assignee_json" --arg body "$body" \
       '{created_at: $at, assignees: $assignees, body: $body}')"
     if [ "$open_pr" = true ]; then OPEN_PR_ISSUES="$1"; else OPEN_PR_ISSUES=""; fi
-    if [ "$merged_ref" = true ]; then MERGED_REF_PR_ISSUES="$1"; else MERGED_REF_PR_ISSUES=""; fi
+    if [ -n "$merged_ref_pr" ]; then
+      MERGED_REF_PR_RECORDS="$(printf '%s\t%s\n' "$1" "$merged_ref_pr")"
+    else
+      MERGED_REF_PR_RECORDS=""
+    fi
     run() { "$@"; }
     gh() { issue_stub_gh "$@"; }
     reconcile_issue "$1" 2>&1
@@ -311,7 +317,7 @@ check "the flag-free control is reclaimed (the clock still runs elsewhere)" 0 ""
 
 # -- merged Refs work releases the claim before the reclaim clock ------------
 printf '[]\n' >"$(cfix 35)"
-transition="$(issue_probe 35 claimed 1 false true $'- [x] built\n- [ ] verify dispatch\n  * [ ] confirm warning clears')"
+transition="$(issue_probe 35 claimed 1 false 350 $'- [x] built\n- [ ] verify dispatch\n  * [ ] confirm warning clears')"
 check "merged Refs + unchecked criteria transitions in the sweep body" 0 "" \
   grep -q 'merged Refs PR -> post-merge; claim released' <<<"$transition"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
@@ -346,7 +352,7 @@ recent_timeline() {
 }
 edit_count_before="$(wc -l <"$TMP/issue-edits")"
 recent_timeline 38
-open_refs="$(issue_probe 38 claimed 1 true false '- [ ] verify after merge')"
+open_refs="$(issue_probe 38 claimed 1 true 380 '- [ ] verify after merge')"
 check "open Refs PR leaves the issue exactly as found" 0 "" \
   test -z "$open_refs"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
@@ -355,7 +361,7 @@ check "...with no edit or comment" 0 "" \
   "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-38"
 
 recent_timeline 39
-merged_closes="$(issue_probe 39 claimed 1 false false '- [ ] verify after merge')"
+merged_closes="$(issue_probe 39 claimed 1 false "" '- [ ] verify after merge')"
 check "merged Closes PR leaves a recent claim exactly as found" 0 "" \
   test -z "$merged_closes"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
@@ -364,7 +370,7 @@ check "...with no edit or comment" 0 "" \
   "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-39"
 
 recent_timeline 40
-all_checked="$(issue_probe 40 claimed 1 false true '- [x] verified after merge')"
+all_checked="$(issue_probe 40 claimed 1 false 400 '- [x] verified after merge')"
 check "merged Refs with zero unchecked boxes leaves the issue exactly as found" 0 "" \
   test -z "$all_checked"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
@@ -373,11 +379,38 @@ check "...with no edit or comment" 0 "" \
   "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-40"
 
 printf '[]\n' >"$(cfix 41)"
-attention_transition="$(issue_probe 41 $'claimed\nattention' 1 false true '- [ ] verify')"
+attention_transition="$(issue_probe 41 $'claimed\nattention' 1 false 410 '- [ ] verify')"
 check "derived post-merge transition clears attention with the released claim" 0 "" \
   grep -qF -- '--remove-label claimed,attention --add-label post-merge' "$TMP/issue-edits"
 check "...still completes the transition" 0 "" \
   grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$attention_transition"
+
+recent_timeline 43
+jq -n --arg b '<!-- issueflow:post-merge-transition-pr-430 -->' \
+  --arg at "$(iso_at $((INOW - 60)))" \
+  '[{"body":$b,"created_at":$at}]' >"$(cfix 43)"
+reentry_edit_count="$(wc -l <"$TMP/issue-edits")"
+historical="$(issue_probe 43 claimed 1 false 430 '- [ ] corrective verification')"
+check "a handled historical Refs merge cannot steal a re-entered claim" 0 "" \
+  test -z "$historical"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and re-entry produces no edit or duplicate transition comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$reentry_edit_count" "$TMP/issue-edits" "$TMP/posted-43"
+
+printf '[]\n' >"$(cfix 44)"
+second_transition="$(issue_probe 44 claimed 1 false 441 '- [ ] second verification')"
+check "a later merged Refs PR gets an episode-specific transition comment" 0 "" \
+  grep -qF '<!-- issueflow:post-merge-transition-pr-441 -->' "$TMP/posted-44"
+check "...and the later episode still transitions" 0 "" \
+  grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$second_transition"
+
+printf '[]\n' >"$(cfix 45)"
+issue_probe 45 $'claimed\npost-merge' >/dev/null
+# shellcheck disable=SC2016 # Markdown backticks are literal evidence
+check "queue-conflict evidence lists every category including post-merge" 0 "" \
+  grep -qF 'needs-triage`, `epic`, `ready`, `claimed`, `blocked`, or `post-merge`' \
+  "$TMP/posted-45"
 
 printf '[]\n' >"$(cfix 42)"
 issue_probe 42 $'post-merge\nattention' 0 >/dev/null
@@ -572,7 +605,7 @@ check "...and the sweep still runs" 0 "" \
 # Keep this at main() granularity: the GraphQL gather and loop are the code
 # a sourced decision probe cannot exercise (#91's lesson).
 printf '%s\n' \
-  '{"data":{"repository":{"pullRequests":{"nodes":[{"body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
   >"$ARRIVAL/fixtures/graphql.json"
 printf '[{"number":40}]\n' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"

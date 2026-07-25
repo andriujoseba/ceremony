@@ -124,21 +124,46 @@ claim_reclaim_marker() { # $1 = last activity epoch
 
 refs_references() { # PR body on stdin -> local issue numbers named by Refs
   awk '
-    tolower($0) ~ /(^|[^[:alnum:]_-])refs([[:space:]]|:)/ { print }
+    {
+      line = $0
+      lower = tolower(line)
+      if (match(lower, /(^|[^[:alnum:]_-])refs[[:space:]:]+/)) {
+        line = substr(line, RSTART + RLENGTH)
+        if (line ~ /^(#|([[:alnum:]_.-]+\/)?[[:alnum:]_.-]+#)[0-9]+/) {
+          sub(/[.(;].*/, "", line)
+          print line
+        }
+      }
+    }
   ' | issue_references \
     | awk -F '\t' '$1 == "LOCAL" { print $2 }' | sort -nu
 }
 
 unchecked_criteria() { # issue body on stdin -> unchecked task-list lines verbatim
-  awk '/^[[:space:]]*[-*][[:space:]]+\[[[:space:]]\]/ { print }'
+  awk '
+    /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+\[[[:space:]]\]/ {
+      sub(/\r$/, "")
+      print
+    }
+  '
 }
 
-post_merge_decision() { # $1 merged Refs-linked PR, unchecked criteria on stdin
-  local merged="$1" unchecked
+post_merge_decision() { # $1 merged Refs PR, $2 linked open PR, $3 already handled
+  local merged="$1" open_pr="$2" handled="$3" unchecked
   unchecked="$(cat)"
-  if [ "$merged" = true ] && [ -n "$unchecked" ]; then echo TRANSITION
+  if [ -n "$merged" ] && [ "$open_pr" = false ] && [ "$handled" = false ] \
+      && [ -n "$unchecked" ]; then echo TRANSITION
   else echo KEEP
   fi
+}
+
+post_merge_pr_for_issue() { # $1 issue; records are ISSUE<TAB>PR
+  awk -F '\t' -v issue="$1" '$1 == issue { print $2 }' \
+    <<<"${MERGED_REF_PR_RECORDS:-}" | sort -n | tail -n1
+}
+
+post_merge_transition_marker() { # $1 merged PR number
+  printf 'post-merge-transition-pr-%s\n' "$1"
 }
 
 issue_references() { # text on stdin -> LOCAL/CROSS<TAB>reference
@@ -235,10 +260,14 @@ offsite_resolved_decision() { # PR states on stdin -> NUDGE | QUIET
 # API edge. Marker comments make warnings and nudges idempotent across sweeps.
 ensure_comment() { # $1 issue, $2 marker, $3 message
   local n="$1" marker="$2" message="$3"
-  if gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].body' \
-      | grep -qF "<!-- issueflow:$marker -->"; then return; fi
+  if issue_comment_has_marker "$n" "$marker"; then return; fi
   run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 $message" >/dev/null
+}
+
+issue_comment_has_marker() { # $1 issue, $2 marker
+  gh api --paginate "repos/$REPO/issues/$1/comments" --jq '.[].body' \
+    | grep -qF "<!-- issueflow:$2 -->"
 }
 
 reference_states() {
@@ -281,7 +310,8 @@ last_issue_activity() {
 
 reconcile_issue() {
   local n="$1" decision refs cross_refs states age assignees open_pr=false label owners
-  local merged_ref=false unchecked="" remove_claimed=claimed
+  local merged_ref_pr="" transition_marker="" transition_handled=false
+  local unchecked="" remove_claimed=claimed
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
   case "$decision" in
     ADD_NEEDS_TRIAGE)
@@ -297,10 +327,16 @@ reconcile_issue() {
   if has_issue_label claimed; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
     grep -qxF "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
-    grep -qxF "$n" <<<"${MERGED_REF_PR_ISSUES:-}" && merged_ref=true
+    merged_ref_pr="$(post_merge_pr_for_issue "$n")"
+    if [ -n "$merged_ref_pr" ]; then
+      transition_marker="$(post_merge_transition_marker "$merged_ref_pr")"
+      issue_comment_has_marker "$n" "$transition_marker" \
+        && transition_handled=true
+    fi
     unchecked="$(unchecked_criteria <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
-    if [ "$(post_merge_decision "$merged_ref" <<<"$unchecked")" = TRANSITION ]; then
-      ensure_comment "$n" post-merge-transition \
+    if [ "$(post_merge_decision "$merged_ref_pr" "$open_pr" "$transition_handled" \
+        <<<"$unchecked")" = TRANSITION ]; then
+      ensure_comment "$n" "$transition_marker" \
         "The Refs-linked PR merged with these acceptance criteria still unchecked:
 
 $unchecked
@@ -457,16 +493,22 @@ main() {
       }
     }' --jq '.data.repository.pullRequests.nodes[].closingIssuesReferences.nodes[].number' \
     | sort -nu)"
-  MERGED_REF_PR_ISSUES="$(gh api graphql --paginate -f owner="$owner" -f name="$name" -f query='
+  MERGED_REF_PR_RECORDS="$(gh api graphql --paginate -f owner="$owner" -f name="$name" -f query='
     query($owner: String!, $name: String!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequests(first: 100, states: MERGED, after: $endCursor) {
-          nodes { body }
+          nodes { number body }
           pageInfo { hasNextPage endCursor }
         }
       }
-    }' --jq '.data.repository.pullRequests.nodes[].body' \
-    | refs_references)"
+    }' --jq '.data.repository.pullRequests.nodes[]
+      | .number as $pr | .body | split("\n")[]
+      | [$pr, .] | @tsv' \
+    | while IFS=$'\t' read -r pr body; do
+        while IFS= read -r issue; do
+          [ -n "$issue" ] && printf '%s\t%s\n' "$issue" "$pr"
+        done < <(refs_references <<<"$body")
+      done)"
 
   local n
   for n in $(gh api --paginate "repos/$REPO/issues?state=open&per_page=100" \
