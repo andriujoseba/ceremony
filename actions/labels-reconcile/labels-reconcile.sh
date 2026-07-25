@@ -389,6 +389,20 @@ decide_state() { # → the one state:* label this PR should carry
   if [ "$s" = state:needs-human ] && has_label needs-ruling; then
     echo state:addressing; return
   fi
+
+  # A directed hold disqualifies it the same way (#180): `blocked` is hand-set
+  # intent — triage sets it, anyone may correct it — and during the #111
+  # freeze rig#126/#128 carried it beside state:needs-human, so the board said
+  # "mergeable right now" about PRs a hold said must not merge (rig#126 was
+  # merged seven minutes later). Not a BLOCKERS entry, deliberately: that
+  # array is machine-owned and the converge loop strips whatever the facts do
+  # not re-derive, so emitting the label there would strip a live hold on the
+  # next 15-minute tick — the same trap #51 names for `needs-ruling`.
+  # state:addressing is the accepted imprecision: under a hold the builder
+  # owes nothing, but "a human could merge this now" must not lie.
+  if [ "$s" = state:needs-human ] && has_label blocked; then
+    echo state:addressing; return
+  fi
   echo "$s"
 }
 
