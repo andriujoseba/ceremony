@@ -553,6 +553,34 @@ LABELS="needs-ruling"
 expect "needs-ruling adds nothing to blockers()" blocker:conflict "$(blockers)"
 MERGEABLE=MERGEABLE LABELS=""
 
+# ---------------------------------------------------------------------------
+# blocked (#180): a directed hold. Same shape as needs-ruling — hand-set
+# intent the machine reads and never writes, an EXCLUSION on needs-human,
+# never a blocker and never a latch. During the #111 freeze rig#126/#128
+# carried blocked beside state:needs-human, and rig#126 was merged seven
+# minutes after the reconciler wrote the green label.
+# ---------------------------------------------------------------------------
+DRAFT=false HEAD_SHA=head1 REQUESTED="" REVIEWS_JSON="$ALL_APPROVE" MERGEABLE=MERGEABLE CHECKS=SUCCESS
+LABELS=""
+expect "the hold-free fixture hands off (control)" state:needs-human "$(decide_state)"
+LABELS="blocked"
+expect "a directed hold excludes needs-human" state:addressing "$(decide_state)"
+LABELS=""
+expect "...and clearing it hands off again — an exclusion, not a latch" state:needs-human "$(decide_state)"
+LABELS="blocked" DRAFT=true
+expect "a draft carrying blocked is still building" state:building "$(decide_state)"
+DRAFT=false
+
+# blockers() must not know this label exists either: it is not a branch fact,
+# and the converge loop strips every BLOCKERS entry the facts do not
+# re-derive — emitting it there would strip a live hold on the next tick.
+MERGEABLE=CONFLICTING
+LABELS=""
+expect "conflict fixture emits its blocker (control)" blocker:conflict "$(blockers)"
+LABELS="blocked"
+expect "blocked adds nothing to blockers()" blocker:conflict "$(blockers)"
+MERGEABLE=MERGEABLE LABELS=""
+
 # The guard the other fixtures cannot see: an UNGUARDED has_label read under
 # set -u does not go red — bash treats the unset expansion inside the
 # herestring redirection as a redirection error (bash 5.2: rc 127, the shell
