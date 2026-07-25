@@ -125,7 +125,12 @@ triage bug, and the move is to say so on the issue, not to guess.
   merge — a live proof of a workflow trigger, a released-artifact check,
   anything whose subject does not exist until the change is on the base
   branch — the same-repo PR uses `Refs #N` instead, and triage closes the
-  issue by hand on the evidence, exactly as it does for cross-repo work.
+  issue by hand on the evidence, exactly as it does for cross-repo work. The
+  merge releases the claim: the issue moves to `post-merge`, the builder
+  walks away, and triage owns verification and closure. If evidence later
+  requires corrective build work, triage returns it to `ready` or mints a
+  fresh `ready` issue; any builder claims from current `main`, and the
+  original builder has no special standing.
   The issue body is what says so; you never judge which issues qualify, and
   absent that instruction `Closes #N` remains the default. The exception was
   bought the hard way: #143 carried `Closes #137` as doctrine then required,
