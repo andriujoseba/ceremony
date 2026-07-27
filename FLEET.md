@@ -10,7 +10,7 @@
 > into [heavy-duty/crew](https://github.com/heavy-duty/crew) (private to the
 > org; the fleet can read it), the *mechanism* lives there and this file only
 > points at it. Last reconciled against the merged engine at
-> [`heavy-duty/crew@01fb49c`](https://github.com/heavy-duty/crew/tree/01fb49cd717a0f4c83df286af86411c69e3c2363),
+> [`heavy-duty/crew@4da17c4`](https://github.com/heavy-duty/crew/tree/4da17c49594c2d86bd3793fa3567846cbca38e90),
 > 2026-07-27 — a descriptive file with no reconciliation stamp gives the next
 > reader nothing to diff, which is exactly how the #149 drift went unnoticed.
 
@@ -30,7 +30,7 @@ network path — GitHub is the only queue.
 
 This table is the **as-built** bench — five boxes, two of them dual-role. It
 is not the same thing as crew's
-[`fleet.roster`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/fleet.roster),
+[`fleet.roster`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/fleet.roster),
 whose own header declares it the **target** environment: seven single-role
 boxes, the dual-role claude and codex boxes each split into a builder and a
 reviewer member. The delta is exactly that split (plus each new box needing
@@ -49,13 +49,13 @@ second repo is a second thing to keep true — this one drifted (it said cron
 ran `duty.sh` directly and gave the hygiene sweep its own cron line; crew's
 `duty.sh` records that separate line as the bug it fixed, sharing
 `~/duty/work` unlocked). How a tick actually works — cron fires
-[`bin/tick.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/bin/tick.sh),
+[`bin/tick.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/bin/tick.sh),
 the only cron target, which wraps
-[`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/bin/duty.sh)
+[`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/bin/duty.sh)
 in a non-blocking `flock` with one evidence line per boundary; the boot gate
 and crash recovery; the session runner; backlog hygiene self-scheduling
 inside the duty tick under the same lock — lives with the code:
-[`shared/README.md`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/README.md)
+[`shared/README.md`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/README.md)
 is the map, provenance table included. Sessions stay stateless and
 disposable — all state lives on the board (issues, PRs, labels) and in git
 branches; detection is the engine's, judgment is the session's.
@@ -73,11 +73,13 @@ What belongs here is what a wake *means*:
   write surface the whole org, which no registry could bound: the drill's
   containment interlock narrowed `repos.txt` and so confined triage and
   hygiene, but not review, the one module that submits verdicts.
-  [`lib/duty-review.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/lib/duty-review.sh)
+  [`lib/duty-review.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/lib/duty-review.sh)
   states the rule and implements the WARN.
-- **One wake is registry-independent, by design: attention** (next section).
-  The registry bounds what a box goes *looking for*, not what is handed to
-  this identity *by name*.
+- **No wake is exempt, including attention** (next section). The attention
+  *query* is cross-repo by construction — it is one call to the
+  authenticated-user endpoint, which has no repo filter — but the *action*
+  it authorizes is bounded like every other. A demand parked on this box in
+  a repo nobody listed is reported, never worked.
 
 ### Wake conditions
 
@@ -92,20 +94,26 @@ very thing that unparks the work resume would otherwise pick up. The query is
 the authenticated-user endpoint —
 `gh api "/issues?filter=assigned&state=open&labels=attention"` — one call, no
 search index (the review queue below already records that the index lags) —
-and, **alone among the wakes, it reaches repos `~/duty/repos.txt` does not
-name.**
+and it **sees** repos `~/duty/repos.txt` does not name, because that endpoint
+takes no repo filter.
 
-That reach is deliberate, and it survives the registry rule above as its one
-stated exception. An `attention` assignment is work handed to this identity
-by name, and **the assignment is what carries the authorization** — there is
-nothing here for a repo list to scope, because the box is not choosing where
-to look.
-[`lib/duty-attention.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/lib/duty-attention.sh)
-queries the cross-repo endpoint on purpose and says so in its header; a fix
-that bounds this wake to the registry would re-create the #16 incident below.
-(Crew's `conf/repos-default.txt` header currently claims *every* duty module
-is registry-bounded — that contradiction is crew's, raised there as a
-discussion; this file records the exception as it is implemented today.)
+**Seeing is not acting, and that is a ruling** (crew#66, danmt, 2026-07-27).
+The wake used to work every row it saw, which for a builder meant a clone and
+the full worktree and round rule set against a repo no operator had listed —
+write authority outside the registry, and the one hole left in the
+containment story. Rows are now partitioned against the registry: inside it,
+a session as before; outside it, reported and never acted on, exactly like an
+out-of-scope review request or authored PR.
+[`lib/duty-attention.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/lib/duty-attention.sh)
+implements the partition and states the ruling in its header.
+
+The cost was argued before the ruling rather than discovered after it: an
+assignment plus a label **is** a targeted authorization, so a cross-repo
+handoff now waits on an operator adding the repo, and the box most likely to
+be handed work outside its beat is the one that goes quiet. That is why an
+out-of-scope demand does not only reach `duty.log` — it pings the operator
+over the same channel the boot gate uses. A bounded wake that failed silently
+would trade an unbounded write surface for a broken channel to the human.
 
 Each demand gets **exactly one session, and the ack bounds it**: the
 session's first act, before any of the demanded work, is the pickup comment
@@ -113,9 +121,13 @@ plus removing the label — [the `attention`
 contract's](https://github.com/heavy-duty/ceremony/blob/bce09aa7648dbd74b8e91b1d4fbc2fa8d145f705/LABELS.md#L143-L149)
 ack (#85), which here becomes the session's ack-then-act ordering.
 Then it acts on the thread and exits — short by construction. Until the label
-is removed the flag is still up, so a session that dies before acking is
-simply relaunched at the next tick; that is the whole crash-recovery story,
-and it is the same crash-only shape as resume below.
+is removed the flag is still up, so a session that **dies** before acking is
+simply relaunched at the next tick — the same crash-only shape as resume
+below. A session that **completes** without acking is a different fact: that
+is a decline, and a seen-ledger stops it re-firing until the issue moves.
+Dying and declining used to look identical to the engine, which meant a
+demand a session had considered and correctly left alone woke a new one every
+tick forever.
 
 The design this replaces was built and rejected: polling notifications for
 `reason: mention` re-arms a thread on every comment, so ordinary round
@@ -131,14 +143,13 @@ wake is no longer on paper: `duty-attention.sh` is deployed engine, and
 `duty.sh` runs it first on every box, whatever its roles.
 
 The engine's duty order is fleet-standard
-([`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/bin/duty.sh)):
+([`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/bin/duty.sh)):
 **attention → triage signals → review queue → resume → ci-red → build →
 handoff → rebase → worktree hygiene → backlog hygiene (hourly)** — attention
 role-independent and first, then each duty family the box's roles enable.
-One position in that order is **on paper**: ci-red is
-[crew#64](https://github.com/heavy-duty/crew/pull/64)'s, unmerged at the
-stamped SHA, where `duty.sh` still runs resume straight into build — it
-reads as deployed engine only once that PR merges.
+Every position in that order is deployed engine at the stamped SHA:
+[crew#64](https://github.com/heavy-duty/crew/pull/64) merged ci-red between
+resume and build, and `duty.sh`'s own header carries the same order.
 The earlier form of this file folded handoff and rebase into the other
 builder wakes; they are duties of their own.
 
@@ -167,23 +178,30 @@ builder wakes; they are duties of their own.
   — a session died between first push and PR creation. A branch whose PR
   already **merged** is a post-merge wait, never resumed (#172,
   incubator#55/#64).
-- **ci-red** (builders; **on paper** — crew#64's spec, unmerged at the
-  stamped SHA): a non-draft PR of mine whose check at the current head is
-  failing. Evaluated before the build wake, so a red PR of mine outranks a
-  new claim — repairing my own red head comes ahead of new work
+- **ci-red** (builders): a non-draft PR of mine whose check at the current
+  head is failing. Evaluated before the build wake, so a red PR of mine
+  outranks a new claim — repairing my own red head comes ahead of new work
   (ceremony#163: full-panel approvals at the head, mergeable, stranded on
   a transient failure no wake covered). A round owed at a red head is
   excluded from the build wake below but reported rather than silent, and
   an unchanged red head goes quiet after one attempt, through the
-  `report_suppressed` path — suppressed, still said. How a red head is
-  detected and kept quiet is the engine's mechanism, described in crew's
+  `report_suppressed` path — suppressed, still said. A check that has not
+  finished is **not** a red head and wakes nothing here: nothing has failed
+  yet, so there is no investigation to launch. How a red head is detected
+  and kept quiet is the engine's mechanism, described in crew's
   `shared/README.md`, not here.
 - **Build**: a `ready` **unclaimed** issue (an assignee means mid-claim, not
   pickable), or a completed review round on my PR — a changes-request with
   no panel review request still outstanding; whole rounds, never single
-  verdicts, and — once ci-red deploys — never a round at a red head: that
-  head has already woken ci-red above, and the excluded round is reported,
-  not swallowed.
+  verdicts, and never a round the check at its head does not support. The
+  wake admits a **green** head, and a head with **no checks configured** —
+  terminal, not transient, so holding there would retire the round rather
+  than delay it. It holds a **red** head (already woken ci-red above) and a
+  head whose check has **not finished** (opening the round there spends the
+  panel on a head that may go red — crew#45's measured cost — and it admits
+  itself a tick later once the check settles). Both holds are reported, not
+  swallowed, and they are reported *differently*: only one of them is the
+  author's own work to do.
 - **Handoff**: a round of mine that converged — every panelist's latest
   opinionated review approves the current head, no panel request
   outstanding, mergeable right now, `state:needs-human` not already set.
@@ -248,10 +266,14 @@ The duty engine is crew's shared tree, one source deployed to every box;
 makes the registry rule an operator decision rather than a sweep's. Specs
 written in this file have a record of becoming engine: the attention wake
 and the reviewers' request sweep both started here as paper (the sweep's
-org-wide form was then retired by the 2026-07-25 scope ruling). Two are
-still on paper: the notifier's `needs-ruling` queue — at the stamped crew
-SHA, `notify.sh`'s only label filter is `state:needs-human` — and the
-builders' ci-red wake above, engine the moment crew#64 merges.
+org-wide form was then retired by the 2026-07-25 scope ruling), and the
+builders' ci-red wake above is the latest: written here as paper while
+crew#64 was open, engine at the stamped SHA. Two rows are still on paper, and
+both are `needs-ruling`: the notifier's queue — at that SHA, `notify.sh`'s
+only label filter is `state:needs-human` — and triage's **past 24h**
+detection row above, which the triage-signals bullet already marks. Earlier
+counts here said "two" while silently excluding the second; naming them is
+cheaper than a number that has to be recounted every time a wake lands.
 
 ### Conventions on the board
 
