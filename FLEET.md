@@ -132,9 +132,13 @@ wake is no longer on paper: `duty-attention.sh` is deployed engine, and
 
 The engine's duty order is fleet-standard
 ([`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/bin/duty.sh)):
-**attention → triage signals → review queue → resume → build → handoff →
-rebase → worktree hygiene → backlog hygiene (hourly)** — attention
+**attention → triage signals → review queue → resume → ci-red → build →
+handoff → rebase → worktree hygiene → backlog hygiene (hourly)** — attention
 role-independent and first, then each duty family the box's roles enable.
+One position in that order is **on paper**: ci-red is
+[crew#64](https://github.com/heavy-duty/crew/pull/64)'s, unmerged at the
+stamped SHA, where `duty.sh` still runs resume straight into build — it
+reads as deployed engine only once that PR merges.
 The earlier form of this file folded handoff and rebase into the other
 builder wakes; they are duties of their own.
 
@@ -163,10 +167,23 @@ builder wakes; they are duties of their own.
   — a session died between first push and PR creation. A branch whose PR
   already **merged** is a post-merge wait, never resumed (#172,
   incubator#55/#64).
+- **ci-red** (builders; **on paper** — crew#64's spec, unmerged at the
+  stamped SHA): a non-draft PR of mine whose check at the current head is
+  failing. Evaluated before the build wake, so a red PR of mine outranks a
+  new claim — repairing my own red head comes ahead of new work
+  (ceremony#163: full-panel approvals at the head, mergeable, stranded on
+  a transient failure no wake covered). A round owed at a red head is
+  excluded from the build wake below but reported rather than silent, and
+  an unchanged red head goes quiet after one attempt, through the
+  `report_suppressed` path — suppressed, still said. How a red head is
+  detected and kept quiet is the engine's mechanism, described in crew's
+  `shared/README.md`, not here.
 - **Build**: a `ready` **unclaimed** issue (an assignee means mid-claim, not
   pickable), or a completed review round on my PR — a changes-request with
   no panel review request still outstanding; whole rounds, never single
-  verdicts.
+  verdicts, and — once ci-red deploys — never a round at a red head: that
+  head has already woken ci-red above, and the excluded round is reported,
+  not swallowed.
 - **Handoff**: a round of mine that converged — every panelist's latest
   opinionated review approves the current head, no panel request
   outstanding, mergeable right now, `state:needs-human` not already set.
@@ -231,9 +248,10 @@ The duty engine is crew's shared tree, one source deployed to every box;
 makes the registry rule an operator decision rather than a sweep's. Specs
 written in this file have a record of becoming engine: the attention wake
 and the reviewers' request sweep both started here as paper (the sweep's
-org-wide form was then retired by the 2026-07-25 scope ruling). The
-notifier's `needs-ruling` queue is the one still on paper: at the stamped
-crew SHA, `notify.sh`'s only label filter is `state:needs-human`.
+org-wide form was then retired by the 2026-07-25 scope ruling). Two are
+still on paper: the notifier's `needs-ruling` queue — at the stamped crew
+SHA, `notify.sh`'s only label filter is `state:needs-human` — and the
+builders' ci-red wake above, engine the moment crew#64 merges.
 
 ### Conventions on the board
 
