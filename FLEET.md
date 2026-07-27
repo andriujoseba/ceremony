@@ -6,12 +6,13 @@
 > the vendored doctrine set (`.ceremony/`) and is never mirrored to consumer
 > repos. The doctrine files (AGENTS.md, TRIAGE.md, BUILDER.md, REVIEWER.md,
 > LABELS.md, CONTRIBUTING.md) say what roles *must* do; this file says how the
-> current bench *physically* does it. Last reconciled against the deployed
-> duty scripts at
-> [`heavy-duty/crew@b2fd864`](https://github.com/heavy-duty/crew/tree/b2fd8642e7f7aa8dc9de6b44edadbe1dc557b140)
-> (private to the org; the fleet can read it), 2026-07-24 — a descriptive
-> file with no reconciliation stamp gives the next reader nothing to diff,
-> which is exactly how the #149 drift went unnoticed.
+> current bench *physically* does it — and since the duty engine converged
+> into [heavy-duty/crew](https://github.com/heavy-duty/crew) (private to the
+> org; the fleet can read it), the *mechanism* lives there and this file only
+> points at it. Last reconciled against the merged engine at
+> [`heavy-duty/crew@01fb49c`](https://github.com/heavy-duty/crew/tree/01fb49cd717a0f4c83df286af86411c69e3c2363),
+> 2026-07-27 — a descriptive file with no reconciliation stamp gives the next
+> reader nothing to diff, which is exactly how the #149 drift went unnoticed.
 
 ## The roster
 
@@ -27,28 +28,56 @@ network path — GitHub is the only queue.
 | `grok-bot-andresmgsl` | grok-box | Grok CLI | reviewer |
 | `kimi-bot-andresmgsl` | kimi-box | Kimi CLI | reviewer |
 
+This table is the **as-built** bench — five boxes, two of them dual-role. It
+is not the same thing as crew's
+[`fleet.roster`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/fleet.roster),
+whose own header declares it the **target** environment: seven single-role
+boxes, the dual-role claude and codex boxes each split into a builder and a
+reviewer member. The delta is exactly that split (plus each new box needing
+its own identity at login); until it is deployed, this table is the record of
+what actually runs, and `fleet.roster` is where it is going.
+
 Review panel per PR = the reviewer bench minus the PR's author (recusal by
 construction). Only humans merge — enforced as permissions (the agents team
 holds the triage role, not write), not as convention.
 
 ## Anatomy of a duty loop
 
-Every box runs the same skeleton, adapted to its CLI:
+The mechanism is no longer described here. The five hand-rolled duty scripts
+converged into crew's shared engine, and a prose mirror of running code in a
+second repo is a second thing to keep true — this one drifted (it said cron
+ran `duty.sh` directly and gave the hygiene sweep its own cron line; crew's
+`duty.sh` records that separate line as the bug it fixed, sharing
+`~/duty/work` unlocked). How a tick actually works — cron fires
+[`bin/tick.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/bin/tick.sh),
+the only cron target, which wraps
+[`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/bin/duty.sh)
+in a non-blocking `flock` with one evidence line per boundary; the boot gate
+and crash recovery; the session runner; backlog hygiene self-scheduling
+inside the duty tick under the same lock — lives with the code:
+[`shared/README.md`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/README.md)
+is the map, provenance table included. Sessions stay stateless and
+disposable — all state lives on the board (issues, PRs, labels) and in git
+branches; detection is the engine's, judgment is the session's.
 
-- **Tick:** cron `*/5` runs `~/duty/duty.sh` under a non-blocking `flock`; the
-  triage box adds an hourly hygiene sweep under its own lock. Holding the lock
-  is load-bearing: a tick that acquires it *knows* nothing else is running on
-  this identity.
-- **Poll:** the script reads `~/duty/repos.txt` and queries GitHub with `gh`
-  for work matching the box's role. Whose registry that file is depends on
-  the role: the triage box's `repos.txt` **is** its registry — adding a repo
-  is adding a line — while a reviewer's registry is the org itself, and its
-  `repos.txt` is a backstop that cannot scope it (grok's copy says so in its
-  own first line).
-- **Act:** when there is work, the script launches the box's CLI as a one-shot
-  session with a role prompt; the session does the work via `gh` as the box's
-  own identity, then exits. Sessions are stateless and disposable — all state
-  lives on the board (issues, PRs, labels) and in git branches.
+What belongs here is what a wake *means*:
+
+- **The registry is the scope.** Every duty *queue* works the repos named in
+  the box's `~/duty/repos.txt` and only those: the boards triage sweeps, the
+  bound on a builder's author-side duties, the reviewer's queue. **A review
+  request outside the registry is not authorization to review** — it is
+  logged, a WARN naming the request, and never acted on; the repair is the
+  operator adding the repo to the list. The rule changed on 2026-07-25
+  (operator ruling, crew#16): the old doctrine — a reviewer's registry is
+  the org itself and no repo filter may gate a request — made every box's
+  write surface the whole org, which no registry could bound: the drill's
+  containment interlock narrowed `repos.txt` and so confined triage and
+  hygiene, but not review, the one module that submits verdicts.
+  [`lib/duty-review.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/lib/duty-review.sh)
+  states the rule and implements the WARN.
+- **One wake is registry-independent, by design: attention** (next section).
+  The registry bounds what a box goes *looking for*, not what is handed to
+  this identity *by name*.
 
 ### Wake conditions
 
@@ -62,9 +91,21 @@ sibling agent outranks self-directed continuation, and it is frequently the
 very thing that unparks the work resume would otherwise pick up. The query is
 the authenticated-user endpoint —
 `gh api "/issues?filter=assigned&state=open&labels=attention"` — one call, no
-search index (the reviewer trigger below already records that the index
-lags), and like the review-request trigger it reaches repos `~/duty/repos.txt`
-does not name.
+search index (the review queue below already records that the index lags) —
+and, **alone among the wakes, it reaches repos `~/duty/repos.txt` does not
+name.**
+
+That reach is deliberate, and it survives the registry rule above as its one
+stated exception. An `attention` assignment is work handed to this identity
+by name, and **the assignment is what carries the authorization** — there is
+nothing here for a repo list to scope, because the box is not choosing where
+to look.
+[`lib/duty-attention.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/lib/duty-attention.sh)
+queries the cross-repo endpoint on purpose and says so in its header; a fix
+that bounds this wake to the registry would re-create the #16 incident below.
+(Crew's `conf/repos-default.txt` header currently claims *every* duty module
+is registry-bounded — that contradiction is crew's, raised there as a
+discussion; this file records the exception as it is implemented today.)
 
 Each demand gets **exactly one session, and the ack bounds it**: the
 session's first act, before any of the demanded work, is the pickup comment
@@ -85,47 +126,68 @@ wake: [#16's 16:49Z
 ruling](https://github.com/heavy-duty/ceremony/issues/16#issuecomment-5061051198)
 authorized the last open acceptance criterion on a `claimed` issue and sat
 unowned for over an hour — the box answered every state signal that day and
-never saw the comment, and the eventual pickup ran on a manual bridge. Like
-the notifier's queue below, this wake is the spec for a box-side change only
-the operator can make; until `duty.sh` polls it, the wake exists on paper —
-though one consumer already polls for the label and no-ops while it is
-absent, so the wiring can be verified live the day the row lands.
+never saw the comment, and the eventual pickup ran on a manual bridge. The
+wake is no longer on paper: `duty-attention.sh` is deployed engine, and
+`duty.sh` runs it first on every box, whatever its roles.
 
-- **Triage:** new discussions to mint from, builder questions on issues, stray
-  issues to reconcile, `@`-mentions, hourly hygiene (stale claims, label
-  invariants), and a `needs-ruling` standing **past 24h** — the ladder's last
-  rung makes the option triage's to pick, and this wake list is where triage
-  learns such an item exists (see the notifier section below).
-- **Builders**, in priority order: **resume** (an open draft PR of mine, or a
-  claimed issue with my `build/*` branch but no PR — possible only if a
-  previous session died mid-work), a `ready` issue to claim, a completed
-  review round on my PR (act on whole rounds, never single verdicts), my PR
-  fully approved (write the closing summary, flip to `state:needs-human`,
-  request the human), my PR `CONFLICTING` (rebase; never act on `UNKNOWN` —
-  post-merge flap).
-- **Reviewers**, one candidate set from two merged sources. Source 1,
-  authoritative: every open PR in the `heavy-duty` org **plus the named bot
-  forks** that lists me in `requested_reviewers`, enumerated straight from
-  the pulls API — never `gh search`, whose index lags (cast#143,
-  incubator#25 and box#164 each sat unreviewed behind it). A review request
-  is authorization, so no repo filter may gate it. Source 2, backstop: the
-  `repos.txt` poll for an open PR by someone else whose head I have not yet
-  reviewed — it only **adds** candidates the sweep may have missed (an
-  org-enumeration failure, say) and never concludes "nothing to do". The
-  sources are merged and deduplicated by (repo, PR) **before** acting, not
-  run as sequential passes — the sequential shape double-announced on
-  ceremony#32, when the request sweep and the repo-list poll each acted on
-  the same PR in one tick (operator protocol 2026-07-23) — and worked
-  oldest-first. Unchanged: one verdict per head, deduplicated against my
-  own latest review's SHA.
+The engine's duty order is fleet-standard
+([`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/01fb49cd717a0f4c83df286af86411c69e3c2363/shared/bin/duty.sh)):
+**attention → triage signals → review queue → resume → build → handoff →
+rebase → worktree hygiene → backlog hygiene (hourly)** — attention
+role-independent and first, then each duty family the box's roles enable.
+The earlier form of this file folded handoff and rebase into the other
+builder wakes; they are duties of their own.
+
+- **Triage signals**, per registry repo: `needs-triage` issues,
+  queue-unlabeled strays, discussions without triage's voice, unread
+  `@`-mentions (their own session), and `blocked` issues whose named blockers
+  have all landed — a lead the session verifies, never a label the engine
+  flips. Backlog hygiene (stale claims, label invariants) runs hourly,
+  self-scheduled inside the duty tick. A `needs-ruling` standing **past
+  24h** is still triage's to pick up — the ladder's last rung makes the
+  option triage's to choose — but, like the notifier queue below, that
+  detection row is on paper only today.
+- **Review queue**: one candidate set, enumerated from the pulls pages of
+  every registry repo — object endpoints, never the search index for the
+  queue itself, whose lag left cast#143, incubator#25 and box#164 sitting
+  unreviewed — filtered to PRs listing me in `requested_reviewers`, deduped
+  by (repo, PR) before acting (the sequential shape double-announced on
+  ceremony#32), and worked oldest-first. One search-backed **awareness pass**
+  per tick reports requests outside the registry and never acts on them —
+  the scope rule above. One verdict per head, deduplicated against my own
+  latest review's SHA; a re-request at an unchanged head is answered with an
+  auto-approve through the verdict gate rather than left as a stale blocker
+  (operator ruling 2026-07-23, ceremony#94).
+- **Resume** (builders, checked before build): an open draft PR of mine, or
+  a `claimed` issue whose `build/*` branch exists on my fork with no open PR
+  — a session died between first push and PR creation. A branch whose PR
+  already **merged** is a post-merge wait, never resumed (#172,
+  incubator#55/#64).
+- **Build**: a `ready` **unclaimed** issue (an assignee means mid-claim, not
+  pickable), or a completed review round on my PR — a changes-request with
+  no panel review request still outstanding; whole rounds, never single
+  verdicts.
+- **Handoff**: a round of mine that converged — every panelist's latest
+  opinionated review approves the current head, no panel request
+  outstanding, mergeable right now, `state:needs-human` not already set.
+  Convergence is computed from `latestOpinionatedReviews`, never
+  `reviewDecision`, which stays empty without branch protection and silently
+  stalled rounds for a day (ceremony#26, #39).
+- **Rebase**: my PR `CONFLICTING` — and only `CONFLICTING`; `UNKNOWN` is
+  GitHub's post-merge recompute flap and waits. A conflicting draft belongs
+  to resume.
+- **Worktree hygiene**: a `build/*` worktree is removed only when its branch
+  has PR history and no PR on it remains open; a branch with no PR at all is
+  an in-flight claim and stays.
 
 #### The operator notifier — the `needs-ruling` queue
 
-The operator notifier (`notify.sh`, on the triage box) watches open PRs
-carrying `state:needs-human`. That poll never reads `needs-ruling`, which
-lives mostly on *issues* — so an escalation waits invisibly on the very human
-it names. Not hypothetical: on 2026-07-23 alone, three escalations spent
-their whole lives outside the operator's view — [#16's fork-PR-workflows
+The operator notifier (`notify.sh`, a fleet singleton on the triage box; its
+mechanism is crew's too) watches open PRs carrying `state:needs-human`. That
+poll never reads `needs-ruling`, which lives mostly on *issues* — so an
+escalation waits invisibly on the very human it names. Not hypothetical: on
+2026-07-23 alone, three escalations spent their whole lives outside the
+operator's view — [#16's fork-PR-workflows
 question](https://github.com/heavy-duty/ceremony/issues/16#issuecomment-5053302689)
 (raised 01:23Z, [ruled 09:24Z](https://github.com/heavy-duty/ceremony/issues/16#issuecomment-5056705884)
 — eight hours in which the board showed a `claimed` issue indistinguishable
@@ -135,7 +197,7 @@ and [epic #50's own 13:04Z
 flag](https://github.com/heavy-duty/ceremony/issues/50#issuecomment-5058713181),
 which surfaced only because a human happened to look. This file records how
 the fleet actually runs; that is why this wiring changed (#50 D16). The spec
-for the box-side update:
+for the engine-side update:
 
 - **The second query.** Alongside the `state:needs-human` PR poll, `notify.sh`
   polls **open issues and PRs labelled `needs-ruling`** across every repo in
@@ -164,54 +226,43 @@ Nothing box-side ever sets, clears, or decides `needs-ruling` (#50 D9, D15):
 the notifier and triage's past-24h wake above *report and pick up* what the
 board already shows; the label itself moves only by the doctrine's hands.
 
-`~/duty/repos.txt` and the duty scripts live inside each box and are the
-operator's to change; this descriptive edit is the spec for those box-side
-updates. The reviewers' request sweep is one such spec made real — deployed
-on all four reviewer boxes since 2026-07-23 (the Reviewers wake above). The
-notifier's `needs-ruling` queue is still on paper only: `notify.sh`'s one
-label filter today is `state:needs-human`.
-
-### Resilience
-
-- **Boot gate:** each tick compares the kernel boot id
-  (`/proc/sys/kernel/random/boot_id`) to a stored marker. First tick after any
-  reboot runs credential + disk probes; the marker is written only when auth
-  actually works, so a box with dead credentials re-checks loudly every tick
-  instead of silently skipping duty.
-- **Crash-only resume:** there is no session state to restore. The recovery
-  path *is* the normal path: the resume wake condition reads the board, posts
-  `⟲ resuming from <sha>`, and continues from the worklog. Rebooting a box
-  never loses work that was pushed.
-- **Checkpoint discipline (builders):** open the PR as draft at the first
-  commit with a `## Worklog` checkbox list; check off and push after every
-  step. The board and the branch are the only memory.
-- **Worktree isolation:** builders build each PR in its own `git worktree`;
-  reviewers check out PR heads in throwaway detached worktrees and remove them
-  after the verdict. Main clones stay parked on the default branch, always
-  clean; stale worktrees are pruned by the boot gate.
+The duty engine is crew's shared tree, one source deployed to every box;
+`~/duty/repos.txt` stays per-box, the operator's to edit — which is what
+makes the registry rule an operator decision rather than a sweep's. Specs
+written in this file have a record of becoming engine: the attention wake
+and the reviewers' request sweep both started here as paper (the sweep's
+org-wide form was then retired by the 2026-07-25 scope ruling). The
+notifier's `needs-ruling` queue is the one still on paper: at the stamped
+crew SHA, `notify.sh`'s only label filter is `state:needs-human`.
 
 ### Conventions on the board
 
 - `🔎 reviewing head <sha>` — a reviewer announces work before starting, so
   liveness is visible instead of hoped for.
-- `⟲ resuming from <sha>` — a builder announces recovery after interruption.
+- `⟲ resuming from <sha>` — a builder announces recovery after interruption;
+  there is no session state to restore, so the recovery path *is* the normal
+  path: read the board, continue from the worklog. Rebooting a box never
+  loses work that was pushed.
+- Checkpoint discipline (builders): open the PR as draft at the first commit
+  with a `## Worklog` checkbox list; check off and push after every step.
+  The board and the branch are the only memory.
 - Claim ritual: comment on the issue + self-assign + label flip, before any
   branch exists.
 - Handoff: the author closes an approved PR's round with a summary comment,
   flips `state:needs-human`, and requests the human — merging is never the
   fleet's job.
+- Worktree isolation: builders build each PR in its own `git worktree`;
+  reviewers check out PR heads in throwaway detached worktrees and remove
+  them after the verdict. Main clones stay parked on the default branch,
+  always clean.
 
 ## Where this is going
 
 This wiring proved itself on day one (seven merged PRs, unanimous three-model
-review convergence on #39, and a full-fleet crash recovery). The plan:
-
-1. Once the ceremony machinery is complete and adopted, each agent will be
-   asked to write a **detailed, replicable description of its own setup** —
-   cron lines, duty script, prompts, probes — as durable documentation.
-2. Those five descriptions get converged into a **solidified fleet-management
-   solution** (duty loops as reusable templates, likely living alongside the
-   rig templates registry), so standing up this roster on a new repo — or a
-   whole new fleet — is a bootstrap, not an archaeology dig.
-
-Until then, this file is the map.
+review convergence on #39, and a full-fleet crash recovery), and the plan it
+carried has since half-happened: the five per-box duty scripts converged into
+**heavy-duty/crew** — the shared engine, the `crew` CLI, and the fixture
+tests — so standing up a box is a bootstrap, not an archaeology dig. What
+remains is the roster: `fleet.roster` names the seven-box single-role target,
+and the bench above is still the five-box as-built. Until the split lands,
+this file is the map of what runs — and crew is the map of how.
