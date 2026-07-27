@@ -28,8 +28,8 @@ triage bug, and the move is to say so on the issue, not to guess.
   uncertain; never repeatedly rerun a deterministic branch failure without
   a corrective commit; and proceed to handoff once the check is green and
   current-head approvals stand. A PR of yours with a red head is **not
-  parked** — the next move is yours, whatever the verdict ledger says
-  (shape 2 below carves this out explicitly). How the engine detects a red
+  parked** — the next move is yours, whatever the round's verdict state
+  says (shape 2 below carves this out explicitly). How the engine detects a red
   head — its ledger, its quiet rules, the rollup's node shapes — is crew's
   to describe, not this file's.
 - **One build at a time.** You hold at most one issue on which you are
