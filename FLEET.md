@@ -75,9 +75,11 @@ What belongs here is what a wake *means*:
   hygiene, but not review, the one module that submits verdicts.
   [`lib/duty-review.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/lib/duty-review.sh)
   states the rule and implements the WARN.
-- **One wake is registry-independent, by design: attention** (next section).
-  The registry bounds what a box goes *looking for*, not what is handed to
-  this identity *by name*.
+- **No wake is exempt, including attention** (next section). The attention
+  *query* is cross-repo by construction — it is one call to the
+  authenticated-user endpoint, which has no repo filter — but the *action*
+  it authorizes is bounded like every other. A demand parked on this box in
+  a repo nobody listed is reported, never worked.
 
 ### Wake conditions
 
@@ -92,20 +94,26 @@ very thing that unparks the work resume would otherwise pick up. The query is
 the authenticated-user endpoint —
 `gh api "/issues?filter=assigned&state=open&labels=attention"` — one call, no
 search index (the review queue below already records that the index lags) —
-and, **alone among the wakes, it reaches repos `~/duty/repos.txt` does not
-name.**
+and it **sees** repos `~/duty/repos.txt` does not name, because that endpoint
+takes no repo filter.
 
-That reach is deliberate, and it survives the registry rule above as its one
-stated exception. An `attention` assignment is work handed to this identity
-by name, and **the assignment is what carries the authorization** — there is
-nothing here for a repo list to scope, because the box is not choosing where
-to look.
+**Seeing is not acting, and that is a ruling** (crew#66, danmt, 2026-07-27).
+The wake used to work every row it saw, which for a builder meant a clone and
+the full worktree and round rule set against a repo no operator had listed —
+write authority outside the registry, and the one hole left in the
+containment story. Rows are now partitioned against the registry: inside it,
+a session as before; outside it, reported and never acted on, exactly like an
+out-of-scope review request or authored PR.
 [`lib/duty-attention.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/lib/duty-attention.sh)
-queries the cross-repo endpoint on purpose and says so in its header; a fix
-that bounds this wake to the registry would re-create the #16 incident below.
-(Crew's `conf/repos-default.txt` header currently claims *every* duty module
-is registry-bounded — that contradiction is crew's, raised there as a
-discussion; this file records the exception as it is implemented today.)
+implements the partition and states the ruling in its header.
+
+The cost was argued before the ruling rather than discovered after it: an
+assignment plus a label **is** a targeted authorization, so a cross-repo
+handoff now waits on an operator adding the repo, and the box most likely to
+be handed work outside its beat is the one that goes quiet. That is why an
+out-of-scope demand does not only reach `duty.log` — it pings the operator
+over the same channel the boot gate uses. A bounded wake that failed silently
+would trade an unbounded write surface for a broken channel to the human.
 
 Each demand gets **exactly one session, and the ack bounds it**: the
 session's first act, before any of the demanded work, is the pickup comment
@@ -113,9 +121,13 @@ plus removing the label — [the `attention`
 contract's](https://github.com/heavy-duty/ceremony/blob/bce09aa7648dbd74b8e91b1d4fbc2fa8d145f705/LABELS.md#L143-L149)
 ack (#85), which here becomes the session's ack-then-act ordering.
 Then it acts on the thread and exits — short by construction. Until the label
-is removed the flag is still up, so a session that dies before acking is
-simply relaunched at the next tick; that is the whole crash-recovery story,
-and it is the same crash-only shape as resume below.
+is removed the flag is still up, so a session that **dies** before acking is
+simply relaunched at the next tick — the same crash-only shape as resume
+below. A session that **completes** without acking is a different fact: that
+is a decline, and a seen-ledger stops it re-firing until the issue moves.
+Dying and declining used to look identical to the engine, which meant a
+demand a session had considered and correctly left alone woke a new one every
+tick forever.
 
 The design this replaces was built and rejected: polling notifications for
 `reason: mention` re-arms a thread on every comment, so ordinary round
@@ -256,9 +268,12 @@ written in this file have a record of becoming engine: the attention wake
 and the reviewers' request sweep both started here as paper (the sweep's
 org-wide form was then retired by the 2026-07-25 scope ruling), and the
 builders' ci-red wake above is the latest: written here as paper while
-crew#64 was open, engine at the stamped SHA. One is still on paper: the
-notifier's `needs-ruling` queue — at that SHA, `notify.sh`'s only label
-filter is `state:needs-human`.
+crew#64 was open, engine at the stamped SHA. Two rows are still on paper, and
+both are `needs-ruling`: the notifier's queue — at that SHA, `notify.sh`'s
+only label filter is `state:needs-human` — and triage's **past 24h**
+detection row above, which the triage-signals bullet already marks. Earlier
+counts here said "two" while silently excluding the second; naming them is
+cheaper than a number that has to be recounted every time a wake lands.
 
 ### Conventions on the board
 
