@@ -41,8 +41,10 @@ triage bug, and the move is to say so on the issue, not to guess.
      its `Blocked:` line stops the remaining work;
   2. the deliverable is in a review round where every outstanding verdict
      belongs to someone else — either the round is awaiting its first
-     verdicts, or it was answered whole and the non-approvers re-requested
-     (the review round, steps 1–2). This is the *live* round; shape 4 is
+     verdicts, or it was answered whole and the owed re-requests posted —
+     by head, not by verdict: every panelist after a push, the
+     non-approvers alone at an unchanged head (the review round, steps
+     1–2). This is the *live* round; shape 4 is
      the *passed* one — they are sequential and do not overlap. A red
      check at the current head takes the deliverable **out of this
      shape**: mid-round CI going red is exactly the state that reads as
@@ -242,8 +244,21 @@ CONTRIBUTING; everything below is the shared flow.)
    purpose. The costs behind the line are asymmetric: a false green spends
    a three-reviewer round; a false red spends one author session.
 2. **Wait for every verdict, then answer the round whole** — one reply
-   covering every point, then push the fixes, then re-request exactly the
-   reviewers who did not approve — **and the re-request carries the same
+   covering every point, then push the fixes, then re-request **by head,
+   not by verdict**: if answering the round pushed any commit, every
+   panelist's approval is now stale — an approval is of a specific tree,
+   and the handoff predicate counts only approvals at the current head —
+   so **every panelist is re-requested, the approvers included**; a
+   panelist left un-re-requested after a push can never approve the tree
+   you shipped, and the PR sits looking finished with a full set of
+   verdicts and nothing owed by anyone, the same silent-stall shape as
+   [#26](https://github.com/heavy-duty/ceremony/issues/26)/[#39](https://github.com/heavy-duty/ceremony/issues/39).
+   Only when the head did not move — the round was answered with argument
+   or evidence and nothing was pushed — do you re-request just the
+   non-approvers: a standing approval already covers this exact head, and
+   the engine absorbs a re-request at an unchanged head (the re-request
+   rule, [#94](https://github.com/heavy-duty/ceremony/issues/94); its
+   mechanism is crew's to describe). **The re-request carries the same
    green-check-at-head precondition as the first request**, argued
    exception included. This is where the measured cost landed: crew#40
    burned two consecutive heads and four reviewer-rounds, every one
