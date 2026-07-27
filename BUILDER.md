@@ -11,6 +11,27 @@ triage bug, and the move is to say so on the issue, not to guess.
 - Respect dependency order: inside an epic, take the earliest unblocked
   unclaimed child. Between epics and strays, prefer the issue that unblocks
   the most other work.
+- **Your own red head outranks a new claim.** A failing check at the head
+  of a PR you authored is picked up **before claiming another issue** —
+  repairing your own red PR comes ahead of new work, which is why the
+  engine's duty order evaluates ci-red between resume and build (crew#17:
+  ceremony#163 sat with full-panel approvals at its head, mergeable, and
+  stranded on an HTTP 429 in a job that never ran the PR's code, because no
+  wake covered a red head that owed no round and had no conflict). Red and
+  green here are the ruled terms of the review round below: a cancelled or
+  stale check is not a green head; a skipped or neutral one is. The
+  recovery path (crew#17): inspect the check at the head and record the
+  failing check and its failure class; rerun a clearly retryable
+  infrastructure failure without changing code; when the failure belongs to
+  the branch, return to the normal fix-round and worklog discipline; leave
+  visible evidence when a rerun cannot be started or the cause is
+  uncertain; never repeatedly rerun a deterministic branch failure without
+  a corrective commit; and proceed to handoff once the check is green and
+  current-head approvals stand. A PR of yours with a red head is **not
+  parked** — the next move is yours, whatever the verdict ledger says
+  (shape 2 below carves this out explicitly). How the engine detects a red
+  head — its ledger, its quiet rules, the rollup's node shapes — is crew's
+  to describe, not this file's.
 - **One build at a time.** You hold at most one issue on which you are
   writing or revising a deliverable — finish or release that work before
   starting new work. The rule counts build work in flight, not claims: a
@@ -22,7 +43,12 @@ triage bug, and the move is to say so on the issue, not to guess.
      belongs to someone else — either the round is awaiting its first
      verdicts, or it was answered whole and the non-approvers re-requested
      (the review round, steps 1–2). This is the *live* round; shape 4 is
-     the *passed* one — they are sequential and do not overlap;
+     the *passed* one — they are sequential and do not overlap. A red
+     check at the current head takes the deliverable **out of this
+     shape**: mid-round CI going red is exactly the state that reads as
+     "waiting on the panel" and is not — the next move is yours (the
+     red-head rule above), and reading it as parked is what strands the
+     PR;
   3. every remaining acceptance criterion is operator-owned, stated as such
      by triage on the issue;
   4. the deliverable is **handed off** — the round passed, no `blocker:*`
@@ -53,7 +79,8 @@ triage bug, and the move is to say so on the issue, not to guess.
      that, or, if the events genuinely do not resolve it, say so on the
      issue and pick the next `ready` issue rather than idling on this one.
   Not parked — these are what the rule defends against: waiting on
-  yourself, waiting on CI, or waiting for a good moment. An issue you have
+  yourself, waiting on CI (a red head is your own work, above; a pending
+  one resolves without you), or waiting for a good moment. An issue you have
   simply stopped working on is not parked either — that is abandonment,
   and its move is unchanged: unassign and restore `ready` (Claiming,
   below).
@@ -194,9 +221,35 @@ CONTRIBUTING; everything below is the shared flow.)
    does not become required. On rig#112 this distinction mattered: requesting
    codex and grok was correct for rig's panel even though ceremony's bench was
    larger, and the doctrine had not said which roster governed.
+   **A review request requires a green check at the head.** A red check is
+   the author's own signal, not the panel's work: if the check is red, that
+   is your next task, not the panel's — fix it and push, then request. This
+   binds *you*, whether or not any engine enforces it. "My local suite
+   passed" is evidence about your machine; the check at the head is the
+   shared artifact the panel actually reads, and a reviewer's first act is
+   to read it. The one exception is a failure genuinely outside the PR — a
+   runner outage, a flaky dependency, a failure already present on the
+   default branch — and it is an exception only if the request says so
+   explicitly and names the evidence (e.g. "the same job fails identically
+   on `origin/main` at `<sha>`"). Silence about a red check is what is
+   prohibited; an argued exception shifts the burden to the author.
+   *Green* is a ruled term (operator, 2026-07-27): a **cancelled or
+   stale** check is not a green head — the rollup is scoped to the current
+   head, so what survives there is same-head cancellation, not
+   supersession by a newer push — while a **skipped or neutral** one *is*
+   green: those are deliberate "passed / not applicable" conclusions, and
+   reddening them would red every conditional job the fleet skips on
+   purpose. The costs behind the line are asymmetric: a false green spends
+   a three-reviewer round; a false red spends one author session.
 2. **Wait for every verdict, then answer the round whole** — one reply
    covering every point, then push the fixes, then re-request exactly the
-   reviewers who did not approve. Prefer verification over argument: when a
+   reviewers who did not approve — **and the re-request carries the same
+   green-check-at-head precondition as the first request**, argued
+   exception included. This is where the measured cost landed: crew#40
+   burned two consecutive heads and four reviewer-rounds, every one
+   relaying a CI failure already visible in the job log (crew#45). A fix
+   push whose check comes up red is not ready to go back to the panel; it
+   is your next fix. Prefer verification over argument: when a
    reviewer doubts behavior, add the test that settles it.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
