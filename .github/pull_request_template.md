@@ -16,5 +16,5 @@ to the issue for triage to amend, not silently unshipped. -->
 
 ## Round log
 
-<!-- Append each round's summary here: what changed, what was verified.
-Rounds are answered whole — one reply covering every point. -->
+<!-- The engine appends each whole-round reply here, newest last: what
+changed and what was verified. Builders write the reply, not this section. -->
