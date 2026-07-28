@@ -1,43 +1,32 @@
-# FLEET.md — the roster, and how it actually runs
+# FLEET.md — the fleet shape, and how it actually runs
 
 > **Status:** descriptive snapshot, not doctrine. This file records how the
-> agent fleet that builds this repo is wired *today*, so the setup can later be
-> solidified into a replicable fleet-management solution. It is **not** part of
-> the vendored doctrine set (`.ceremony/`) and is never mirrored to consumer
-> repos. The doctrine files (AGENTS.md, TRIAGE.md, BUILDER.md, REVIEWER.md,
-> LABELS.md, CONTRIBUTING.md) say what roles *must* do; this file says how the
-> current bench *physically* does it — and since the duty engine converged
-> into [heavy-duty/crew](https://github.com/heavy-duty/crew) (private to the
-> org; the fleet can read it), the *mechanism* lives there and this file only
-> points at it. Last reconciled against the merged engine at
-> [`heavy-duty/crew@4da17c4`](https://github.com/heavy-duty/crew/tree/4da17c49594c2d86bd3793fa3567846cbca38e90),
-> 2026-07-27 — a descriptive file with no reconciliation stamp gives the next
+> heavy-duty operator fleet is wired *today*. It is **not** part of the
+> vendored doctrine set (`.ceremony/`) and is never mirrored to consumer
+> repos. [Crew](https://github.com/heavy-duty/crew) is a general tool: its
+> repository ships the engine, while the fleet definition belongs to the
+> operator; heavy-duty is one operator of it. Membership, repository scope,
+> agent-profile overrides and doctrine paths belong to that definition;
+> membership itself lives outside every checkout. Crew's shipped defaults
+> name heavy-duty's AGENTS.md, TRIAGE.md, BUILDER.md and REVIEWER.md, but
+> those are compatibility defaults, not vocabulary compiled into the engine
+> — operator `doctrine.conf` values can replace them.
+> The *mechanism* lives with crew and this file points at it. Last reconciled
+> against the merged engine at
+> [`heavy-duty/crew@eaeb302`](https://github.com/heavy-duty/crew/tree/eaeb3022aa47d90e797f2b9e007b831df7ca8406),
+> 2026-07-28 — a descriptive file with no reconciliation stamp gives the next
 > reader nothing to diff, which is exactly how the #149 drift went unnoticed.
 
-## The roster
+## Fleet shape
 
 One box (an isolated, disposable VM) per GitHub identity. Boxes are credential
 boundaries; sessions inside a box are role boundaries. No box has an inbound
-network path — GitHub is the only queue.
+network path — GitHub is the only queue. Fleet membership is the operator's
+definition and lives outside every checkout; this file deliberately carries
+no second roster.
 
-| Identity | Box | CLI | Roles |
-|---|---|---|---|
-| `dan-claude-bot` | triage-box | Claude Code | **triage** — the only issue-minter |
-| `claude-bot-andresmgsl` | claude-box | Claude Code | builder (hard machinery) + reviewer |
-| `codex-bot-andresmgsl` | codex-box | Codex CLI | builder (mechanical) + reviewer |
-| `grok-bot-andresmgsl` | grok-box | Grok CLI | reviewer |
-| `kimi-bot-andresmgsl` | kimi-box | Kimi CLI | reviewer |
-
-This table is the **as-built** bench — five boxes, two of them dual-role. It
-is not the same thing as crew's
-[`fleet.roster`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/fleet.roster),
-whose own header declares it the **target** environment: seven single-role
-boxes, the dual-role claude and codex boxes each split into a builder and a
-reviewer member. The delta is exactly that split (plus each new box needing
-its own identity at login); until it is deployed, this table is the record of
-what actually runs, and `fleet.roster` is where it is going.
-
-Review panel per PR = the reviewer bench minus the PR's author (recusal by
+Review panel per PR = the governed repo's `.github/labels.conf` `panel=` line
+minus the PR's author, as [REVIEWER.md](REVIEWER.md) specifies (recusal by
 construction). Only humans merge — enforced as permissions (the agents team
 holds the triage role, not write), not as convention.
 
@@ -49,16 +38,17 @@ second repo is a second thing to keep true — this one drifted (it said cron
 ran `duty.sh` directly and gave the hygiene sweep its own cron line; crew's
 `duty.sh` records that separate line as the bug it fixed, sharing
 `~/duty/work` unlocked). How a tick actually works — cron fires
-[`bin/tick.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/bin/tick.sh),
+[`bin/tick.sh`](https://github.com/heavy-duty/crew/blob/eaeb3022aa47d90e797f2b9e007b831df7ca8406/shared/bin/tick.sh),
 the only cron target, which wraps
-[`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/bin/duty.sh)
+[`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/eaeb3022aa47d90e797f2b9e007b831df7ca8406/shared/bin/duty.sh)
 in a non-blocking `flock` with one evidence line per boundary; the boot gate
 and crash recovery; the session runner; backlog hygiene self-scheduling
 inside the duty tick under the same lock — lives with the code:
-[`shared/README.md`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/README.md)
-is the map, provenance table included. Sessions stay stateless and
-disposable — all state lives on the board (issues, PRs, labels) and in git
-branches; detection is the engine's, judgment is the session's.
+[`shared/README.md`](https://github.com/heavy-duty/crew/blob/eaeb3022aa47d90e797f2b9e007b831df7ca8406/shared/README.md)
+is the map, provenance table included. Sessions stay disposable: durable work
+state lives on the board (issues, PRs, labels) and in git branches, while the
+engine keeps only operational evidence and deduplication state under
+`~/duty`; detection is the engine's, judgment is the session's.
 
 What belongs here is what a wake *means*:
 
@@ -70,7 +60,7 @@ What belongs here is what a wake *means*:
   The 2026-07-25 scope ruling (crew#16) closed the org-wide review and
   author-side write surface; the crew#66 attention ruling closed the last
   exemption. Crew's
-  [`repos-default.txt` header](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/conf/repos-default.txt)
+  [`examples/repos.txt` header](https://github.com/heavy-duty/crew/blob/eaeb3022aa47d90e797f2b9e007b831df7ca8406/examples/repos.txt)
   is the pinned source for how that rule is implemented and reported.
 
 ### Wake conditions
@@ -96,7 +86,7 @@ write authority outside the registry, and the one hole left in the
 containment story. Rows are now partitioned against the registry: inside it,
 a session as before; outside it, reported and never acted on, exactly like an
 out-of-scope review request or authored PR.
-[`lib/duty-attention.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/lib/duty-attention.sh)
+[`lib/duty-attention.sh`](https://github.com/heavy-duty/crew/blob/eaeb3022aa47d90e797f2b9e007b831df7ca8406/shared/lib/duty-attention.sh)
 implements the partition and states the ruling in its header.
 
 The cost was argued before the ruling rather than discovered after it: an
@@ -135,7 +125,7 @@ wake is no longer on paper: `duty-attention.sh` is deployed engine, and
 `duty.sh` runs it first on every box, whatever its roles.
 
 The engine's duty order is fleet-standard
-([`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/bin/duty.sh)):
+([`bin/duty.sh`](https://github.com/heavy-duty/crew/blob/eaeb3022aa47d90e797f2b9e007b831df7ca8406/shared/bin/duty.sh)):
 **attention → triage signals → review queue → resume → ci-red → build →
 handoff → rebase → worktree hygiene → backlog hygiene (hourly)** — attention
 role-independent and first, then each duty family the box's roles enable.
@@ -228,7 +218,8 @@ for the engine-side update:
 
 - **The second query.** Alongside the `state:needs-human` PR poll, `notify.sh`
   polls **open issues and PRs labelled `needs-ruling`** across every repo in
-  the notifier's deliberately wider registry.
+  `notify-repos.txt`, which is deliberately wider than the duty registry:
+  a cross-repo handoff is precisely what the operator cannot discover alone.
 - **One tracked message per item, edited in place** — the same
   one-message-per-item discipline the PR poll already uses, so an aging
   ruling reads as a **live queue**, not a feed. The message is removed when
@@ -290,9 +281,9 @@ cheaper than a number that has to be recounted every time a wake lands.
 
 This wiring proved itself on day one (seven merged PRs, unanimous three-model
 review convergence on #39, and a full-fleet crash recovery), and the plan it
-carried has since half-happened: the five per-box duty scripts converged into
-**heavy-duty/crew** — the shared engine, the `crew` CLI, and the fixture
-tests — so standing up a box is a bootstrap, not an archaeology dig. What
-remains is the roster: `fleet.roster` names the seven-box single-role target,
-and the bench above is still the five-box as-built. Until the split lands,
-this file is the map of what runs — and crew is the map of how.
+carried has become **heavy-duty/crew** — a shared engine, CLI, operator
+configuration model, real-host rehearsal and fixture tests — so standing up
+a fleet is a bootstrap, not an archaeology dig. What remains is adoption:
+crew#85 tracks the road to a `0.1.0` another operator can use without a fork.
+Membership stays in the operator definition; this file remains the map of
+what a wake means, and crew is the map of how it runs.
