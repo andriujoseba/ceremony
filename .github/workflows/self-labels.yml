@@ -12,16 +12,20 @@ on:
   # billing floor, 52% of one private consumer's runs for near-zero real work.
   schedule: [{cron: "0 * * * *"}]
   workflow_dispatch:                 # bootstraps missing labels on a fresh repo
-  # Narrowed to the two actions with promptness-critical reconcile behavior
-  # (#199): `opened` drives the mint→needs-triage check (issueflow's opened-only
-  # path), `closed` drives the blocker-closes→ready self-heal (crew#96/#98). The
-  # dropped actions — labeled/unlabeled/assigned/unassigned/edited/reopened —
-  # only feed validation and the 48h claim clock, which the hourly cron catches
-  # within one cadence; labeled/unlabeled were also the dominant issues-churn
-  # source. The PR handoff wake is pull_request_target:labeled, NOT issues, so
+  # Narrowed (#199) to the actions that carry a queue-state change the hourly
+  # cron cannot wait one cadence for — dropping only labeled/unlabeled/assigned/
+  # unassigned, which feed validation and the 48h claim clock (caught within one
+  # cadence) and were the dominant issues-churn source. Kept: `opened` (the
+  # mint→needs-triage check, issueflow's opened-only path), `closed` (the
+  # blocker-closes→ready self-heal, crew#96/#98), `edited` (a body rewrite of the
+  # `Blocked by #N` declaration the sweep parses — issueflow-reconcile.sh:179),
+  # `reopened` (a closed issue re-entering the queue wearing labels derived when
+  # it closed). The must-fail in #199 is exactly "a queue-state transition waits
+  # on the schedule when an event could have carried it", so edited/reopened stay
+  # on events. The PR handoff wake is pull_request_target:labeled, NOT issues, so
   # this does not touch the handoff.
   issues:
-    types: [opened, closed]
+    types: [opened, closed, edited, reopened]
   pull_request_target:
     # Every PR arrives from a fork, so these carry the head/draft/review facts
     # the sweep derives state:* from. labeled/unlabeled are the handoff wake —

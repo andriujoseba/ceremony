@@ -64,12 +64,24 @@ check "stub cron is hourly" 0 '0 * * * *' grep -F 'cron:' "$STUB"
 check "stub cron line no longer fires */15" 1 "" \
   bash -c 'grep -F "cron:" "$1" | grep -qF "*/15"' _ "$STUB"
 
-# ---- issues: is narrowed to the two promptness-critical actions (#199) -------
-# opened → mint→needs-triage; closed → blocker-closes→ready self-heal. The
-# churn actions must not reappear on the issues surface without a fresh why.
-# (labels.test.sh owns the exact-list and caller<->stub parity assertions; here
-# we name each dropped action so its return produces a #199-specific failure.)
-for churn in labeled unlabeled assigned unassigned edited reopened; do
+# ---- issues: is narrowed to the queue-state-changing actions (#199) ----------
+# Kept because each carries a queue-state change an event uniquely carries, so
+# dropping it would trip #199's must-fail (a transition waiting on the schedule
+# when an event could have carried it): opened → mint→needs-triage; closed →
+# blocker-closes→ready self-heal; edited → a body rewrite of the `Blocked by #N`
+# declaration the sweep parses; reopened → a closed issue re-entering the queue.
+# (labels.test.sh owns the exact-list and caller<->stub parity assertions.)
+for keep in opened closed edited reopened; do
+  # shellcheck disable=SC2016 # the awk program runs in the nested bash, not here
+  check "self caller issues surface keeps '$keep'" 0 "" \
+    bash -c 'trigger_types() {
+      awk -v key="^  issues:\$" "\$0 ~ key{f=1;next} f&&/^    types:/{sub(/^    types:[[:space:]]*/,\"\");print;exit} f&&/^  [a-z]/{exit}" "$1"
+    }; trigger_types "$1" | grep -qw "$2"' _ "$SELF" "$keep"
+done
+# The churn actions must not reappear on the issues surface without a fresh why.
+# labeled/unlabeled were the dominant issues-churn source; assigned/unassigned
+# only feed validation and the 48h claim clock, caught within one cadence.
+for churn in labeled unlabeled assigned unassigned; do
   # shellcheck disable=SC2016 # the awk program runs in the nested bash, not here
   check "self caller issues surface drops '$churn'" 1 "" \
     bash -c 'trigger_types() {

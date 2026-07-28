@@ -69,11 +69,12 @@ check "LABELS.md enumerates no repo's scope labels" 1 "0" \
 # same lists. review_requested/review_request_removed are the wake that
 # clears blocker:unrequested — the label sat false for as long as a quiet
 # repo stayed quiet because the one event that falsifies it was never
-# listed (#137). The issues list narrowed to [opened, closed] (#199): those
-# two carry reconcile behavior the hourly cron cannot wait one cadence for —
-# opened drives mint→needs-triage, closed drives the blocker-closes→ready
-# self-heal — while the churn actions (labeled/unlabeled/assigned/unassigned/
-# edited/reopened) came off. The stub is prose, so nothing but these rows
+# listed (#137). The issues list narrowed to [opened, closed, edited, reopened]
+# (#199): each carries a queue-state change the hourly cron cannot wait one
+# cadence for — opened drives mint→needs-triage, closed the blocker-closes→ready
+# self-heal, edited a body rewrite of the `Blocked by #N` line the sweep parses,
+# reopened a closed issue re-entering the queue — while the churn/validation
+# actions (labeled/unlabeled/assigned/unassigned) came off. The stub is prose, so nothing but these rows
 # keeps the lists from drifting: a type in one file only is a wake that fires
 # at home and nowhere in the fleet, or the reverse — the drift #144 caught.
 # The NF guard keeps `issues: write` under permissions: from matching the
@@ -100,8 +101,8 @@ check "caller and stub pull_request_target lists are identical" 0 "" \
 check "the caller lists both review-request wakes" 0 "" pr_has_both_review_wakes
 check "caller and stub issues lists are identical" 0 "" \
   types_in_sync issues "$CALLER" "$STUB"
-check "the caller lists exactly the two promptness-critical issue types" 0 \
-  "types: [opened, closed]" event_types "$CALLER" issues
+check "the caller lists exactly the queue-state-changing issue types" 0 \
+  "types: [opened, closed, edited, reopened]" event_types "$CALLER" issues
 # the failing cases: drop a type from either file, or reorder one list only,
 # and the identity rows above go red — exercised here on mutated copies
 mut_caller="$TMP/mut-caller.yml" mut_stub="$TMP/mut-stub.md"
