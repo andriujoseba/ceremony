@@ -62,24 +62,16 @@ branches; detection is the engine's, judgment is the session's.
 
 What belongs here is what a wake *means*:
 
-- **The registry is the scope.** Every duty *queue* works the repos named in
-  the box's `~/duty/repos.txt` and only those: the boards triage sweeps, the
-  bound on a builder's author-side duties, the reviewer's queue. **A review
-  request outside the registry is not authorization to review** — it is
-  logged, a WARN naming the request, and never acted on; the repair is the
-  operator adding the repo to the list. The rule changed on 2026-07-25
-  (operator ruling, crew#16): the old doctrine — a reviewer's registry is
-  the org itself and no repo filter may gate a request — made every box's
-  write surface the whole org, which no registry could bound: the drill's
-  containment interlock narrowed `repos.txt` and so confined triage and
-  hygiene, but not review, the one module that submits verdicts.
-  [`lib/duty-review.sh`](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/lib/duty-review.sh)
-  states the rule and implements the WARN.
-- **No wake is exempt, including attention** (next section). The attention
-  *query* is cross-repo by construction — it is one call to the
-  authenticated-user endpoint, which has no repo filter — but the *action*
-  it authorizes is bounded like every other. A demand parked on this box in
-  a repo nobody listed is reported, never worked.
+- **The registry is the scope.** A box acts only on repos its operator
+  listed. Work it finds outside that scope is reported and never acted on;
+  the report is part of the boundary, because a bounded wake that goes quiet
+  is indistinguishable from a broken one. Adding a repo is an **operator
+  decision**, never something a sweep makes by writing where nobody listed.
+  The 2026-07-25 scope ruling (crew#16) closed the org-wide review and
+  author-side write surface; the crew#66 attention ruling closed the last
+  exemption. Crew's
+  [`repos-default.txt` header](https://github.com/heavy-duty/crew/blob/4da17c49594c2d86bd3793fa3567846cbca38e90/shared/conf/repos-default.txt)
+  is the pinned source for how that rule is implemented and reported.
 
 ### Wake conditions
 
@@ -94,7 +86,7 @@ very thing that unparks the work resume would otherwise pick up. The query is
 the authenticated-user endpoint —
 `gh api "/issues?filter=assigned&state=open&labels=attention"` — one call, no
 search index (the review queue below already records that the index lags) —
-and it **sees** repos `~/duty/repos.txt` does not name, because that endpoint
+and it **sees** repos outside the operator's registry, because that endpoint
 takes no repo filter.
 
 **Seeing is not acting, and that is a ruling** (crew#66, danmt, 2026-07-27).
@@ -236,7 +228,7 @@ for the engine-side update:
 
 - **The second query.** Alongside the `state:needs-human` PR poll, `notify.sh`
   polls **open issues and PRs labelled `needs-ruling`** across every repo in
-  `~/duty/repos.txt`.
+  the notifier's deliberately wider registry.
 - **One tracked message per item, edited in place** — the same
   one-message-per-item discipline the PR poll already uses, so an aging
   ruling reads as a **live queue**, not a feed. The message is removed when
@@ -261,11 +253,9 @@ Nothing box-side ever sets, clears, or decides `needs-ruling` (#50 D9, D15):
 the notifier and triage's past-24h wake above *report and pick up* what the
 board already shows; the label itself moves only by the doctrine's hands.
 
-The duty engine is crew's shared tree, one source deployed to every box;
-`~/duty/repos.txt` stays per-box, the operator's to edit — which is what
-makes the registry rule an operator decision rather than a sweep's. Specs
-written in this file have a record of becoming engine: the attention wake
-and the reviewers' request sweep both started here as paper (the sweep's
+The duty engine is crew's shared tree, one source deployed to every box.
+Specs written in this file have a record of becoming engine: the attention
+wake and the reviewers' request sweep both started here as paper (the sweep's
 org-wide form was then retired by the 2026-07-25 scope ruling), and the
 builders' ci-red wake above is the latest: written here as paper while
 crew#64 was open, engine at the stamped SHA. Two rows are still on paper, and
