@@ -208,9 +208,9 @@ triage bug, and the move is to say so on the issue, not to guess.
 
 ## The review round
 
-(If you are reading this as `.ceremony/BUILDER.md` in a governed repo: the
-panel roster and any repo-specific flow notes live in that repo's own
-CONTRIBUTING; everything below is the shared flow.)
+(If you are reading this as `.ceremony/BUILDER.md` in a governed repo:
+repo-specific facts such as the panel roster live in that repo's own
+CONTRIBUTING; the shared flow lives here and is not restated there.)
 
 1. Mark ready-for-review; request **the whole panel**. The panel is the roster
    of the repo the **PR** is in, minus you — never the roster of the repo the
