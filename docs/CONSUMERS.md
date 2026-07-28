@@ -296,10 +296,13 @@ The complete caller is:
 ```yaml
 name: labels
 on:
-  # Hourly, not */15 (#199): the cron is a BACKSTOP. Events below carry every
-  # real state change in seconds; the cron only catches a forgotten handoff, so
-  # a quiet repo loses at most that case, and by ≤1h. */15 billed a full-board
-  # sweep four times an hour at GitHub's 1-minute floor for near-zero work.
+  # Hourly, not */15 (#199): the cron is the sweep's only wake for the
+  # transitions no subscribed event carries — a review verdict landing (no
+  # pull_request_review trigger), blocker:ci-red set/cleared, a blocker:conflict
+  # when another PR merges under this one, and the time-based stale / 48h
+  # claim-reclaim. Events below carry the rest in seconds. Hourly trades ≤1h of
+  # latency on those four for dropping */15's four sweeps an hour at GitHub's
+  # 1-minute floor. Keep the cron — it is the discovery path, not a safety net.
   schedule: [{cron: "0 * * * *"}]
   workflow_dispatch:                 # bootstraps missing labels on a fresh repo
   pull_request_target:

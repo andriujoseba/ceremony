@@ -10,12 +10,14 @@ name: labels
 # and reconcile checks out the BASE branch only. Keep it that way.
 #
 # There is no pull_request_review_target, so a review landing cannot wake this
-# workflow directly — and the caller's cron is a backstop, not the wake (#199
-# relaxed it from */15 to hourly): GitHub deprioritises short intervals anyway,
-# so a quiet repo goes a while between ticks. The handoff wakes the sweep
-# itself: the author sets state:needs-human, and the caller's `labeled` event
-# confirms or corrects that optimistic write within seconds. The cron stays as
-# the last resort for a forgotten handoff.
+# workflow directly — which is why the caller's cron is load-bearing, not a
+# safety net (#199 relaxed it from */15 to hourly, but did NOT drop it). The
+# cron is the sweep's only discovery path for every transition no subscribed
+# event carries: a verdict landing, blocker:ci-red set/cleared, a
+# blocker:conflict when another PR merges under this one, and the time-based
+# stale / 48h claim-reclaim. Where an event IS subscribed the wake is direct —
+# the handoff sets state:needs-human and the caller's `labeled` event confirms
+# or corrects that optimistic write within seconds.
 #
 # This cannot loop: reconciler writes use GITHUB_TOKEN, and GitHub does not
 # create workflow runs from GITHUB_TOKEN-triggered events. Agent writes use a

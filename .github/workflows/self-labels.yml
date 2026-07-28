@@ -5,11 +5,15 @@ name: labels
 # unpinned — correct only for the repo that IS the source). Consumers write:
 #   uses: heavy-duty/ceremony/.github/workflows/labels.yml@<pinned-tag>
 on:
-  # Hourly, not */15 (#199): the cron is a BACKSTOP, not the wake. Events below
-  # carry every real state change in seconds; the cron only catches a FORGOTTEN
-  # handoff, so a quiet repo loses at most the forgotten case, and only by ≤1h —
-  # while */15 fired a full-board sweep four times an hour at GitHub's 1-minute
-  # billing floor, 52% of one private consumer's runs for near-zero real work.
+  # Hourly, not */15 (#199): the cron is the sweep's ONLY wake for the four
+  # transition classes no subscribed event carries — a review verdict landing
+  # (there is no pull_request_review trigger here), blocker:ci-red set or cleared
+  # (no check_suite/check_run/workflow_run), a blocker:conflict when ANOTHER PR
+  # merges under this one, and the time-based stale / 48h claim-reclaim. The
+  # events below carry the rest in seconds. So hourly trades ≤1h of latency on
+  # those four for dropping */15's four full-board sweeps an hour at GitHub's
+  # 1-minute billing floor — 52% of one private consumer's runs. Do NOT delete
+  # this cron — it is the discovery path for those four, not a forgotten-handoff net.
   schedule: [{cron: "0 * * * *"}]
   workflow_dispatch:                 # bootstraps missing labels on a fresh repo
   # Narrowed (#199) to the actions that carry a queue-state change the hourly
