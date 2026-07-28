@@ -296,20 +296,30 @@ The complete caller is:
 ```yaml
 name: labels
 on:
-  schedule: [{cron: "*/15 * * * *"}] # advisory; the handoff label is the real wake
+  # Hourly, not */15 (#199): the cron is a BACKSTOP. Events below carry every
+  # real state change in seconds; the cron only catches a forgotten handoff, so
+  # a quiet repo loses at most that case, and by ≤1h. */15 billed a full-board
+  # sweep four times an hour at GitHub's 1-minute floor for near-zero work.
+  schedule: [{cron: "0 * * * *"}]
   workflow_dispatch:                 # bootstraps missing labels on a fresh repo
   pull_request_target:
-    # review_requested/review_request_removed are unreleased — not in 0.2.0;
-    # add them with the pin bump to the first tag carrying ceremony#137. They
-    # wake the sweep that clears blocker:unrequested when the panel is asked.
+    # Fork PRs; these carry the head/draft/review facts state:* derives from.
+    # labeled/unlabeled are the handoff wake (state:needs-human confirmed here);
+    # synchronize re-derives on every push. review_requested/review_request_removed
+    # are unreleased — not in 0.2.0; add them with the pin bump to the first tag
+    # carrying ceremony#137. They wake the sweep that clears blocker:unrequested
+    # when the panel is asked.
     types: [opened, reopened, ready_for_review, converted_to_draft, synchronize, labeled, unlabeled, review_requested, review_request_removed]
   # Available at 0.2.0 and later (the first tag carrying ceremony#32); a
   # consumer pinned to 0.1.0 omits this block.
   issues:
-    # edited/reopened are unreleased — not in 0.2.0; add them with the pin
-    # bump to the first tag carrying ceremony#144, the same bump as the
-    # pull_request_target additions above.
-    types: [opened, edited, assigned, unassigned, labeled, unlabeled, closed, reopened]
+    # Narrowed to the two promptness-critical actions (#199): opened → the
+    # mint→needs-triage check, closed → the blocker-closes→ready self-heal. The
+    # rest (labeled/unlabeled/assigned/unassigned/edited/reopened) only feed
+    # validation and the 48h claim clock, which the hourly cron catches within
+    # one cadence; labeled/unlabeled were the issues-churn source. The handoff
+    # wake is pull_request_target:labeled, not issues, so this leaves it intact.
+    types: [opened, closed]
 permissions:
   contents: read
   checks: read          # mergeability/check-rollup read for PR state
@@ -330,23 +340,29 @@ needs all three explicit reads above; without them the failure appears as an emp
 The `issues:` trigger is available at `0.2.0` and later — `0.2.0` is the
 first tag carrying ceremony#32. A consumer pinned to `0.1.0` omits it. Adopt
 it only by bumping every ceremony reference to `0.2.0` or later; never mix
-refs to adopt it early. At `0.2.0` the type list stops at `closed`: `edited`
-and `reopened` are newer, part of the pending stub edit below.
+refs to adopt it early. `0.2.0` shipped the broad type list
+(`labeled`/`unlabeled`/`assigned`/`unassigned` alongside `opened`/`closed`);
+ceremony#199 narrows it to `[opened, closed]` and relaxes the cron to hourly,
+so a consumer picks up the smaller trigger surface at the pin bump to the
+first tag carrying ceremony#199. The narrowing supersedes the unreleased
+`edited`/`reopened` additions (#144) rather than shipping them — those actions
+are gone from the caller, not deferred — while keeping the stub and ceremony's
+own caller byte-for-byte parity that #144 established. Only two `issues`
+actions survive because only two carry reconcile behavior the cron cannot wait
+one cadence for: `opened` drives the mint→`needs-triage` check, and `closed`
+drives the blocker-closes→`ready` self-heal.
 
 `pull_request_target` is intentional: fork PRs need the base repository's
 token to write labels. The reusable workflow executes no PR code. It checks
 out only the consumer's base branch and the pinned ceremony implementation.
 The #52 ruling invariants ride exactly these triggers — but the caller above
 is no longer the #18 shape, so adopting current triggers is a stub edit, not
-a bare pin bump. The pending edits are `review_requested` and
-`review_request_removed` on `pull_request_target:` (#137) — the wake that
+a bare pin bump. The one pending `pull_request_target:` edit is
+`review_requested` and `review_request_removed` (#137) — the wake that
 clears `blocker:unrequested` the moment the panel is asked, without which a
-quiet repo wears that flag until the advisory cron — and `edited` and
-`reopened` on `issues:` (#144): the wakes for a body edit rewriting the
-`Blocked by #N` declaration the reconcile sweep parses, and for a closed
-issue re-entering the queue wearing labels derived when it closed. Make both
-edits together, with the pin bump to the first tag carrying ceremony#137 and
-ceremony#144 — never before it and never through mixed refs.
+quiet repo wears that flag until the advisory cron. Adopt it with the pin bump
+to the first tag carrying ceremony#137 — never before it and never through
+mixed refs.
 
 `.github/labels.conf` has one mandatory panel setting, one mandatory
 `triage-actors` setting, and then zero or more scope rows:
