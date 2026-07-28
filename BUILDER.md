@@ -339,10 +339,11 @@ item to its flow in the same comment ([LABELS.md](LABELS.md)).
 
 When the round passes — every panel verdict approves the **current head**,
 and no `blocker:*` stands (conflicts rebased, CI green, drill recorded if
-this is a release PR) — hand it to the human, in order:
+this is a release PR) — the engine performs these mechanical steps on the
+builder's behalf, in order:
 
 1. request the human's review;
-2. set `state:needs-human` yourself;
+2. set `state:needs-human`;
 3. post the engine-rendered handoff comment: approvals at the current head,
    the head SHA, and a pointer to the PR body's **Round log**.
 
