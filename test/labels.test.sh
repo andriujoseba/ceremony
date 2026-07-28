@@ -69,15 +69,15 @@ check "LABELS.md enumerates no repo's scope labels" 1 "0" \
 # same lists. review_requested/review_request_removed are the wake that
 # clears blocker:unrequested — the label sat false for as long as a quiet
 # repo stayed quiet because the one event that falsifies it was never
-# listed (#137). edited/reopened are the wakes for the two events that
-# falsify issue labels silently — an edited body rewrites the `Blocked by
-# #N` declaration the reconcile sweep parses, and a reopened issue
-# re-enters the queue wearing labels derived at close; PR #32 widened the
-# caller by both and the stub never followed (#144). The stub is prose, so
-# nothing but these rows keeps the lists from drifting: a type in one file
-# only is a wake that fires at home and nowhere in the fleet, or the
-# reverse. The NF guard keeps `issues: write` under permissions: from
-# matching the issues: trigger key.
+# listed (#137). The issues list narrowed to [opened, closed] (#199): those
+# two carry reconcile behavior the hourly cron cannot wait one cadence for —
+# opened drives mint→needs-triage, closed drives the blocker-closes→ready
+# self-heal — while the churn actions (labeled/unlabeled/assigned/unassigned/
+# edited/reopened) came off. The stub is prose, so nothing but these rows
+# keeps the lists from drifting: a type in one file only is a wake that fires
+# at home and nowhere in the fleet, or the reverse — the drift #144 caught.
+# The NF guard keeps `issues: write` under permissions: from matching the
+# issues: trigger key.
 event_types() { # $1 = file, $2 = trigger key → that trigger's types line, unindented
   awk -v key="$2:" '$1 == key && NF == 1 {f=1; next} f && /types: /{sub(/^ */,""); print; exit}' "$1"
 }
@@ -88,17 +88,20 @@ types_in_sync() { # $1 = trigger key, $2 = caller, $3 = stub → 0 when both lis
 }
 CALLER="$ROOT/.github/workflows/self-labels.yml"
 STUB="$ROOT/docs/CONSUMERS.md"
+# event_types anchors on the bare trigger key (NF == 1), so it reads the real
+# types line even though the #199 comments name pull_request_target: and
+# issues: in prose above the keys — an inline /pull_request_target:/ scan would
+# latch onto the first mention and read the wrong list.
+pr_has_both_review_wakes() {
+  event_types "$CALLER" pull_request_target | grep -F review_requested | grep -qF review_request_removed
+}
 check "caller and stub pull_request_target lists are identical" 0 "" \
   types_in_sync pull_request_target "$CALLER" "$STUB"
-# shellcheck disable=SC2016 # expansion belongs to the nested bash
-check "the caller lists both review-request wakes" 0 "" bash -c \
-  'awk "/pull_request_target:/{f=1; next} f && /types: /{print; exit}" "$1" |
-     grep -F review_requested | grep -qF review_request_removed' _ "$CALLER"
+check "the caller lists both review-request wakes" 0 "" pr_has_both_review_wakes
 check "caller and stub issues lists are identical" 0 "" \
   types_in_sync issues "$CALLER" "$STUB"
-check "the caller still lists all eight issue types" 0 \
-  "types: [opened, edited, assigned, unassigned, labeled, unlabeled, closed, reopened]" \
-  event_types "$CALLER" issues
+check "the caller lists exactly the two promptness-critical issue types" 0 \
+  "types: [opened, closed]" event_types "$CALLER" issues
 # the failing cases: drop a type from either file, or reorder one list only,
 # and the identity rows above go red — exercised here on mutated copies
 mut_caller="$TMP/mut-caller.yml" mut_stub="$TMP/mut-stub.md"
@@ -112,13 +115,13 @@ sed 's/review_requested, review_request_removed/review_request_removed, review_r
   "$STUB" >"$mut_stub"
 check "a reorder in one list only goes red" 1 "" \
   types_in_sync pull_request_target "$CALLER" "$mut_stub"
-sed 's/, edited//' "$CALLER" >"$mut_caller"
+sed 's/, closed//' "$CALLER" >"$mut_caller"
 check "an issue type dropped from the caller goes red" 1 "" \
   types_in_sync issues "$mut_caller" "$STUB"
-sed 's/, edited//' "$STUB" >"$mut_stub"
+sed 's/, closed//' "$STUB" >"$mut_stub"
 check "an issue type dropped from the stub goes red" 1 "" \
   types_in_sync issues "$CALLER" "$mut_stub"
-sed 's/closed, reopened/reopened, closed/' "$STUB" >"$mut_stub"
+sed 's/opened, closed/closed, opened/' "$STUB" >"$mut_stub"
 check "an issue-list reorder in one file only goes red" 1 "" \
   types_in_sync issues "$CALLER" "$mut_stub"
 
