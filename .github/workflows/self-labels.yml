@@ -5,11 +5,36 @@ name: labels
 # unpinned — correct only for the repo that IS the source). Consumers write:
 #   uses: heavy-duty/ceremony/.github/workflows/labels.yml@<pinned-tag>
 on:
-  schedule: [{cron: "*/15 * * * *"}] # advisory; the handoff label is the real wake
+  # Hourly, not */15 (#199): the cron is the sweep's ONLY wake for the four
+  # transition classes no subscribed event carries — a review verdict landing
+  # (there is no pull_request_review trigger here), blocker:ci-red set or cleared
+  # (no check_suite/check_run/workflow_run), a blocker:conflict when ANOTHER PR
+  # merges under this one, and the time-based stale / 48h claim-reclaim. The
+  # events below carry the rest in seconds. So hourly trades ≤1h of latency on
+  # those four for dropping */15's four full-board sweeps an hour at GitHub's
+  # 1-minute billing floor — 52% of one private consumer's runs. Do NOT delete
+  # this cron — it is the discovery path for those four, not a forgotten-handoff net.
+  schedule: [{cron: "0 * * * *"}]
   workflow_dispatch:                 # bootstraps missing labels on a fresh repo
+  # Narrowed (#199) to the actions that carry a queue-state change the hourly
+  # cron cannot wait one cadence for — dropping only labeled/unlabeled/assigned/
+  # unassigned, which feed validation and the 48h claim clock (caught within one
+  # cadence) and were the dominant issues-churn source. Kept: `opened` (the
+  # mint→needs-triage check, issueflow's opened-only path), `closed` (the
+  # blocker-closes→ready self-heal, crew#96/#98), `edited` (a body rewrite of the
+  # `Blocked by #N` declaration the sweep parses — issueflow-reconcile.sh:179),
+  # `reopened` (a closed issue re-entering the queue wearing labels derived when
+  # it closed). The must-fail in #199 is exactly "a queue-state transition waits
+  # on the schedule when an event could have carried it", so edited/reopened stay
+  # on events. The PR handoff wake is pull_request_target:labeled, NOT issues, so
+  # this does not touch the handoff.
   issues:
-    types: [opened, edited, assigned, unassigned, labeled, unlabeled, closed, reopened]
+    types: [opened, closed, edited, reopened]
   pull_request_target:
+    # Every PR arrives from a fork, so these carry the head/draft/review facts
+    # the sweep derives state:* from. labeled/unlabeled are the handoff wake —
+    # the author's optimistic state:needs-human write, confirmed or corrected
+    # here in seconds (#11); synchronize re-derives on every push;
     # review_requested/review_request_removed wake the sweep that clears (or
     # restores) blocker:unrequested — without them the one event that makes
     # the label false could not clear it, and a quiet repo wore the red flag
