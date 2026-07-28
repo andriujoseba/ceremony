@@ -68,9 +68,11 @@ already proven:
    feedback. ([REVIEWER.md](REVIEWER.md) for why a comment-only review stalls
    the machine.)
 5. **Handoff**: when the round passes — every panel verdict is an approval of
-   the current head and no `blocker:*` label stands — the author posts the
-   round summary, requests the human's review, and sets `state:needs-human`.
-   The label write is optimistic; the reconciler validates it within seconds.
+   the current head and no `blocker:*` label stands — the engine requests the
+   human's review, sets `state:needs-human`, and posts the handoff facts
+   (approvals at the current head, head SHA, and Round-log pointer) on the
+   author's behalf. The label write is optimistic; the reconciler validates
+   it within seconds.
 6. **A human merges.** Nothing else merges.
 
 ### Roster

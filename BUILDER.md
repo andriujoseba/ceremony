@@ -107,12 +107,12 @@ triage bug, and the move is to say so on the issue, not to guess.
   ([#52](https://github.com/heavy-duty/ceremony/issues/52)) and `offsite`
   ([#68](https://github.com/heavy-duty/ceremony/issues/68)) exemptions
   already guard — a parked claim nobody can name is an abandoned one.
-  Shape 4 alone is exempt from the separate comment: the handoff round
-  summary plus the `state:needs-human` write *is* its declaration — both
+  Shape 4 alone is exempt from the separate comment: the factual handoff
+  comment plus the `state:needs-human` write *is* its declaration — both
   halves are already there, what the claim waits on (the merge) and who
   owns the next move (the human), and both are visible to any scan as a
-  `labeled` event with the summary beside it. No second comment is owed
-  on the issue. Every other shape still declares as above.
+  `labeled` event with the comment beside it. No second comment is owed on
+  the issue. Every other shape still declares as above.
   Declared once, the declaration **stands** until the park's facts change:
   a resumption that finds nothing changed posts nothing — the standing
   declaration is the record, and silence while parked is compliant, not
@@ -244,8 +244,16 @@ CONTRIBUTING; everything below is the shared flow.)
    purpose. The costs behind the line are asymmetric: a false green spends
    a three-reviewer round; a false red spends one author session.
 2. **Wait for every verdict, then answer the round whole** — one reply
-   covering every point, then push the fixes, then re-request **by head,
-   not by verdict**: if answering the round pushed any commit, every
+   covering every point and stating what changed and what was verified.
+   That reply is the written round record: the engine mirrors it under the
+   PR body's **Round log**, newest last, so the builder owes the reply and
+   no separate body edit. At re-request time the engine takes the author's
+   comments posted after the newest verdict in the round and appends them
+   with `<!-- round:<head-sha> -->`; an existing marker makes a retry a
+   no-op. If the builder posted no reply, the engine records that the round
+   passed without one and never blocks handoff on the omission. Then push
+   the fixes, then re-request **by head, not by verdict**: if answering the
+   round pushed any commit, every
    panelist's approval is now stale — an approval is of a specific tree,
    and the handoff predicate counts only approvals at the current head —
    so **every panelist is re-requested, the approvers included**; a
@@ -331,14 +339,19 @@ item to its flow in the same comment ([LABELS.md](LABELS.md)).
 
 When the round passes — every panel verdict approves the **current head**,
 and no `blocker:*` stands (conflicts rebased, CI green, drill recorded if
-this is a release PR) — hand it to the human, in order:
+this is a release PR) — the engine performs these mechanical steps on the
+builder's behalf, in order:
 
-1. post the round summary (what changed per round, what was verified);
-2. request the human's review;
-3. set `state:needs-human` yourself.
+1. request the human's review;
+2. set `state:needs-human`;
+3. post the engine-rendered handoff comment: approvals at the current head,
+   the head SHA, and a pointer to the PR body's **Round log**.
 
-The label write is optimistic — the reconciler validates it, and takes it
-back if the PR is not actually mergeable-right-now. Then stop: the PR is the
-human's. The claim is now parked as shape 4 (Picking, above) — the handoff
-you just posted is its declaration, and your build slot is free. Address
-what comes back (`state:addressing`) and re-hand-off the same way.
+The builder composes no new summary at handoff: the authored record already
+lives in the Round log, mirrored mechanically from each whole-round reply as
+specified above. The label write is optimistic — the reconciler validates
+it, and takes it back if the PR is not actually mergeable-right-now. Then
+stop: the PR is the human's. The claim is now parked as shape 4 (Picking,
+above) — the handoff you just posted is its declaration, and your build slot
+is free. Address what comes back (`state:addressing`) and re-hand-off the
+same way.
