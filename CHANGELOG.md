@@ -9,6 +9,102 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.4.0 — 2026-07-29
+
+### Added
+
+- `changelog.d/shape` — an optional one-line sentinel, `flat` or `grouped`,
+  that pins the fragment set's shape and outranks the newest-published-section
+  inference; absent, the inference binds unchanged (#182).
+- Add `post-merge` issue state for merged `Refs` work awaiting triage-owned verification.
+- `changelog_fragment_problem` bounds every entry at 300 normalized
+  characters, red on the PR that writes the fragment; the armed guard and
+  the assembler inherit the one definition (#167).
+- BUILDER.md and CHANGELOG.md state the bound and the split rule: a long
+  change ships several short entries, never one long one (#167).
+
+### Changed
+
+- Labels automation docs now make sweep cadence a consumer-owned tradeoff,
+  retain hourly as the engine-less default, and document manual dispatch as
+  the operator's immediate full-board sweep (#203).
+- `labels` — the reconcile cron relaxes from `*/15` to hourly (#199), cutting a
+  private consumer's schedule-triggered full-board sweeps ~4× at GitHub's
+  1-minute billing floor.
+- `labels` — the hourly cron is the sweep's only wake for transitions no
+  subscribed event carries — a verdict landing, blocker:ci-red, a
+  blocker:conflict when another PR merges, the time-based stale/reclaim — so it
+  bounds their latency to ≤1h, delaying no event-carried transition (#199).
+- `labels` — the caller's `issues:` trigger narrows to
+  `[opened, closed, edited, reopened]` (#199), the actions that carry a
+  queue-state change the cron cannot wait a cadence for. The churn/validation
+  actions — labeled/unlabeled/assigned/unassigned — come off; the PR handoff
+  wake is unaffected.
+- `labels` — each caller trigger now carries a comment saying why it is
+  subscribed, and reconcile keeps `cancel-in-progress: false` (#199) —
+  cancelling a sweep mid-board is the race that guard exists to prevent.
+- `CONTRIBUTING.md` now points to `BUILDER.md` for the shared PR flow instead
+  of restating doctrine that can drift, while retaining ceremony's roster and
+  other repo-specific facts (#198).
+- Builder doctrine makes each whole-round reply the durable Round log record
+  mirrored by the engine, leaving handoff as a mechanical facts-only step
+  instead of a newly composed summary (#196).
+- `FLEET.md` removes its duplicate bench roster, records crew as a general
+  operator-configured tool, and advances its whole-file audit stamp to
+  `crew@eaeb302` with every surviving crew link re-pinned (#193).
+- `FLEET.md` keeps the registry's authorization rule and its crew#16/crew#66
+  provenance, while replacing duplicated mechanism and path claims with a
+  pinned pointer to crew's registry header (#192).
+- `BUILDER.md` gates both review-request points on a green check at the
+  head, carries crew#45's argued exception for failures outside the PR,
+  and states the ruled classification: cancelled and stale are not a
+  green head; skipped and neutral are (#189).
+- `BUILDER.md` documents CI-red recovery in pickup precedence: a red head
+  of your own PR is picked up before claiming another issue, is never a
+  parked claim, and follows crew#17's recovery path (#189).
+- `FLEET.md` writes the ci-red wake into the duty order between resume
+  and build, now as deployed engine rather than on paper: the
+  reconciliation stamp advances to the crew SHA carrying crew#64 (#189).
+- `FLEET.md` describes the build wake's check gate as the engine
+  implements it: a green head, or one with no checks configured, opens a
+  round; a red head and an unfinished one are held and reported
+  separately (#189).
+- `FLEET.md` corrects the attention wake to the crew#66 ruling: the query
+  is cross-repo, the action is registry-bounded, and an out-of-scope
+  demand is reported and escalated to the operator rather than worked. It
+  no longer claims attention is exempt from the registry (#189).
+- `FLEET.md` distinguishes an attention session that dies before acking,
+  which relaunches, from one that completes without acking, which is a
+  decline a ledger keeps from re-firing (#189).
+- `BUILDER.md` re-requests by head, not by verdict: a push while
+  answering a round stales every approval, so every panelist is
+  re-requested; only an unchanged head re-requests the non-approvers
+  alone (#190).
+- FLEET.md's duty-loop mechanism is a pointer to crew's shared engine; the
+  wake lists follow the engine's duty order, the roster keeps the as-built
+  bench beside `fleet.roster`'s target, and the reconciliation stamp names
+  crew@`01fb49c` (#187).
+- Ceremony's changelog is grouped from this release forward: the pending
+  fragments carry `### ` headings under a `grouped` sentinel (#182).
+- BUILDER.md: a park declaration stands until its facts change — a
+  nothing-changed resumption posts nothing; only a no-open-PR park owes a
+  refresh, inside the 48-hour reclaim window (#178).
+- Private-repository label callers document `actions: read` alongside checks and statuses for workflow-run check-rollup nodes (#173).
+
+### Fixed
+
+- FLEET.md no longer says a review request outside the registry is
+  authorization: `repos.txt` is the scope for the review queue, out-of-scope
+  requests are logged and never acted on, and the attention wake is stated
+  as the one registry-independent exception, by design (#187).
+- `blocked_reference_records` unions every `Blocked by` clause in the body
+  instead of binding to the first marker occurrence — a repeated declaration
+  no longer promotes on its first sentence alone, and earlier prose that
+  merely mentions being blocked no longer hijacks the parse (#184).
+- `decide_state()` refuses `state:needs-human` while the hand-set `blocked`
+  label stands — the PR falls to `state:addressing`, exactly parallel to the
+  `needs-ruling` exclusion; never emitted by `blockers()` (#180).
+
 ## 0.3.0 — 2026-07-24
 
 - Make `changelog-armed` reject fragment shape drift on the PR that introduces it.
