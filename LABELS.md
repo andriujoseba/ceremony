@@ -3,7 +3,8 @@
 The taxonomy shared across the heavy-duty repos. Only the `scope:` set
 differs per repo (each repo's `.github/labels.conf` names its actual
 surfaces); everything else below is core and identical everywhere, created by
-the labels workflow's bootstrap dispatch (issue #10).
+the labels workflow's dispatch (which is also the operator's manual
+full-board reconcile sweep; issue #10).
 
 Two state machines share the taxonomy: the **PR machine** (proven in
 box/rig/cast, reconciled by machinery) and the **issue flow** (the
