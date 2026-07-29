@@ -5,17 +5,21 @@ name: labels
 # unpinned — correct only for the repo that IS the source). Consumers write:
 #   uses: heavy-duty/ceremony/.github/workflows/labels.yml@<pinned-tag>
 on:
-  # Hourly, not */15 (#199): the cron is the sweep's ONLY wake for the four
-  # transition classes no subscribed event carries — a review verdict landing
-  # (there is no pull_request_review trigger here), blocker:ci-red set or cleared
-  # (no check_suite/check_run/workflow_run), a blocker:conflict when ANOTHER PR
+  # The consumer owns this cadence (#203). Hourly is the recommended default
+  # when no other engine drives board state: the cron is then the sweep's ONLY
+  # wake for four transition classes — a review verdict landing (there is no
+  # pull_request_review trigger here), blocker:ci-red set or cleared (no
+  # check_suite/check_run/workflow_run), a blocker:conflict when ANOTHER PR
   # merges under this one, and the time-based stale / 48h claim-reclaim. The
-  # events below carry the rest in seconds. So hourly trades ≤1h of latency on
-  # those four for dropping */15's four full-board sweeps an hour at GitHub's
-  # 1-minute billing floor — 52% of one private consumer's runs. Do NOT delete
-  # this cron — it is the discovery path for those four, not a forgotten-handoff net.
+  # events below carry the rest in seconds. Hourly trades ≤1h of latency on
+  # those four while cutting nominal scheduled sweeps from four an hour to one
+  # at GitHub's 1-minute billing floor. Do not delete the cron: it is their
+  # discovery path. If another engine writes some of those transitions, only
+  # the classes with no other writer bound the cadence; relax it only as that
+  # list shrinks.
   schedule: [{cron: "0 * * * *"}]
-  workflow_dispatch:                 # bootstraps missing labels on a fresh repo
+  # A manual full-board sweep, including taxonomy bootstrap on a fresh repo.
+  workflow_dispatch:
   # Narrowed (#199) to the actions that carry a queue-state change the hourly
   # cron cannot wait one cadence for — dropping only labeled/unlabeled/assigned/
   # unassigned, which feed validation and the 48h claim clock (caught within one

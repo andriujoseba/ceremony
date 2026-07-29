@@ -122,7 +122,8 @@ the machinery at all:
    [Labels automation](#labels-automation), plus `.github/labels.conf`
    (panel + the repo's `scope:*` rows) and `.github/labeler.yml` (the
    path→scope globs). Run `workflow_dispatch` once — **this bootstraps
-   the taxonomy, `release` label included**.
+   the taxonomy, `release` label included** — and use it again whenever an
+   operator needs a full-board sweep immediately.
 7. **The artifact hook** (optional): `.github/actions/release-artifact/`
    per [The artifact hook](#the-artifact-hook). No hook → the source
    tarball is the package.
@@ -296,15 +297,20 @@ The complete caller is:
 ```yaml
 name: labels
 on:
-  # Hourly, not */15 (#199): the cron is the sweep's only wake for the
-  # transitions no subscribed event carries — a review verdict landing (no
-  # pull_request_review trigger), blocker:ci-red set/cleared, a blocker:conflict
-  # when another PR merges under this one, and the time-based stale / 48h
+  # The consumer owns this cadence (#203). Hourly is the recommended default
+  # when no other engine drives board state: the cron is then the sweep's only
+  # wake for four transition classes — a review verdict landing (no
+  # pull_request_review trigger), blocker:ci-red set/cleared, blocker:conflict
+  # when another PR merges under this one, and time-based stale / 48h
   # claim-reclaim. Events below carry the rest in seconds. Hourly trades ≤1h of
-  # latency on those four for dropping */15's four sweeps an hour at GitHub's
-  # 1-minute floor. Keep the cron — it is the discovery path, not a safety net.
+  # latency on those four while cutting nominal scheduled sweeps from four an
+  # hour to one at GitHub's 1-minute floor. Do not delete the cron: it is their
+  # discovery path. If another engine writes some of those transitions, only
+  # the classes with no other writer bound the cadence; relax it only as that
+  # list shrinks.
   schedule: [{cron: "0 * * * *"}]
-  workflow_dispatch:                 # bootstraps missing labels on a fresh repo
+  # A manual full-board sweep, including taxonomy bootstrap on a fresh repo.
+  workflow_dispatch:
   pull_request_target:
     # Fork PRs; these carry the head/draft/review facts state:* derives from.
     # labeled/unlabeled are the handoff wake (state:needs-human confirmed here);
@@ -398,11 +404,20 @@ Core state, blocker, work-queue, and release labels come from ceremony. Scope
 rows remain consumer-owned because paths and surfaces differ by repository.
 
 After adding the caller and configuration, run `workflow_dispatch` once to
-bootstrap labels on a fresh repository. Scheduled and PR-triggered runs only
-reconcile; they do not repeatedly upsert the taxonomy. When a ceremony pin
-bump adds a core label, bump the pin first and then re-dispatch
-`workflow_dispatch`; the scheduled sweep warns when the pinned taxonomy
-declares a core label the repository lacks.
+bootstrap labels on a fresh repository. It is also the operator's general
+manual full-board sweep — the answer when the board looks wrong now rather
+than after the next scheduled cadence:
+
+```sh
+gh workflow run labels.yml -R <owner>/<repo>
+```
+
+Ceremony dogfoods the caller under the filename `self-labels.yml`, so the
+equivalent command in this repository substitutes that filename. Scheduled
+and PR-triggered runs only reconcile; they do not repeatedly upsert the
+taxonomy. When a ceremony pin bump adds a core label, bump the pin first and
+then re-dispatch `workflow_dispatch`; the scheduled sweep warns when the
+pinned taxonomy declares a core label the repository lacks.
 
 ## Doctrine mirror
 
