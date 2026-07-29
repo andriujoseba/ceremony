@@ -35,45 +35,9 @@ Who may set which label is [LABELS.md](LABELS.md)'s contract.
 
 ## The PR flow
 
-The same flow the sibling repos run, and the part of this pipeline that is
-already proven:
-
-1. **One issue, one PR**, opened as a **draft** while building, with
-   `Closes #N` in the body — its exceptions (cross-repo work, a post-merge
-   criterion) live in [BUILDER.md](BUILDER.md). Drafts are invisible to the
-   reviewer panel on purpose. Every behavior change writes one fragment,
-   `changelog.d/<issue>.md` — the exact prose to publish, nothing else
-   (cross-repo work names it `<repo>-<issue>.md`; a grouped repo puts its
-   `### Added` / `### Changed` / `### Fixed` headings inside the fragment).
-   Never edit `CHANGELOG.md` for an entry — the release PR assembles the
-   section from the fragments (#112).
-
-   The sole exception is the release PR: it writes no fragment. It consumes
-   the directory and stamps the section, so a fragment it created would be
-   absent from
-   [`changelog-assembled`](https://github.com/heavy-duty/ceremony/blob/a602fd0/actions/changelog-assembled/changelog-assembled.sh)'s
-   merge-base replay if consumed, or refused by
-   [`changelog-armed`](https://github.com/heavy-duty/ceremony/blob/a602fd0/actions/changelog-armed/changelog-armed.sh)
-   if left to survive into the next release. A change that must ship inside
-   the release PR therefore ships without an entry. If it can wait and wants
-   an entry, land it as an ordinary PR before the release PR, then rebase and
-   re-assemble the release.
-2. **When it's ready**: mark ready-for-review and request the whole panel.
-3. **Rounds are answered whole.** Wait until every reviewer has a verdict in,
-   then answer the entire round in a **single reply**, push the fixes, and
-   re-request the reviewers that didn't approve. Prefer verification over
-   argument: a test settles what a comment thread can't.
-4. **Reviews end in a verdict** — approve or request-changes, never a bare
-   comment. The verdict carries blockingness only; the body carries the
-   feedback. ([REVIEWER.md](REVIEWER.md) for why a comment-only review stalls
-   the machine.)
-5. **Handoff**: when the round passes — every panel verdict is an approval of
-   the current head and no `blocker:*` label stands — the engine requests the
-   human's review, sets `state:needs-human`, and posts the handoff facts
-   (approvals at the current head, head SHA, and Round-log pointer) on the
-   author's behalf. The label write is optimistic; the reconciler validates
-   it within seconds.
-6. **A human merges.** Nothing else merges.
+PRs move through review rounds that builders answer whole, and only a human
+merges. [BUILDER.md](BUILDER.md) is the shared flow contract; this file names
+only ceremony-specific facts such as the roster and code conventions.
 
 ### Roster
 
