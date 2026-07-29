@@ -212,10 +212,13 @@ on a PR would say the same thing twice and drift.
 
 ## Maintenance
 
-The labels workflow (issue #10) recomputes PR state statelessly on PR events
-plus a 15-minute advisory cron, and bootstraps this taxonomy idempotently on
-manual dispatch. The sweep warns when the core taxonomy declares a label the
-repository lacks. The same workflow reconciles issue-flow labels on issue
+The labels workflow (issue #10) recomputes PR state statelessly on subscribed
+events plus a consumer-owned scheduled discovery sweep. Hourly is the
+recommended default when no other engine drives board state; relax it only as
+the transition classes with no other writer shrink. Manual dispatch both
+bootstraps this taxonomy idempotently and runs the operator's on-demand
+full-board reconcile. The sweep warns when the core taxonomy declares a label
+the repository lacks. The same workflow reconciles issue-flow labels on issue
 events and during the scheduled sweep. Default GitHub labels (`duplicate`,
 `invalid`, `question`, `wontfix`, `help wanted`, `good first issue`) are
 deleted at bootstrap — a `question` is a discussion, not an issue.

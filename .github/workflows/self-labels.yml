@@ -12,9 +12,11 @@ on:
   # check_suite/check_run/workflow_run), a blocker:conflict when ANOTHER PR
   # merges under this one, and the time-based stale / 48h claim-reclaim. The
   # events below carry the rest in seconds. Hourly trades ≤1h of latency on
-  # those four for one full-board sweep at GitHub's 1-minute billing floor. If
-  # another engine writes some of those transitions, only the classes with no
-  # other writer bound the cadence; relax it only as that list shrinks.
+  # those four while cutting nominal scheduled sweeps from four an hour to one
+  # at GitHub's 1-minute billing floor. Do not delete the cron: it is their
+  # discovery path. If another engine writes some of those transitions, only
+  # the classes with no other writer bound the cadence; relax it only as that
+  # list shrinks.
   schedule: [{cron: "0 * * * *"}]
   # A manual full-board sweep, including taxonomy bootstrap on a fresh repo.
   workflow_dispatch:

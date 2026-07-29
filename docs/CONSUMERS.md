@@ -303,9 +303,11 @@ on:
   # pull_request_review trigger), blocker:ci-red set/cleared, blocker:conflict
   # when another PR merges under this one, and time-based stale / 48h
   # claim-reclaim. Events below carry the rest in seconds. Hourly trades ≤1h of
-  # latency on those four for one full-board sweep at GitHub's 1-minute floor.
-  # If another engine writes some of those transitions, only the classes with
-  # no other writer bound the cadence; relax it only as that list shrinks.
+  # latency on those four while cutting nominal scheduled sweeps from four an
+  # hour to one at GitHub's 1-minute floor. Do not delete the cron: it is their
+  # discovery path. If another engine writes some of those transitions, only
+  # the classes with no other writer bound the cadence; relax it only as that
+  # list shrinks.
   schedule: [{cron: "0 * * * *"}]
   # A manual full-board sweep, including taxonomy bootstrap on a fresh repo.
   workflow_dispatch:
