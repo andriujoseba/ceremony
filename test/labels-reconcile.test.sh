@@ -351,6 +351,13 @@ run_() { jq -n --arg n "$1" --arg o "$2" --arg t "${3:-2026-07-20T15:00:00Z}" \
 ctx_() { jq -n --arg n "$1" --arg s "$2" --arg t "${3:-2026-07-20T15:00:00Z}" \
   '{__typename:"StatusContext", context:$n, state:$s, createdAt:$t}'; }
 
+# Pinned empty for every fixture below except the #208 block, which sets its
+# own. The script defaults SELF_WORKFLOW from the ambient GITHUB_WORKFLOW —
+# present in any CI run of this suite — and an inherited name that happened
+# to match a fixture's workflowName ("ci", "labels") would silently drop
+# entries these fixtures rely on. The verdicts must not flip with the runner.
+SELF_WORKFLOW=""
+
 expect "no checks at all is NONE" NONE "$(rollup '[]' | checks_state)"
 # A failed fetch leaves no rollup KEY; a PR with no checks leaves an empty
 # ARRAY. Collapsing the two let an API hiccup read as "nothing is failing" —
@@ -428,6 +435,39 @@ expect "...and so does a context of two cancelled entries" FAILURE \
 expect "a cancelled newest over an earlier FAILURE is still that failure" FAILURE \
   "$(rollup "[$(rec_ FAILURE   2026-07-24T12:16:17Z 2026-07-24T12:17:06Z),\
               $(rec_ CANCELLED 2026-07-24T12:16:41Z 2026-07-24T12:16:41Z)]" | checks_state)"
+
+# -- the #208 exclusion: the label machine never grades its own runs. The
+#    shared concurrency group displaces queued sweeps as CANCELLED, and the
+#    displaced run's successor was triggered by a DIFFERENT PR or an issues
+#    event — so on the victim PR the #139 carve-out's premise (a surviving
+#    sibling on the same head) fails structurally: the newest self entry
+#    stays CANCELLED, and the sweep set blocker:ci-red off its own corpse,
+#    re-affirming it every cadence. Proven on crew#227: every real check
+#    green, the only red rollup entry the sweep's own displaced run. rec_
+#    already builds entries under workflowName "labels"; naming that as
+#    self must drop them whole, before the newest-per-context collapse.
+SELF_WORKFLOW="labels"
+expect "a displaced self CANCELLED beside green others is no verdict (crew#227)" SUCCESS \
+  "$(rollup "[$(run_ a SUCCESS),$(run_ b SUCCESS),\
+              $(rec_ CANCELLED 2026-08-01T15:17:56Z 2026-08-01T15:17:59Z)]" | checks_state)"
+expect "a FAILED self run surfaces on the Actions tab, not as the PR's red" SUCCESS \
+  "$(rollup "[$(run_ a SUCCESS),$(run_ b SUCCESS),\
+              $(rec_ FAILURE 2026-08-01T15:00:00Z 2026-08-01T15:01:00Z)]" | checks_state)"
+expect "a rollup of ONLY self entries is honestly NONE, never SUCCESS" NONE \
+  "$(rollup "[$(rec_ CANCELLED 2026-08-01T15:17:56Z 2026-08-01T15:17:59Z)]" | checks_state)"
+# must-fail: the filter keys on the self workflow ALONE. Widening it — any
+# cancelled entry, any labels-shaped name — certifies a genuine foreign
+# failure green, which is #136's unknown-as-green shape all over again.
+expect "a genuine foreign FAILURE still blocks beside a cancelled self entry" FAILURE \
+  "$(rollup "[$(run_ a FAILURE),\
+              $(rec_ CANCELLED 2026-08-01T15:17:56Z 2026-08-01T15:17:59Z)]" | checks_state)"
+# ...and an empty self filters NOTHING: outside Actions no workflow name is
+# ambient, and the exclusion must never drop entries on a guess — the same
+# displaced-self rollup keeps blocking there, all-cancelled context intact.
+SELF_WORKFLOW=""
+expect "an empty SELF_WORKFLOW filters nothing — the same rollup still blocks" FAILURE \
+  "$(rollup "[$(run_ a SUCCESS),$(run_ b SUCCESS),\
+              $(rec_ CANCELLED 2026-08-01T15:17:56Z 2026-08-01T15:17:59Z)]" | checks_state)"
 
 # -- a run still IN FLIGHT. `run_()` cannot express this: it always carries a
 #    real completedAt, which is exactly why the supersede rule shipped dating
