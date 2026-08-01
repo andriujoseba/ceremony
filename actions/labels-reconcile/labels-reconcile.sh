@@ -49,6 +49,15 @@ LABELS=""
 # retirement heals the board instead of stranding a label nothing recomputes.
 RETIRED=(state:needs-rebase)
 STALE_AFTER=$((48 * 3600))
+# The workflow whose runs checks_state must never grade — its own (#208).
+# GITHUB_WORKFLOW is ambient in every Actions step and names the CALLER (the
+# consumer's PR-facing workflow, since consumers name the caller), so this
+# self-serves with no workflow-file change. The explicit override exists for
+# two readers: the fixtures, and #209's detached sweep caller, which will
+# need to point this at the PR-facing caller's name once reconcile no longer
+# runs inside it. Empty means "filter nothing" — a caller outside Actions
+# (a local rehearsal, an older pin) must not silently start dropping entries.
+SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -221,7 +230,27 @@ checks_state() { # rollup JSON on stdin → SUCCESS | FAILURE | PENDING | NONE |
   # a context whose entries are ALL cancelled never reported at all (a killed
   # or timed-out required job), so it keeps CANCELLED and still blocks —
   # discard needs a surviving verdict, never an empty context.
-  jq -r '
+  #
+  # And one exclusion that comes before every rule above: the label machine
+  # never grades its own runs (#208). Every reconcile sweep serializes
+  # through one shared concurrency group, and GitHub records a displaced
+  # queued run as CANCELLED — there is no "superseded" conclusion for queue
+  # displacement. When the displaced run was born from a pull_request_target
+  # event, that cancelled entry attaches to the victim PR while its
+  # SUCCESSOR — triggered by a different PR or an issues event — attaches
+  # elsewhere, so the #139 carve-out's premise (a surviving sibling on the
+  # same PR) fails structurally: on the victim the newest self entry stays
+  # CANCELLED, the deny-list scores it FAILURE, and the sweep sets
+  # blocker:ci-red off its own corpse — then re-affirms it every cadence.
+  # Proven on crew#227: every real check green, the only red rollup entry
+  # the sweep's own displaced run. So drop every entry belonging to
+  # $SELF_WORKFLOW before the newest-per-context collapse. Accepted
+  # consequences: a rollup of ONLY self entries scores NONE (honestly: no
+  # checks — never SUCCESS), and a genuine reconcile failure surfaces on the
+  # Actions tab instead of as blocker:ci-red, which is right because no PR
+  # edit can fix the label machinery. An empty $self filters nothing — the
+  # exclusion must never widen into dropping entries on a guess.
+  jq -r --arg self "$SELF_WORKFLOW" '
     if (has("statusCheckRollup") | not) then "UNREADABLE" else
 
     # NEUTRAL and SKIPPED satisfy branch protection — a skipped required check
@@ -262,7 +291,11 @@ checks_state() { # rollup JSON on stdin → SUCCESS | FAILURE | PENDING | NONE |
     # and treating it as newest keeps an undateable in-flight run from being
     # discarded in favour of a stale success. Every ambiguity resolves toward
     # "not settled".
+    # The #208 exclusion (header above): self entries leave the rollup here,
+    # BEFORE the group_by — a self-only context must vanish entirely, never
+    # survive as an all-cancelled context that still classifies FAILURE.
     | [ (.statusCheckRollup // [])[]
+        | select($self == "" or (.workflowName // "") != $self)
         | { ctx: [.workflowName // "", .name // .context // ""],
             at:  ([.startedAt, .createdAt, .completedAt]
                   | map(select(type == "string" and . != ""
