@@ -4,22 +4,13 @@ name: labels
 # same warning: consumers must NEVER copy the local form (it rides main,
 # unpinned — correct only for the repo that IS the source). Consumers write:
 #   uses: heavy-duty/ceremony/.github/workflows/labels.yml@<pinned-tag>
+#
+# Since #209 this caller carries the PR/issue event surface only. The
+# reconcile sweep no longer rides these runs — the reusable's trigger job
+# dispatches the sweep caller (self-labels-sweep.yml here), which owns the
+# hourly cron and the manual/bootstrap workflow_dispatch. A board event
+# below still yields a sweep within seconds, one dispatch hop later.
 on:
-  # The consumer owns this cadence (#203). Hourly is the recommended default
-  # when no other engine drives board state: the cron is then the sweep's ONLY
-  # wake for four transition classes — a review verdict landing (there is no
-  # pull_request_review trigger here), blocker:ci-red set or cleared (no
-  # check_suite/check_run/workflow_run), a blocker:conflict when ANOTHER PR
-  # merges under this one, and the time-based stale / 48h claim-reclaim. The
-  # events below carry the rest in seconds. Hourly trades ≤1h of latency on
-  # those four while cutting nominal scheduled sweeps from four an hour to one
-  # at GitHub's 1-minute billing floor. Do not delete the cron: it is their
-  # discovery path. If another engine writes some of those transitions, only
-  # the classes with no other writer bound the cadence; relax it only as that
-  # list shrinks.
-  schedule: [{cron: "0 * * * *"}]
-  # A manual full-board sweep, including taxonomy bootstrap on a fresh repo.
-  workflow_dispatch:
   # Narrowed (#199) to the actions that carry a queue-state change the hourly
   # cron cannot wait one cadence for — dropping only labeled/unlabeled/assigned/
   # unassigned, which feed validation and the 48h claim clock (caught within one
@@ -48,8 +39,13 @@ permissions:
   contents: read
   checks: read          # mergeability/check-rollup read for PR state
   statuses: read        # commit-status rollup read for PR state
+  actions: write        # the trigger job's `gh workflow run` dispatch of the sweep caller (#209)
   issues: write
   pull-requests: write
 jobs:
   labels:
     uses: ./.github/workflows/labels.yml
+    with:
+      # Dogfood filename deviation only — consumers keep the default,
+      # labels-sweep.yml, and pass nothing.
+      sweep_workflow: self-labels-sweep.yml

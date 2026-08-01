@@ -30,7 +30,7 @@ check "dogfood caller wakes on issue events" 0 "  issues:" \
   grep -F "  issues:" "$ROOT/.github/workflows/self-labels.yml"
 dogfood_pr_step="$(sed -n \
   '/name: reconcile state + stale (dogfood/,/name: reconcile issue flow/p' \
-  "$ROOT/.github/workflows/labels.yml")"
+  "$ROOT/.github/workflows/labels-sweep.yml")"
 # shellcheck disable=SC2016 # GitHub expressions are asserted as literals
 check "dogfood PR reconcile receives repository" 0 '          REPO: ${{ github.repository }}' \
   grep -F '          REPO: ${{ github.repository }}' <<<"$dogfood_pr_step"

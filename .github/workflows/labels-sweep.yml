@@ -1,0 +1,120 @@
+name: labels-sweep
+# Reusable sweep half of the labels automation — the reconcile + issueflow
+# jobs that rode labels.yml until #209. Triggers and permissions live in the
+# caller; docs/CONSUMERS.md carries the complete caller stub
+# (workflow_dispatch plus the hourly cron, which relocated here with the
+# sweep). Board events still yield a sweep within seconds: labels.yml's
+# trigger job dispatches this workflow's caller on every event it used to
+# run reconcile on.
+#
+# Detached on purpose (#209): every sweep covers every open PR and all
+# sweeps serialize through ONE shared concurrency group, so GitHub's
+# one-running-plus-one-pending queue records every extra run as CANCELLED.
+# That displacement is semantically lossless — the surviving sweep does the
+# displaced run's work — but while the sweep rode pull_request_target runs
+# the ❌ landed on that PR's checks and read as red CI. Here a displaced
+# run attaches to no PR: the cancellations live on the Actions tab only.
+#
+# Bootstrap semantics: a manual dispatch of the caller bootstraps the
+# taxonomy (its `bootstrap` input defaults to "yes"), exactly what
+# dispatching the labels caller did before the split. The trigger job's
+# dispatches carry bootstrap=no — ~20 label upserts per sweep is too chatty
+# for every board event, the same reason cron runs never bootstrapped.
+#
+# This cannot loop: reconciler writes use GITHUB_TOKEN, and GitHub does not
+# create workflow runs from GITHUB_TOKEN-raised events (the trigger's
+# workflow_dispatch is one of the two documented exemptions; this workflow
+# dispatches nothing). Agent writes use a PAT and therefore do trigger —
+# exactly the asymmetry wanted.
+on:
+  workflow_call:
+    inputs:
+      pr_workflow_name:
+        description: >-
+          The `name:` of the consumer's PR-facing labels caller, exported
+          to the reconcile step as SELF_WORKFLOW so the sweep can leave
+          the label machinery's own check entries (scope, trigger) out of
+          its CI verdict: a red trigger means "fix the caller", which no
+          PR edit can do, so it must never count toward blocker:ci-red.
+          Read by the #208 reconciler; harmless to earlier ones.
+        type: string
+        required: false
+        default: labels
+
+env:
+  # A called workflow arrives without its repository. Keep this literal pin
+  # aligned with the ceremony release consumed by callers (issue #9 D3).
+  CEREMONY_SELF_REF: "0.4.0"
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    # ONE shared group: every reconcile sweeps every open PR, so cron and
+    # dispatched runs must serialize or two sweeps race the same PR's labels
+    # and both pass the request-the-human-once guard.
+    concurrency:
+      group: labels-reconcile
+      cancel-in-progress: false
+    steps:
+      # No PR code is ever checked out or executed: the sweep checks out
+      # the consumer's default branch and the pinned ceremony
+      # implementation only. Keep it that way.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/checkout@v4
+        # The self-consumption bypass — release.yml's twin, and load-bearing
+        # for the same reason (#11): ceremony's own labels bootstrap must
+        # run BEFORE any release tag exists for this checkout to fetch — the
+        # release label the merge door reads is created by that dispatch, so
+        # without the bypass the first release deadlocks on its own pin. The
+        # base-branch checkout above already IS ceremony on the dogfood
+        # path.
+        if: github.repository != 'heavy-duty/ceremony'
+        with:
+          repository: heavy-duty/ceremony
+          ref: ${{ env.CEREMONY_SELF_REF }}
+          path: .ceremony-src
+      # Two steps, mutually exclusive `if:`s, because a `uses:` path must be
+      # a literal — the same fork release.yml's CEREMONY_DIR env line
+      # papers over for `run:` steps, which composite `uses:` has no
+      # equivalent of.
+      #
+      # bootstrap: every trigger-driven wake arrives as workflow_dispatch
+      # too (that is how `gh workflow run` wakes the caller), so the event
+      # name alone no longer separates the operator's manual full-board
+      # bootstrap from an event-woken sweep — the caller's `bootstrap`
+      # dispatch input does: the trigger passes "no", a bare manual
+      # dispatch defaults to "yes". A caller reached on any other event
+      # (the cron) has no input and stays "no".
+      - name: reconcile state + stale
+        if: github.repository != 'heavy-duty/ceremony'
+        uses: ./.ceremony-src/actions/labels-reconcile
+        with:
+          bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SELF_WORKFLOW: ${{ inputs.pr_workflow_name }}
+      - name: reconcile state + stale (dogfood — the workspace IS ceremony)
+        if: github.repository == 'heavy-duty/ceremony'
+        uses: ./actions/labels-reconcile
+        with:
+          bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SELF_WORKFLOW: ${{ inputs.pr_workflow_name }}
+      - name: reconcile issue flow
+        if: github.repository != 'heavy-duty/ceremony'
+        uses: ./.ceremony-src/actions/issueflow-reconcile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+      - name: reconcile issue flow (dogfood — the workspace IS ceremony)
+        if: github.repository == 'heavy-duty/ceremony'
+        uses: ./actions/issueflow-reconcile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}

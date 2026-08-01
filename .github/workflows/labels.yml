@@ -6,24 +6,39 @@ name: labels
 # family arrives from a fork, where pull_request runs with a READ-ONLY token
 # and cannot label anything. _target is safe in this workflow because no PR
 # code is ever checked out or executed — scope reads changed paths and the
-# path mapping via the API and checks out only the ceremony implementation,
-# and reconcile checks out the BASE branch only. Keep it that way.
+# path mapping via the API and checks out only the ceremony implementation.
+# Keep it that way.
 #
-# There is no pull_request_review_target, so a review landing cannot wake this
-# workflow directly — which is why the caller's cron is load-bearing, not a
-# safety net (#199 relaxed it from */15 to hourly, but did NOT drop it). The
-# cron is the sweep's only discovery path for every transition no subscribed
-# event carries: a verdict landing, blocker:ci-red set/cleared, a
-# blocker:conflict when another PR merges under this one, and the time-based
-# stale / 48h claim-reclaim. Where an event IS subscribed the wake is direct —
-# the handoff sets state:needs-human and the caller's `labeled` event confirms
-# or corrects that optimistic write within seconds.
+# The reconcile sweep lived here until #209. Riding the PR-triggered run
+# meant every displacement in the sweep's shared concurrency queue recorded
+# a CANCELLED `reconcile` check on some PR — read as red CI by every human
+# and agent, though the surviving sweep does the displaced run's work. The
+# sweep now lives in labels-sweep.yml behind its own caller, and the
+# trigger job below is its wake: it fires on every event this caller
+# subscribes — the exact surface that used to run reconcile directly — so
+# the wake latency (#137) is unchanged, while a displaced sweep cancels on
+# the Actions tab, attached to no PR. PR checks show scope + trigger only.
 #
-# This cannot loop: reconciler writes use GITHUB_TOKEN, and GitHub does not
-# create workflow runs from GITHUB_TOKEN-triggered events. Agent writes use a
-# PAT and therefore do trigger — exactly the asymmetry wanted.
+# This cannot loop: the trigger's dispatch and the reconciler's label
+# writes both use GITHUB_TOKEN. GitHub does not create workflow runs from
+# GITHUB_TOKEN-raised events — workflow_dispatch and repository_dispatch
+# are the two documented exemptions, which is exactly why the trigger can
+# wake the sweep with no PAT anywhere in the path — and the sweep itself
+# dispatches nothing. Agent writes use a PAT and therefore do trigger —
+# exactly the asymmetry wanted.
 on:
   workflow_call:
+    inputs:
+      sweep_workflow:
+        description: >-
+          Filename of the consumer's sweep caller — the workflow that
+          calls labels-sweep.yml (docs/CONSUMERS.md carries the stub).
+          The trigger job dispatches it by this name. Override it only
+          when the caller file is not named labels-sweep.yml (ceremony's
+          own dogfood names it self-labels-sweep.yml).
+        type: string
+        required: false
+        default: labels-sweep.yml
 
 env:
   # A called workflow arrives without its repository. Keep this literal pin
@@ -35,7 +50,7 @@ jobs:
     # Not on labeled/unlabeled: those events change no paths, so scope has
     # nothing new to derive — and label churn is precisely what they are.
     # review_requested/review_request_removed likewise change no paths — they
-    # exist to wake reconcile (#137) — and running labeler on them widens
+    # exist to wake the sweep (#137) — and running labeler on them widens
     # exactly the window #130 documents, where a label written during a
     # scope run is clobbered.
     if: >-
@@ -85,65 +100,27 @@ jobs:
           # the mapping it is judged by
           CONFIG_REF: ${{ github.sha }}
 
-  reconcile:
+  trigger:
+    # The sweep's wake (#209). No `if:`: reconcile carried none, so the
+    # trigger keeps the whole event surface the caller subscribes —
+    # workflow_dispatch of the labels caller itself included. That cannot
+    # double-fire bootstrap: this dispatch always carries bootstrap=no, so
+    # a dispatched labels caller yields one plain sweep, and the taxonomy
+    # bootstrap fires solely on a manual dispatch of the sweep caller
+    # (whose input defaults to "yes"). Excluding workflow_dispatch here
+    # would instead make a dispatched labels caller do nothing at all —
+    # a silent no-op run is worse than a redundant sweep.
+    #
+    # LOUD on failure — never `|| true`: a red trigger is the
+    # misconfiguration alarm. A consumer that bumps the pin without adding
+    # the sweep caller (workflow-not-found), without its declared
+    # `bootstrap` input (unexpected input), or without `actions: write`
+    # on this caller (permission denied) fails HERE, visibly on the PR,
+    # instead of silently never sweeping again.
     runs-on: ubuntu-latest
-    # ONE shared group: every reconcile sweeps every open PR, so cron and
-    # PR-event runs must serialize or two sweeps race the same PR's labels
-    # and both pass the request-the-human-once guard.
-    concurrency:
-      group: labels-reconcile
-      cancel-in-progress: false
     steps:
-      # pull_request_target is required for fork PR write permission. It is
-      # safe here because no PR code is ever checked out or executed:
-      # labels-scope reads the mapping and changed paths via the API, and
-      # reconcile checks out the BASE branch only. Keep it that way.
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.event.repository.default_branch }}
-      - uses: actions/checkout@v4
-        # The self-consumption bypass — release.yml's twin, and load-bearing
-        # for the same reason (#11): ceremony's own labels bootstrap must
-        # run BEFORE any release tag exists for this checkout to fetch — the
-        # release label the merge door reads is created by that dispatch, so
-        # without the bypass the first release deadlocks on its own pin. The
-        # base-branch checkout above already IS ceremony on the dogfood
-        # path.
-        if: github.repository != 'heavy-duty/ceremony'
-        with:
-          repository: heavy-duty/ceremony
-          ref: ${{ env.CEREMONY_SELF_REF }}
-          path: .ceremony-src
-      # Two steps, mutually exclusive `if:`s, because a `uses:` path must be
-      # a literal — the same fork release.yml's CEREMONY_DIR env line
-      # papers over for `run:` steps, which composite `uses:` has no
-      # equivalent of.
-      - name: reconcile state + stale
-        if: github.repository != 'heavy-duty/ceremony'
-        uses: ./.ceremony-src/actions/labels-reconcile
-        with:
-          bootstrap: ${{ github.event_name == 'workflow_dispatch' && 'yes' || 'no' }}
+      - name: dispatch the sweep
         env:
           GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-      - name: reconcile state + stale (dogfood — the workspace IS ceremony)
-        if: github.repository == 'heavy-duty/ceremony'
-        uses: ./actions/labels-reconcile
-        with:
-          bootstrap: ${{ github.event_name == 'workflow_dispatch' && 'yes' || 'no' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-      - name: reconcile issue flow
-        if: github.repository != 'heavy-duty/ceremony'
-        uses: ./.ceremony-src/actions/issueflow-reconcile
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-      - name: reconcile issue flow (dogfood — the workspace IS ceremony)
-        if: github.repository == 'heavy-duty/ceremony'
-        uses: ./actions/issueflow-reconcile
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+          SWEEP_WORKFLOW: ${{ inputs.sweep_workflow }}
+        run: gh workflow run "$SWEEP_WORKFLOW" -R "$GITHUB_REPOSITORY" -f bootstrap=no

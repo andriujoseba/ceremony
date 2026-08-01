@@ -27,7 +27,7 @@ edits to this guide (#12).
 - **The `release` label must exist** before the first ceremony PR — it is
   the merge door's declared-intent read
   ([lib/facts.sh](../lib/facts.sh#L88-L101)). Bootstrap it via the labels
-  workflow's `workflow_dispatch`
+  sweep caller's `workflow_dispatch`
   ([Labels automation](#labels-automation)), or create it by hand,
   matching the core table
   ([actions/labels-reconcile/labels-reconcile.sh](../actions/labels-reconcile/labels-reconcile.sh#L369)):
@@ -118,12 +118,13 @@ the machinery at all:
    consumer. In particular, `0.1.0` carries `changelog-armed`,
    `changelog-monotonic` and `drill-recorded` plus `docs-sync`, but not
    `changelog-assembled` or `runner-isolated`.
-6. **Labels automation** (optional but recommended): the caller from
-   [Labels automation](#labels-automation), plus `.github/labels.conf`
+6. **Labels automation** (optional but recommended): the two callers from
+   [Labels automation](#labels-automation) — the event-facing labels
+   caller and the sweep caller (#209) — plus `.github/labels.conf`
    (panel + the repo's `scope:*` rows) and `.github/labeler.yml` (the
-   path→scope globs). Run `workflow_dispatch` once — **this bootstraps
-   the taxonomy, `release` label included** — and use it again whenever an
-   operator needs a full-board sweep immediately.
+   path→scope globs). Run the sweep caller's `workflow_dispatch` once —
+   **this bootstraps the taxonomy, `release` label included** — and use it
+   again whenever an operator needs a full-board sweep immediately.
 7. **The artifact hook** (optional): `.github/actions/release-artifact/`
    per [The artifact hook](#the-artifact-hook). No hook → the source
    tarball is the package.
@@ -150,7 +151,8 @@ precisely so the machinery is safe to work on
 - [ ] Swap the guard *script* steps in `ci.yml` for the `uses:` steps in
       the bootstrap list above (with `fetch-depth: 0` on the checkout).
 - [ ] Replace `labels.yml` with the caller from
-      [Labels automation](#labels-automation); extract
+      [Labels automation](#labels-automation) and add the sweep caller
+      `labels-sweep.yml` beside it (#209); extract
       `.github/labels.conf` from the old reconciler's embedded config —
       the `panel=` roster line and the repo's `scope:*` rows
       ([the format](#labels-automation)). `.github/labeler.yml` stays as
@@ -269,13 +271,30 @@ build (#15) and incubator's GHCR image push (#16).
 
 ## Labels automation
 
-The reusable labels workflow owns two independent jobs: additive path-based
-`scope:*` labels and reconciliation of PR state, blockers, handoff, stale
-status, and the `needs-ruling` invariants on both surfaces — the bare-flag
-check and the 7-day comment-only nudge (#52; the sweep reads that flag and
-never writes it). The consumer keeps its path mapping in
-`.github/labeler.yml` and its review panel plus scope taxonomy in
-`.github/labels.conf`.
+The labels automation is two reusable workflows since #209, adopted
+together at the same pin:
+
+- **`labels.yml`** — the event-facing half, called on PR and issue events.
+  Two jobs: additive path-based `scope:*` labels, and a few-seconds
+  `trigger` job that wakes the sweep by dispatching the consumer's sweep
+  caller (`gh workflow run`, plain `GITHUB_TOKEN` — `workflow_dispatch` is
+  one of the two documented exemptions from the token's no-retrigger rule,
+  so no PAT anywhere in the path and no loop: the sweep dispatches
+  nothing).
+- **`labels-sweep.yml`** — the reconcile sweep: PR state, blockers,
+  handoff, stale status, the issue work queue, and the `needs-ruling`
+  invariants on both surfaces — the bare-flag check and the 7-day
+  comment-only nudge (#52; the sweep reads that flag and never writes it).
+  Detached from PR-triggered runs on purpose: all sweeps serialize through
+  one shared concurrency group, and GitHub records every queue-displaced
+  run as CANCELLED — harmless (the surviving sweep does its work) until it
+  rode a `pull_request_target` run and the ❌ landed on that PR's checks
+  as fake red CI. Behind its own caller, a displaced sweep cancels on the
+  Actions tab, attached to no PR; PR checks show `scope` and the green
+  `trigger` only.
+
+The consumer keeps its path mapping in `.github/labeler.yml` and its
+review panel plus scope taxonomy in `.github/labels.conf`.
 
 **Additive means additive** (unreleased — #130): the scope job's only label
 write is `POST /issues/{n}/labels`, which adds the derived scopes and removes
@@ -292,25 +311,11 @@ half-honoured. The reconcile sweep also warns (never sets) when a non-draft
 PR carries a bare `X.Y.Z` version differing from its base but no `release`
 label — the merge door would refuse that merge, and the sweep says so first.
 
-The complete caller is:
+The complete event-facing caller is:
 
 ```yaml
 name: labels
 on:
-  # The consumer owns this cadence (#203). Hourly is the recommended default
-  # when no other engine drives board state: the cron is then the sweep's only
-  # wake for four transition classes — a review verdict landing (no
-  # pull_request_review trigger), blocker:ci-red set/cleared, blocker:conflict
-  # when another PR merges under this one, and time-based stale / 48h
-  # claim-reclaim. Events below carry the rest in seconds. Hourly trades ≤1h of
-  # latency on those four while cutting nominal scheduled sweeps from four an
-  # hour to one at GitHub's 1-minute floor. Do not delete the cron: it is their
-  # discovery path. If another engine writes some of those transitions, only
-  # the classes with no other writer bound the cadence; relax it only as that
-  # list shrinks.
-  schedule: [{cron: "0 * * * *"}]
-  # A manual full-board sweep, including taxonomy bootstrap on a fresh repo.
-  workflow_dispatch:
   pull_request_target:
     # Fork PRs; these carry the head/draft/review facts state:* derives from.
     # labeled/unlabeled are the handoff wake (state:needs-human confirmed here);
@@ -334,18 +339,81 @@ permissions:
   contents: read
   checks: read          # mergeability/check-rollup read for PR state
   statuses: read        # commit-status rollup read for PR state
-  actions: read         # workflow-run nodes inside the check rollup — private repos do not imply it (incubator#60)
+  actions: write        # the trigger job's `gh workflow run` dispatch of the sweep caller (#209)
   issues: write
   pull-requests: write
 jobs:
   labels:
     uses: heavy-duty/ceremony/.github/workflows/labels.yml@<pinned-tag>
+    # If the sweep caller below is named anything but labels-sweep.yml,
+    # say so: `with: { sweep_workflow: <filename> }`. Ceremony's own
+    # dogfood does (self-labels-sweep.yml).
+```
+
+And the complete sweep caller, `labels-sweep.yml` beside it — the hourly
+cron lives HERE since #209, not on the labels caller:
+
+```yaml
+name: labels-sweep
+on:
+  # The consumer owns this cadence (#203). Hourly is the recommended default
+  # when no other engine drives board state: the cron is then the sweep's only
+  # wake for four transition classes — a review verdict landing (no
+  # pull_request_review trigger on the labels caller), blocker:ci-red
+  # set/cleared, blocker:conflict when another PR merges under this one, and
+  # time-based stale / 48h claim-reclaim. The labels caller's events carry the
+  # rest in seconds, one trigger-job dispatch away. Hourly trades ≤1h of
+  # latency on those four while cutting nominal scheduled sweeps from four an
+  # hour to one at GitHub's 1-minute floor. Do not delete the cron: it is their
+  # discovery path. If another engine writes some of those transitions, only
+  # the classes with no other writer bound the cadence; relax it only as that
+  # list shrinks.
+  schedule: [{cron: "0 * * * *"}]
+  # A manual full-board sweep. A bare dispatch (input default "yes") also
+  # bootstraps the taxonomy on a fresh repo. The labels caller's trigger job
+  # wakes this workflow with bootstrap=no on every board event, so the
+  # declared input is part of the contract: a dispatch naming an undeclared
+  # input is refused, and the trigger job goes loudly red.
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Bootstrap the label taxonomy before sweeping
+        type: choice
+        options: ["yes", "no"]
+        default: "yes"
+permissions:
+  contents: read
+  checks: read          # mergeability/check-rollup read for PR state
+  statuses: read        # commit-status rollup read for PR state
+  actions: read         # workflow-run nodes inside the check rollup — private repos do not imply it (incubator#60)
+  issues: write
+  pull-requests: write
+jobs:
+  sweep:
+    uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@<pinned-tag>
+    # If this repo's PR-facing labels caller is named anything but `labels`,
+    # pass that name: `with: { pr_workflow_name: <name> }`. The sweep exports
+    # it as SELF_WORKFLOW so the label machinery's own check entries (scope,
+    # trigger) never count toward blocker:ci-red — a red trigger means "fix
+    # the caller", which no PR edit can do (#208 reads it).
 ```
 
 Naming any permission sets every unnamed permission to `none`. Public
 repositories allow check data to be read regardless, but a private consumer
-needs all three explicit reads above; without them the failure appears as an empty
-`state:*` axis on the board rather than a red workflow run.
+needs the explicit reads above; without them the failure appears as an empty
+`state:*` axis on the board rather than a red workflow run. The labels
+caller's `actions: write` is different — it is required everywhere, public
+repos included: the trigger job's `gh workflow run` is a write, and without
+it every event run goes red at the trigger.
+
+**The failure mode to know before bumping**: a consumer that bumps its pin
+to a #209-carrying tag without adding the sweep caller keeps green-looking
+silence nowhere — the trigger job goes **red on every PR and issue event**
+(workflow-not-found; likewise on a sweep caller missing its `bootstrap`
+input, or a labels caller missing `actions: write`), and event-woken sweeps
+stop until the caller lands. That loudness is deliberate: never read
+silence, or a green `scope` alone, as health. Make the adoption one atomic
+PR — pin bump, sweep caller file, `actions: write` line together.
 
 The `issues:` trigger is available at `0.2.0` and later — `0.2.0` is the
 first tag carrying ceremony#32. A consumer pinned to `0.1.0` omits it. Adopt
@@ -366,8 +434,17 @@ mint→`needs-triage` check and `closed` the blocker-closes→`ready` self-heal;
 the stub and ceremony's own caller stay byte-for-byte identical, the parity
 #144 established.
 
+The two-caller split (ceremony#209) is **unreleased**. A consumer pinned to
+`0.4.0` or earlier keeps the previous single-caller shape — the labels
+caller carrying the cron, `workflow_dispatch`, and `actions: read` — and
+adopts the split at the pin bump to the first tag carrying ceremony#209,
+as one atomic PR: the pin, the reshaped labels caller (cron and dispatch
+removed, `actions: write` added), and the new sweep caller file. Never mix
+refs to adopt it early, and never bump without the sweep caller — that is
+the red-trigger failure mode above.
+
 `pull_request_target` is intentional: fork PRs need the base repository's
-token to write labels. The reusable workflow executes no PR code. It checks
+token to write labels. The reusable workflows execute no PR code. They check
 out only the consumer's base branch and the pinned ceremony implementation.
 The #52 ruling invariants ride exactly these triggers — but the caller above
 is no longer the #18 shape, so adopting current triggers is a stub edit, not
@@ -403,21 +480,22 @@ way — keep the file data only).
 Core state, blocker, work-queue, and release labels come from ceremony. Scope
 rows remain consumer-owned because paths and surfaces differ by repository.
 
-After adding the caller and configuration, run `workflow_dispatch` once to
-bootstrap labels on a fresh repository. It is also the operator's general
-manual full-board sweep — the answer when the board looks wrong now rather
-than after the next scheduled cadence:
+After adding the callers and configuration, dispatch the sweep caller once
+to bootstrap labels on a fresh repository. A bare dispatch is also the
+operator's general manual full-board sweep — the answer when the board
+looks wrong now rather than after the next scheduled cadence:
 
 ```sh
-gh workflow run labels.yml -R <owner>/<repo>
+gh workflow run labels-sweep.yml -R <owner>/<repo>
 ```
 
-Ceremony dogfoods the caller under the filename `self-labels.yml`, so the
-equivalent command in this repository substitutes that filename. Scheduled
-and PR-triggered runs only reconcile; they do not repeatedly upsert the
-taxonomy. When a ceremony pin bump adds a core label, bump the pin first and
-then re-dispatch `workflow_dispatch`; the scheduled sweep warns when the
-pinned taxonomy declares a core label the repository lacks.
+Ceremony dogfoods the callers under the filenames `self-labels.yml` and
+`self-labels-sweep.yml`, so the equivalent command in this repository
+substitutes that filename. Scheduled and trigger-driven runs only
+reconcile; they do not repeatedly upsert the taxonomy (the trigger's
+dispatch carries `bootstrap=no`). When a ceremony pin bump adds a core
+label, bump the pin first and then re-dispatch; the scheduled sweep warns
+when the pinned taxonomy declares a core label the repository lacks.
 
 ## Doctrine mirror
 
