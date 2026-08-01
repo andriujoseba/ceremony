@@ -9,6 +9,31 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.4.1 — 2026-08-01
+
+### Changed
+
+- The reconcile sweep is detached from PR-triggered runs: a new reusable
+  `labels-sweep.yml` carries it, woken by `labels.yml`'s new `trigger` job, so
+  a queue-displaced sweep cancels on the Actions tab instead of landing a
+  cancelled `reconcile` check on a PR (#209).
+- Labels consumers add a sweep caller (`labels-sweep.yml`, stub in
+  docs/CONSUMERS.md), relocate the hourly cron and manual bootstrap dispatch
+  to it, and grant the labels caller `actions: write`; a pin bump without the
+  sweep caller goes loudly red at the trigger job (#209).
+
+### Fixed
+
+- `checks_state` drops rollup entries belonging to the workflow it runs
+  inside — `SELF_WORKFLOW`, defaulting to the ambient `GITHUB_WORKFLOW` —
+  before the newest-per-context collapse: the label machine never grades
+  its own runs, and an empty name filters nothing (#208).
+- A sweep displaced from the shared concurrency queue attaches CANCELLED to
+  its PR while its successor attaches elsewhere, so the sweep set
+  `blocker:ci-red` off its own displaced run and re-affirmed it every
+  cadence (crew#227). A rollup of only self entries now honestly scores
+  NONE (#208).
+
 ## 0.4.0 — 2026-07-29
 
 ### Added
