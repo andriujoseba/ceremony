@@ -12,8 +12,13 @@ name: labels-sweep
 # one-running-plus-one-pending queue records every extra run as CANCELLED.
 # That displacement is semantically lossless — the surviving sweep does the
 # displaced run's work — but while the sweep rode pull_request_target runs
-# the ❌ landed on that PR's checks and read as red CI. Here a displaced
-# run attaches to no PR: the cancellations live on the Actions tab only.
+# the ❌ landed on that PR's checks and read as red CI, with no manual
+# escape hatch: GitHub refuses to rerun a queue-displaced run (crew#250).
+# And displacement is the steady state of a working fleet, not a spike —
+# one panel request emits one review_requested event per reviewer, so
+# every review round over-fills the one-running-plus-one-pending queue.
+# Here a displaced run attaches to no PR: the cancellations live on the
+# Actions tab only.
 #
 # Bootstrap semantics: a manual dispatch of the caller bootstraps the
 # taxonomy (its `bootstrap` input defaults to "yes"), exactly what

@@ -12,7 +12,12 @@ name: labels
 # The reconcile sweep lived here until #209. Riding the PR-triggered run
 # meant every displacement in the sweep's shared concurrency queue recorded
 # a CANCELLED `reconcile` check on some PR — read as red CI by every human
-# and agent, though the surviving sweep does the displaced run's work. The
+# and agent, though the surviving sweep does the displaced run's work. Two
+# field facts made that untenable (crew#250): a displaced run cannot be
+# rerun — `gh run rerun`, `--failed`, and `--job` all refuse — so a victim
+# PR has no manual escape hatch; and the displacing burst is deterministic,
+# one `review_requested` event per panelist per request, so every review
+# round displaces runs and the rate scales with panel size. The
 # sweep now lives in labels-sweep.yml behind its own caller, and the
 # trigger job below is its wake: it fires on every event this caller
 # subscribes — the exact surface that used to run reconcile directly — so

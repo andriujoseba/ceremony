@@ -289,7 +289,9 @@ together at the same pin:
   one shared concurrency group, and GitHub records every queue-displaced
   run as CANCELLED — harmless (the surviving sweep does its work) until it
   rode a `pull_request_target` run and the ❌ landed on that PR's checks
-  as fake red CI. Behind its own caller, a displaced sweep cancels on the
+  as fake red CI that GitHub refuses to rerun (crew#250: `gh run rerun`
+  and its `--failed`/`--job` forms all decline a queue-displaced run).
+  Behind its own caller, a displaced sweep cancels on the
   Actions tab, attached to no PR; PR checks show `scope` and the green
   `trigger` only.
 
@@ -437,11 +439,36 @@ the stub and ceremony's own caller stay byte-for-byte identical, the parity
 The two-caller split (ceremony#209) is **unreleased**. A consumer pinned to
 `0.4.0` or earlier keeps the previous single-caller shape — the labels
 caller carrying the cron, `workflow_dispatch`, and `actions: read` — and
-adopts the split at the pin bump to the first tag carrying ceremony#209,
-as one atomic PR: the pin, the reshaped labels caller (cron and dispatch
-removed, `actions: write` added), and the new sweep caller file. Never mix
-refs to adopt it early, and never bump without the sweep caller — that is
-the red-trigger failure mode above.
+adopts the split at the pin bump to the first tag carrying ceremony#209.
+Never mix refs to adopt it early.
+
+The migration is **one atomic PR** with exactly four edits — crew, the
+consumer whose displaced-check evidence drove #209 (crew#227, crew#250),
+is the worked example; written here against `0.4.1` as the illustrative
+first tag carrying the split:
+
+1. **Pin bump, every reference together** ([Version pinning](#version-pinning)):
+   `0.4.0` → `0.4.1` in the labels caller's `uses:` line **and in every
+   other ceremony `uses:` in the repo** — crew also pins in
+   `release.yml` and its `ci.yml` guard steps. A repo on the doctrine
+   mirror re-runs `docs-sync --fix` in the same PR.
+2. **New file `.github/workflows/labels-sweep.yml`** — the sweep caller
+   stub above, verbatim, `bootstrap` input included (the trigger's
+   `-f bootstrap=no` dispatch is refused if the input is undeclared).
+3. **The hourly cron RELOCATES — it is moved, never copied.** Delete the
+   `schedule:` block (and the bare `workflow_dispatch:`) from the labels
+   caller in the same edit that adds the sweep caller.
+   **Warning**: a consumer that copies the sweep caller and leaves the
+   old schedule on the labels caller gets DOUBLE sweeps — every cron tick
+   fires both callers into the one shared `labels-reconcile` group — so
+   displacement goes **up**, and the fix reads as the bug getting worse.
+4. **`actions: write` on the labels caller** — consumers carry
+   `actions: read` today (crew does); the trigger job's `gh workflow run`
+   is a write. The sweep caller keeps `actions: read`.
+
+Bump without the sweep caller and the trigger job goes red on every PR
+and issue event — the loud failure mode above — so never split these
+four edits across PRs.
 
 `pull_request_target` is intentional: fork PRs need the base repository's
 token to write labels. The reusable workflows execute no PR code. They check
