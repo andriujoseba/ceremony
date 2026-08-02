@@ -60,10 +60,10 @@ the machinery at all:
    the release PR assembles the section
    ([Assembling a release section](#assembling-a-release-section)).
 
-   Fragment mode is **unreleased** and not in `0.1.0`. A consumer pinned
-   to `0.1.0` bootstraps the legacy shape instead — the preamble plus an
-   empty `## Unreleased` section for entries to land under — and converts
-   on the pin bump to the first tag carrying fragment mode; never mix
+   Fragment mode is available at `0.2.0` and later, and not in `0.1.0`.
+   A consumer pinned to `0.1.0` bootstraps the legacy shape instead — the
+   preamble plus an empty `## Unreleased` section for entries to land
+   under — and converts on the pin bump to `0.2.0` or later; never mix
    refs to adopt it early.
 3. **`drills/README.md`** defining what a drill *means* in this repo —
    each repo names its own
@@ -85,14 +85,16 @@ the machinery at all:
            fetch-depth: 0
        - uses: heavy-duty/ceremony/actions/changelog-armed@<pinned-tag>
        - uses: heavy-duty/ceremony/actions/changelog-monotonic@<pinned-tag>
-       # Unreleased: changelog-assembled is not in 0.1.0. Adopt this step
-       # with the pin bump to the first tag that carries it; never mix
-       # refs. Green NOTICE on every non-release PR; on a release PR it
-       # asserts the stamped section is exactly the fragments it consumed.
+       # changelog-assembled is available at 0.2.0 and later, not in
+       # 0.1.0. Adopt this step with the pin bump to 0.2.0 or later;
+       # never mix refs. Green NOTICE on every non-release PR; on a
+       # release PR it asserts the stamped section is exactly the
+       # fragments it consumed.
        - uses: heavy-duty/ceremony/actions/changelog-assembled@<pinned-tag>
        - uses: heavy-duty/ceremony/actions/drill-recorded@<pinned-tag>
-       # Unreleased: runner-isolated is not in 0.1.0. Adopt this step with
-       # the pin bump to the first tag that carries it; never mix refs.
+       # runner-isolated is available at 0.2.0 and later, not in 0.1.0.
+       # Adopt this step with the pin bump to 0.2.0 or later; never mix
+       # refs.
        - uses: heavy-duty/ceremony/actions/runner-isolated@<pinned-tag>
    ```
 
@@ -112,7 +114,11 @@ the machinery at all:
    somebody adds one.
 
    This guide documents `main`. New machinery is marked **unreleased**
-   here until a release tag ships it. If an action does not exist at the
+   here until a release tag ships it — and the release PR that ships the
+   machinery clears, in that same PR, every marker its own assembled
+   section makes false: the section cites its issues, each marker cites
+   the same issue, and the release PR's diff is the one place both
+   halves are visible at once (#221). If an action does not exist at the
    consumer's pinned tag, adopt it with the pin bump to the first tag that
    carries it; never mix a moving or newer ref into an otherwise exact-pin
    consumer. In particular, `0.1.0` carries `changelog-armed`,
@@ -298,7 +304,8 @@ together at the same pin:
 The consumer keeps its path mapping in `.github/labeler.yml` and its
 review panel plus scope taxonomy in `.github/labels.conf`.
 
-**Additive means additive** (unreleased — #130): the scope job's only label
+**Additive means additive** (available at `0.3.0` and later — #130): the
+scope job's only label
 write is `POST /issues/{n}/labels`, which adds the derived scopes and removes
 nothing, so a label applied while the job runs survives it. Earlier tags used
 `actions/labeler@v5`, which — even under `sync-labels: false` — replaces the
@@ -436,16 +443,16 @@ mint→`needs-triage` check and `closed` the blocker-closes→`ready` self-heal;
 the stub and ceremony's own caller stay byte-for-byte identical, the parity
 #144 established.
 
-The two-caller split (ceremony#209) is **unreleased**. A consumer pinned to
-`0.4.0` or earlier keeps the previous single-caller shape — the labels
-caller carrying the cron, `workflow_dispatch`, and `actions: read` — and
-adopts the split at the pin bump to the first tag carrying ceremony#209.
-Never mix refs to adopt it early.
+The two-caller split (ceremony#209) is available at `0.4.1` and later. A
+consumer pinned to `0.4.0` or earlier keeps the previous single-caller
+shape — the labels caller carrying the cron, `workflow_dispatch`, and
+`actions: read` — and adopts the split at the pin bump to `0.4.1` or
+later. Never mix refs to adopt it early.
 
 The migration is **one atomic PR** with exactly four edits — crew, the
 consumer whose displaced-check evidence drove #209 (crew#227, crew#250),
-is the worked example; written here against `0.4.1` as the illustrative
-first tag carrying the split:
+is the worked example; written here against `0.4.1`, the first tag
+carrying the split:
 
 1. **Pin bump, every reference together** ([Version pinning](#version-pinning)):
    `0.4.0` → `0.4.1` in the labels caller's `uses:` line **and in every
@@ -482,10 +489,12 @@ quiet repo wears that flag until the backstop cron; a consumer picks them up
 by pinning `0.3.0` or later, never through mixed refs.
 
 `.github/labels.conf` has one mandatory panel setting, one mandatory
-`triage-actors` setting, and then zero or more scope rows:
+`triage-actors` setting, zero or more optional per-author panel rows, and
+then zero or more scope rows:
 
 ```text
 panel=claude-bot example-codex-bot example-grok-bot
+panel[example-builder]=example-codex-bot example-grok-bot
 triage-actors=example-triage-bot
 scope:cli|C5DEF5|The command-line surface
 scope:docs|C5DEF5|Documentation
@@ -497,13 +506,25 @@ rows only; adding `triage-actors=` is a parse failure, not an ignored setting.
 Add it at the same pin bump as the `issues:` trigger — `0.2.0` or later —
 never before it and never through mixed refs.
 
+The optional `panel[<login>]=` rows are **unreleased** (#224). A row names
+the effective panel for PRs authored by exactly that login — the reconciler
+computes that PR's required set from the row, minus the author as always —
+and every other author keeps the base `panel=`, which stays mandatory. The
+panel is configured or it is the base one: ceremony never infers a reviewer
+set from the model behind a login. On any earlier pin a bracketed row is a
+**parse failure, not an ignored setting** — the same shape `triage-actors=`
+bought at `0.2.0`, but harsher in practice: the reconcile job dies on every
+PR event and every sweep until the row is removed, so the whole label board
+goes down. Add the row only at or after the pin bump that carries it, never
+before it and never through mixed refs.
+
 Both actor lists are whitespace-separated. `triage-actors` names the identities
 allowed to mint issues without the sweep applying `needs-triage`. Label rows use exactly
 `name|color|description`; blank lines are ignored and extra pipes are refused.
 There are no comment lines: every non-blank line must be the `panel=`
-setting, the `triage-actors=` setting, or a label row, so `#`-prefixed prose
-is a parse failure, not a comment (rig #13's conversion found this the hard
-way — keep the file data only).
+setting, a `panel[<login>]=` row, the `triage-actors=` setting, or a label
+row, so `#`-prefixed prose is a parse failure, not a comment (rig #13's
+conversion found this the hard way — keep the file data only).
 Core state, blocker, work-queue, and release labels come from ceremony. Scope
 rows remain consumer-owned because paths and surfaces differ by repository.
 

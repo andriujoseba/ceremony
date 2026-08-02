@@ -986,5 +986,119 @@ for ev in schedule pull_request_target; do
   expect "...and deletes nothing" \
     no "$(grep -q '^delete ' "$EXEC/record" && echo yes || echo no)"
 done
+# -- a re-drafted fix round is not a build (#205) ----------------------------
+# Draft used to short-circuit decide_state before the round was consulted, so
+# a PR carrying a standing CHANGES_REQUESTED that its builder converted back
+# to draft read state:building — and the staleness sweep read a dropped fix
+# round as a build in progress.
+load_config .github/labels.conf
+set_required_bots codex-bot-andresmgsl
+MERGEABLE=MERGEABLE CHECKS=SUCCESS LABELS="" HEAD_SHA=head1
+DRAFT=true REQUESTED="" REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" CHANGES_REQUESTED head1 no t1)" \
+  "$(rev "$BOT2" APPROVED head1 ok t2)" \
+  "$(rev "$BOT3" APPROVED head1 ok t3)")"
+expect "a re-drafted PR with a standing block is addressing, not building" \
+  state:addressing "$(decide_state)"
+REVIEWS_JSON="$(reviews "$(rev "$BOT1" COMMENTED head1 thoughts t1)")"
+expect "a re-drafted PR owing a round-reply is addressing" \
+  state:addressing "$(decide_state)"
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" APPROVED head0 ok t1)" \
+  "$(rev "$BOT2" APPROVED head0 ok t2)" \
+  "$(rev "$BOT3" APPROVED head0 ok t3)")"
+expect "a re-drafted PR whose approvals a push staled is addressing" \
+  state:addressing "$(decide_state)"
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" APPROVED head1 ok t1)" \
+  "$(rev "$BOT2" APPROVED head1 ok t2)" \
+  "$(rev "$BOT3" APPROVED head1 ok t3)" \
+  "$(rev "$HUMAN" CHANGES_REQUESTED head1 no t4)")"
+expect "the human's standing changes-requested outranks draft too" \
+  state:addressing "$(decide_state)"
+# Approvals do NOT outrank draft: a re-draft after a passed round is
+# deliberately building again — and a draft must never read needs-human.
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" APPROVED head1 ok t1)" \
+  "$(rev "$BOT2" APPROVED head1 ok t2)" \
+  "$(rev "$BOT3" APPROVED head1 ok t3)")"
+expect "a re-draft after a passed round is building again" \
+  state:building "$(decide_state)"
+REQUESTED="$HUMAN"
+expect "...even with the human requested — a draft never reads needs-human" \
+  state:building "$(decide_state)"
+# Round 1's 224-case hole (claude's differential): a draft with a LIVE HUMAN
+# REQUEST plus a standing block or comment fell through to round_state,
+# whose human-request precedence sits above BLOCK/FEEDBACK — and read
+# needs-human on a PR GitHub cannot merge. These are the same inputs as the
+# addressing rows above with REQUESTED="$HUMAN", which is where the
+# criterion can actually fail.
+REQUESTED="$HUMAN" REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" CHANGES_REQUESTED head1 no t1)" \
+  "$(rev "$BOT2" APPROVED head1 ok t2)" \
+  "$(rev "$BOT3" APPROVED head1 ok t3)")"
+expect "a draft with a human request and a standing block is addressing" \
+  state:addressing "$(decide_state)"
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" COMMENTED head1 thoughts t1)" \
+  "$(rev "$BOT2" APPROVED head1 ok t2)" \
+  "$(rev "$BOT3" APPROVED head1 ok t3)")"
+expect "a draft with a human request and an owed reply is addressing" \
+  state:addressing "$(decide_state)"
+
+# The must-not-paper-over combination: a live panel request on a draft is a
+# board defect (the bots ignore drafts by design) and stays VISIBLE as
+# bots-reviewing rather than being absorbed into building.
+REQUESTED="$BOT2" REVIEWS_JSON='[]'
+expect "a live panel request on a draft surfaces as bots-reviewing" \
+  state:bots-reviewing "$(decide_state)"
+# The byte-identical baseline: a virgin draft still reads building.
+REQUESTED="" REVIEWS_JSON='[]'
+expect "a draft with no round history still reads building" \
+  state:building "$(decide_state)"
+
+# -- per-author panels (#224): the required set flows from the one ----------
+#    resolution point, and convergence counts the effective set — never the
+#    base panel beside a reduced request set (the must-fail the issue names)
+PANEL_DIR="$RTMP/panel-author"
+mkdir -p "$PANEL_DIR"
+printf '%s\n' 'panel=bot-a bot-b bot-c bot-d' \
+  'panel[builder-z]=bot-b bot-c bot-d' >"$PANEL_DIR/labels.conf"
+load_config "$PANEL_DIR/labels.conf"
+set_required_bots builder-z
+expect "a bracketed author requires exactly its configured row" \
+  "bot-b bot-c bot-d" "${REQUIRED_BOTS[*]}"
+set_required_bots bot-a
+expect "an unbracketed author beside a bracketed row requires panel minus self" \
+  "bot-b bot-c bot-d" "${REQUIRED_BOTS[*]}"
+set_required_bots outsider
+expect "an unbracketed non-panelist author requires the whole base panel" \
+  "bot-a bot-b bot-c bot-d" "${REQUIRED_BOTS[*]}"
+
+# The engine shape: the three configured reviewers approving the head IS the
+# whole round for a bracketed author — bot-a's absent verdict must not hold
+# convergence, or the request side and the convergence side disagree forever
+# (the deadlock crew#285 was filed over).
+set_required_bots builder-z
+THREE_APPROVE="$(reviews \
+  "$(rev bot-b APPROVED head1 ok 2026-08-02T10:00:00Z)" \
+  "$(rev bot-c APPROVED head1 ok 2026-08-02T10:01:00Z)" \
+  "$(rev bot-d APPROVED head1 ok 2026-08-02T10:02:00Z)")"
+DRAFT=false HEAD_SHA=head1 REQUESTED="" REVIEWS_JSON="$THREE_APPROVE" \
+  MERGEABLE=MERGEABLE CHECKS=SUCCESS LABELS=""
+expect "the bracketed author's round converges on its three approvals" \
+  state:needs-human "$(decide_state)"
+expect "...with no blocker standing" "" "$(blockers)"
+# The control: the same three approvals under the base panel are NOT a full
+# round — the fourth verdict is owed and unrequested. If this pair ever
+# reads the same, one side stopped consulting the resolution point.
+printf '%s\n' 'panel=bot-a bot-b bot-c bot-d' >"$PANEL_DIR/labels.conf"
+load_config "$PANEL_DIR/labels.conf"
+set_required_bots builder-z
+expect "without the row the same approvals leave the round incomplete" \
+  state:addressing "$(decide_state)"
+expect "...and the owed, unasked verdict is named" \
+  blocker:unrequested "$(blockers)"
+
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

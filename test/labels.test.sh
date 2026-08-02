@@ -53,6 +53,82 @@ load_config "$TMP/good.conf"
 set_required_bots two
 check "PR author is recused from the required panel" 0 "one three" printf '%s\n' "${REQUIRED_BOTS[*]}"
 
+# -- per-author panel rows (#224): the config-parse matrix -------------------
+# required_for loads a conf fresh in a subshell and prints the required set
+# behind a RESULT: anchor, so substring matching cannot confuse "b c" with
+# "a b c".
+# shellcheck disable=SC2016 # expansion belongs to the nested bash
+required_for() { # $1 = conf, $2 = author → RESULT:<required set>
+  bash -c 'source "$1"; load_config "$2" || exit 1
+    set_required_bots "$3"; printf "RESULT:%s\n" "${REQUIRED_BOTS[*]}"' _ \
+    "$ROOT/actions/labels-reconcile/labels-reconcile.sh" "$1" "$2"
+}
+printf '%s\n' 'panel=a b c' >"$TMP/plain.conf"
+check "no bracketed row: panelist author gets panel minus self" 0 "RESULT:b c" \
+  required_for "$TMP/plain.conf" a
+check "no bracketed row: outside author gets the whole panel" 0 "RESULT:a b c" \
+  required_for "$TMP/plain.conf" z
+printf '%s\n' 'panel=a b c' 'panel[z]=b c' >"$TMP/author.conf"
+check "bracketed author gets exactly its row" 0 "RESULT:b c" \
+  required_for "$TMP/author.conf" z
+check "unbracketed author beside a bracketed row is unchanged" 0 "RESULT:b c" \
+  required_for "$TMP/author.conf" a
+printf '%s\n' 'panel[z]=b c' 'panel=a b c' >"$TMP/reversed.conf"
+check "row order is irrelevant: bracketed row before panel=" 0 "RESULT:b c" \
+  required_for "$TMP/reversed.conf" z
+check "row order is irrelevant for the base panel too" 0 "RESULT:b c" \
+  required_for "$TMP/reversed.conf" a
+printf '%s\n' 'panel=a b c' 'panel[a]=a b' >"$TMP/self.conf"
+check "author inside its own bracketed row is still recused" 0 "RESULT:b" \
+  required_for "$TMP/self.conf" a
+# shellcheck disable=SC2016 # expansion belongs to the nested bash
+check "base panel is byte-identical with the bracketed rows deleted" 0 "SAME" \
+  bash -c 'source "$1"; load_config "$2"; with="${BOTS[*]}"
+    load_config "$3"; [ "$with" = "${BOTS[*]}" ] && echo SAME' _ \
+  "$ROOT/actions/labels-reconcile/labels-reconcile.sh" \
+  "$TMP/author.conf" "$TMP/plain.conf"
+printf '%s\n' 'panel=a b c' 'panel[z]=b' 'panel[z]=c' >"$TMP/dup-author.conf"
+check "duplicate rows for one login fail naming the line" 1 \
+  "duplicate panel[z]= row" load_config "$TMP/dup-author.conf"
+printf '%s\n' 'panel=a b c' 'panel[z]=' >"$TMP/empty-set.conf"
+check "a bracketed row naming zero reviewers fails loudly" 1 \
+  "panel[z]= must name at least one reviewer" load_config "$TMP/empty-set.conf"
+printf '%s\n' 'panel=a b c' 'panel[]=b c' >"$TMP/empty-login.conf"
+check "an empty login fails loudly" 1 "empty login in panel row" \
+  load_config "$TMP/empty-login.conf"
+# codex's round-1 probe: the stray ] used to parse, record login z], and
+# silently misroute z to the base panel — exactly the D4 refusal owed.
+printf '%s\n' 'panel=a b c' 'panel[z]]=b' >"$TMP/stray-bracket.conf"
+check "a stray ] inside the bracket is refused as a bracket" 1 \
+  "malformed panel[<login>]= row" load_config "$TMP/stray-bracket.conf"
+printf '%s\n' 'panel=a b c' 'panel[a_b]=c' >"$TMP/bad-login.conf"
+check "a non-login character in the bracket is refused" 1 \
+  "malformed panel[<login>]= row" load_config "$TMP/bad-login.conf"
+printf '%s\n' 'panel=a b c' 'panel[z=b c' >"$TMP/broken-bracket.conf"
+check "a malformed bracket is refused as a bracket (D4)" 1 \
+  "malformed panel[<login>]= row" load_config "$TMP/broken-bracket.conf"
+# shellcheck disable=SC2016 # expansion belongs to the nested bash
+check "...and never as a label row" 1 "" bash -c \
+  'source "$1"; load_config "$2" 2>&1 | grep -F "malformed label row"' _ \
+  "$ROOT/actions/labels-reconcile/labels-reconcile.sh" "$TMP/broken-bracket.conf"
+# The D7 tripwire: in a case pattern an unquoted panel[abc]=* is a bracket
+# expression matching panela=… — this row going green as a panel setting is
+# exactly the silent mis-route the quoted prefix exists to prevent.
+printf '%s\n' 'panel=a b c' 'panela=b c' >"$TMP/glob-guard.conf"
+check "panela= is still a malformed label row, never a panel setting (D7)" 1 \
+  "malformed label row" load_config "$TMP/glob-guard.conf"
+printf '%s\n' 'panel[z]=b c' >"$TMP/bracket-only.conf"
+check "a bracketed row does not satisfy the mandatory panel=" 1 \
+  "missing panel= line" load_config "$TMP/bracket-only.conf"
+printf '%s\n' 'panel=a b c' 'panel[z]=b c' \
+  'scope:one|C5DEF5|First scope' >"$TMP/mixed.conf"
+check "configured_label_rows returns the scope rows alone" 0 \
+  "scope:one|C5DEF5|First scope" configured_label_rows "$TMP/mixed.conf"
+# shellcheck disable=SC2016 # expansion belongs to the nested bash
+check "no panel[...] row reaches the bootstrap" 1 "" bash -c \
+  'source "$1"; configured_label_rows "$2" | grep -F "panel["' _ \
+  "$ROOT/actions/labels-reconcile/labels-reconcile.sh" "$TMP/mixed.conf"
+
 # LABELS.md is mirrored byte-identically into every governed repo, so any
 # scope enumeration it carries is true at home and false everywhere else —
 # 14 of 16 vendored rows were false across the family when this fired (#104).

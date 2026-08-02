@@ -22,6 +22,16 @@ printf '%s\n' 'panel=one' >"$TMP/missing.conf"
 check "missing triage actors fails loudly" 1 "missing triage-actors=" load_issueflow_config "$TMP/missing.conf"
 printf '%s\n' 'triage-actors=one' 'triage-actors=two' >"$TMP/duplicate.conf"
 check "duplicate triage actors fails loudly" 1 "duplicate triage-actors" load_issueflow_config "$TMP/duplicate.conf"
+# A panel[<login>]= row (#224 D8) must not take the issue board down: this
+# loader ignores every line that is not triage-actors=. That tolerance was
+# incidental; this row makes it deliberate, so a future tightening cannot
+# break the sweep as a side effect.
+printf '%s\n' \
+  'panel=one two' \
+  'panel[builder-z]=two' \
+  'triage-actors=triage-one' >"$TMP/bracketed.conf"
+check "a per-author panel row is tolerated by the issue-flow loader" 0 "" \
+  load_issueflow_config "$TMP/bracketed.conf"
 
 # The dogfood caller and reusable workflow must expose the same runtime facts
 # as the documented consumer stub. Static pins catch YAML blocks drifting to
