@@ -469,8 +469,37 @@ blockers() { # → the blocker:* labels this PR should carry, one per line
   fi
 }
 
+round_outranks_draft() { # 0 when the round's standing word survives a re-draft (#205)
+  # A standing non-approving verdict outranks draft: a PR that took a round,
+  # carries CHANGES_REQUESTED (or a comment owed a reply, or approvals a push
+  # staled), and is then converted back to draft is a fix round in progress,
+  # not a build — and hiding it behind state:building is a dropped ball the
+  # staleness sweep reads as work in progress. Approvals do NOT outrank
+  # draft: a re-draft after a passed round is deliberately building again,
+  # and a draft must never read state:needs-human.
+  #
+  # A LIVE panel request on a draft also falls through — deliberately
+  # surfaced, not absorbed (#205's must-not-paper-over): the bots ignore
+  # drafts by design, so a draft wearing state:bots-reviewing on the board
+  # is the visible symptom of a real defect (a request nobody cleared at
+  # round close, or a hand-requested draft), and reading it as building
+  # would hide exactly that.
+  local b
+  for b in "${REQUIRED_BOTS[@]}"; do
+    requested "$b" && return 0
+    case "$(bot_verdict "$b")" in BLOCK | FEEDBACK | STALE) return 0 ;; esac
+  done
+  [ "$(bot_verdict "$HUMAN")" = BLOCK ]
+}
+
 decide_state() { # → the one state:* label this PR should carry
-  if [ "$DRAFT" = true ]; then echo state:building; return; fi
+  # Draft decides the state only when the round implies nothing else (#205):
+  # a draft with no round history reads state:building exactly as it always
+  # has, and round_outranks_draft is what "nothing else" means.
+  if [ "$DRAFT" = true ] && ! round_outranks_draft; then
+    echo state:building
+    return
+  fi
 
   local s
   s="$(round_state)"
