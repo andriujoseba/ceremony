@@ -96,6 +96,14 @@ check "a bracketed row naming zero reviewers fails loudly" 1 \
 printf '%s\n' 'panel=a b c' 'panel[]=b c' >"$TMP/empty-login.conf"
 check "an empty login fails loudly" 1 "empty login in panel row" \
   load_config "$TMP/empty-login.conf"
+# codex's round-1 probe: the stray ] used to parse, record login z], and
+# silently misroute z to the base panel — exactly the D4 refusal owed.
+printf '%s\n' 'panel=a b c' 'panel[z]]=b' >"$TMP/stray-bracket.conf"
+check "a stray ] inside the bracket is refused as a bracket" 1 \
+  "malformed panel[<login>]= row" load_config "$TMP/stray-bracket.conf"
+printf '%s\n' 'panel=a b c' 'panel[a_b]=c' >"$TMP/bad-login.conf"
+check "a non-login character in the bracket is refused" 1 \
+  "malformed panel[<login>]= row" load_config "$TMP/bad-login.conf"
 printf '%s\n' 'panel=a b c' 'panel[z=b c' >"$TMP/broken-bracket.conf"
 check "a malformed bracket is refused as a bracket (D4)" 1 \
   "malformed panel[<login>]= row" load_config "$TMP/broken-bracket.conf"

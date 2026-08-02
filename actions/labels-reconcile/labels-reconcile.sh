@@ -187,6 +187,18 @@ parse_panel_author_row() { # panel[<login>]=<space-separated logins> (#224)
     echo "labels: empty login in panel row: $line in $conf" >&2
     return 1
   }
+  # The login must be exactly one well-formed bracket pair of login
+  # characters. Without this, panel[z]]=b parses: the case above only
+  # establishes that SOME ]= occurs, ${login%%]=*} keeps the stray ] inside
+  # the login (z]), and set_required_bots for the real z then silently falls
+  # back to the base panel — the misroute D4 exists to refuse. GitHub logins
+  # are [A-Za-z0-9-], per the #285 spec.
+  case "$login" in
+    *[!A-Za-z0-9-]*)
+      echo "labels: malformed panel[<login>]= row (a login is [A-Za-z0-9-] only): $line in $conf" >&2
+      return 1
+      ;;
+  esac
   for existing in ${PANEL_AUTHORS[@]+"${PANEL_AUTHORS[@]}"}; do
     [ "$existing" != "$login" ] || {
       echo "labels: duplicate panel[$login]= row in $conf: $line" >&2
@@ -504,6 +516,20 @@ decide_state() { # → the one state:* label this PR should carry
   local s
   s="$(round_state)"
 
+  # A draft disqualifies needs-human unconditionally (#205, round 1): with
+  # the short-circuit above now conditional, a draft carrying a live human
+  # request plus a standing bot block or comment fell through to
+  # round_state, whose explicit-human-request precedence sits above the
+  # BLOCK/FEEDBACK cases — and GitHub cannot merge a draft at all, so
+  # "a human could merge this right now" would lie no matter what the
+  # round says. state:addressing is the same honest landing the blocker/
+  # needs-ruling/blocked clauses below use: the round's word stands, only
+  # the mergeable-now claim is off the table while the PR is a draft.
+  if [ "$s" = state:needs-human ] && [ "$DRAFT" = true ]; then
+    echo state:addressing
+    return
+  fi
+
   # The one rule joining the two axes: state:needs-human means a human could
   # merge this RIGHT NOW, so it requires a clear branch. Any blocker at all
   # means the work is the agent's — whatever the review round says — and the
@@ -606,7 +632,7 @@ round_state() { # → the state the REVIEW ROUND alone implies; knows no branch 
 
 core_label_rows() {
   cat <<'EOF'
-state:building|FBCA04|PR is a draft — the coding agent is still building
+state:building|FBCA04|Pre-round: the builder is still building — draft is evidence for it, not the definition
 state:bots-reviewing|1D76DB|Waiting on the bot reviewers to finish the round
 state:addressing|D93F0B|All bots reviewed — coding agent owes the single reply + fixes
 state:needs-human|8250DF|No blockers, all bots approve — waiting on the human reviewer
