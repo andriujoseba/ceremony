@@ -304,7 +304,8 @@ together at the same pin:
 The consumer keeps its path mapping in `.github/labeler.yml` and its
 review panel plus scope taxonomy in `.github/labels.conf`.
 
-**Additive means additive** (available at `0.3.0` and later — #130): the scope job's only label
+**Additive means additive** (available at `0.3.0` and later — #130): the
+scope job's only label
 write is `POST /issues/{n}/labels`, which adds the derived scopes and removes
 nothing, so a label applied while the job runs survives it. Earlier tags used
 `actions/labeler@v5`, which — even under `sync-labels: false` — replaces the
@@ -522,9 +523,8 @@ allowed to mint issues without the sweep applying `needs-triage`. Label rows use
 `name|color|description`; blank lines are ignored and extra pipes are refused.
 There are no comment lines: every non-blank line must be the `panel=`
 setting, a `panel[<login>]=` row, the `triage-actors=` setting, or a label
-row, so `#`-prefixed prose
-is a parse failure, not a comment (rig #13's conversion found this the hard
-way — keep the file data only).
+row, so `#`-prefixed prose is a parse failure, not a comment (rig #13's
+conversion found this the hard way — keep the file data only).
 Core state, blocker, work-queue, and release labels come from ceremony. Scope
 rows remain consumer-owned because paths and surfaces differ by repository.
 

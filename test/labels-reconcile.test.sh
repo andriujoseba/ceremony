@@ -1027,6 +1027,25 @@ expect "a re-draft after a passed round is building again" \
 REQUESTED="$HUMAN"
 expect "...even with the human requested — a draft never reads needs-human" \
   state:building "$(decide_state)"
+# Round 1's 224-case hole (claude's differential): a draft with a LIVE HUMAN
+# REQUEST plus a standing block or comment fell through to round_state,
+# whose human-request precedence sits above BLOCK/FEEDBACK — and read
+# needs-human on a PR GitHub cannot merge. These are the same inputs as the
+# addressing rows above with REQUESTED="$HUMAN", which is where the
+# criterion can actually fail.
+REQUESTED="$HUMAN" REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" CHANGES_REQUESTED head1 no t1)" \
+  "$(rev "$BOT2" APPROVED head1 ok t2)" \
+  "$(rev "$BOT3" APPROVED head1 ok t3)")"
+expect "a draft with a human request and a standing block is addressing" \
+  state:addressing "$(decide_state)"
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" COMMENTED head1 thoughts t1)" \
+  "$(rev "$BOT2" APPROVED head1 ok t2)" \
+  "$(rev "$BOT3" APPROVED head1 ok t3)")"
+expect "a draft with a human request and an owed reply is addressing" \
+  state:addressing "$(decide_state)"
+
 # The must-not-paper-over combination: a live panel request on a draft is a
 # board defect (the bots ignore drafts by design) and stays VISIBLE as
 # bots-reviewing rather than being absorbed into building.
