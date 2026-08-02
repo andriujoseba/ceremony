@@ -212,11 +212,12 @@ triage bug, and the move is to say so on the issue, not to guess.
 repo-specific facts such as the panel roster live in that repo's own
 CONTRIBUTING; the shared flow lives here and is not restated there.)
 
-1. Mark ready-for-review; request **the whole panel**. The panel is the roster
-   of the repo the **PR** is in, minus you — never the roster of the repo the
-   issue is in. The PR repo's `.github/labels.conf` `panel=` line is the
+1. Mark ready-for-review; request **the whole panel**. The panel is the PR
+   repo's `panel[<your-login>]=` line if it defines one, else its `panel=`
+   line; minus the author in either case (#224) — and never the roster of
+   the repo the issue is in. The PR repo's `.github/labels.conf` is the
    machine's answer; its CONTRIBUTING roster is the human-readable answer,
-   and `panel=` governs if they disagree because that is what the state
+   and the conf governs if they disagree because that is what the state
    machine reads. If the PR repo names no roster, ask triage on the
    authorizing issue before marking ready-for-review; do not guess. You may
    request an off-panel reviewer, but say that their verdict is advisory and

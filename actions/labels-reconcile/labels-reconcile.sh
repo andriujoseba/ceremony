@@ -37,6 +37,12 @@ fi
 
 HUMAN="${HUMAN_REVIEWER:-danmt}"
 BOTS=()
+# Per-author panels (#224): parallel arrays because the conf is tiny and an
+# associative array buys nothing but a bash-4 dependency statement. One entry
+# per panel[<login>]= row — PANEL_AUTHORS holds the login, PANEL_ROWS the
+# space-joined reviewer set at the same index.
+PANEL_AUTHORS=()
+PANEL_ROWS=()
 REQUIRED_BOTS=()
 STATES=(state:building state:bots-reviewing state:addressing state:needs-human)
 BLOCKERS=(blocker:conflict blocker:ci-red blocker:unrequested)
@@ -127,8 +133,16 @@ load_config() { # $1 = consumer labels.conf; panel is mandatory, scopes optional
     return 1
   }
   BOTS=()
+  PANEL_AUTHORS=()
+  PANEL_ROWS=()
+  # shellcheck disable=SC2094 # parse_panel_author_row takes $conf for its
+  # error messages only — nothing in this loop writes the file it reads
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
+    # The panel[ prefix is matched QUOTED (#224 D7): in a case pattern an
+    # unquoted panel[abc]=* is a bracket expression that matches panela=…,
+    # panelb=…, panelc=… — silently rerouting ordinary settings. The
+    # panela= tripwire in test/labels.test.sh goes red if this regresses.
     case "$line" in
       panel=*)
         [ "$panel_seen" = false ] || {
@@ -142,6 +156,7 @@ load_config() { # $1 = consumer labels.conf; panel is mandatory, scopes optional
           return 1
         }
         ;;
+      "panel["*) parse_panel_author_row "$line" "$conf" || return ;;
       triage-actors=*) ;;
       *) parse_label_row "$line" >/dev/null || return ;;
     esac
@@ -150,6 +165,43 @@ load_config() { # $1 = consumer labels.conf; panel is mandatory, scopes optional
     echo "labels: missing panel= line in $conf" >&2
     return 1
   }
+}
+
+parse_panel_author_row() { # panel[<login>]=<space-separated logins> (#224)
+  # Every failure here is a hard one that names the offending line (D3): a
+  # conf error takes the whole board down, and the run log is the only place
+  # the operator can read why. A malformed bracket is refused AS a bracket
+  # (D4) — falling through to parse_label_row would report it as a
+  # "malformed label row", the misleading diagnostic #224 was filed over.
+  local line="$1" conf="$2" login rest existing
+  case "$line" in
+    "panel["*"]="*) ;;
+    *)
+      echo "labels: malformed panel[<login>]= row (expected panel[<login>]=<reviewers>): $line in $conf" >&2
+      return 1
+      ;;
+  esac
+  login="${line#panel[}"
+  login="${login%%]=*}"
+  [ -n "$login" ] || {
+    echo "labels: empty login in panel row: $line in $conf" >&2
+    return 1
+  }
+  for existing in ${PANEL_AUTHORS[@]+"${PANEL_AUTHORS[@]}"}; do
+    [ "$existing" != "$login" ] || {
+      echo "labels: duplicate panel[$login]= row in $conf: $line" >&2
+      return 1
+    }
+  done
+  local -a row=()
+  rest="${line#*]=}"
+  read -r -a row <<<"$rest"
+  [ "${#row[@]}" -gt 0 ] || {
+    echo "labels: panel[$login]= must name at least one reviewer in $conf: $line" >&2
+    return 1
+  }
+  PANEL_AUTHORS+=("$login")
+  PANEL_ROWS+=("${row[*]}")
 }
 
 parse_label_row() { # exact name|color|description; pipes in descriptions are refused
@@ -167,15 +219,38 @@ configured_label_rows() { # validated scope rows, excluding the panel setting
   [ -f "$conf" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
-    case "$line" in panel=* | triage-actors=*) continue ;; esac
+    # "panel["* quoted for the same D7 reason as load_config's case; skipping
+    # the bracketed rows (D5) keeps a dispatch bootstrap from trying to
+    # create a label named panel[<login>].
+    case "$line" in panel=* | "panel["* | triage-actors=*) continue ;; esac
     parse_label_row "$line" || return
   done <"$conf"
 }
 
+panel_for_author() { # $1 = author → the effective panel, space-joined (#224 D2)
+  # THE resolution point: the author's panel[<login>]= row when the conf
+  # defines one, the base panel= otherwise. Everything that computes a
+  # required set goes through here, because two places computing the panel
+  # is how the engine and the reconciler came to disagree in the first place.
+  local author="$1" i
+  for i in ${PANEL_AUTHORS[@]+"${!PANEL_AUTHORS[@]}"}; do
+    if [ "${PANEL_AUTHORS[i]}" = "$author" ]; then
+      printf '%s\n' "${PANEL_ROWS[i]}"
+      return
+    fi
+  done
+  printf '%s\n' "${BOTS[*]}"
+}
+
 set_required_bots() { # the PR author is recused by construction
+  # Minus-the-author applies to WHICHEVER set panel_for_author returns (#224
+  # D2's safety net): an author who mistakenly appears inside its own
+  # bracketed row is still recused.
   local author="$1" bot
+  local -a effective=()
+  read -r -a effective <<<"$(panel_for_author "$author")"
   REQUIRED_BOTS=()
-  for bot in "${BOTS[@]}"; do
+  for bot in ${effective[@]+"${effective[@]}"}; do
     [ "$bot" = "$author" ] || REQUIRED_BOTS+=("$bot")
   done
 }

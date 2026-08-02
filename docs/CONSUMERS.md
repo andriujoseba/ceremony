@@ -482,10 +482,12 @@ quiet repo wears that flag until the backstop cron; a consumer picks them up
 by pinning `0.3.0` or later, never through mixed refs.
 
 `.github/labels.conf` has one mandatory panel setting, one mandatory
-`triage-actors` setting, and then zero or more scope rows:
+`triage-actors` setting, zero or more optional per-author panel rows, and
+then zero or more scope rows:
 
 ```text
 panel=claude-bot example-codex-bot example-grok-bot
+panel[example-builder]=example-codex-bot example-grok-bot
 triage-actors=example-triage-bot
 scope:cli|C5DEF5|The command-line surface
 scope:docs|C5DEF5|Documentation
@@ -497,11 +499,24 @@ rows only; adding `triage-actors=` is a parse failure, not an ignored setting.
 Add it at the same pin bump as the `issues:` trigger — `0.2.0` or later —
 never before it and never through mixed refs.
 
+The optional `panel[<login>]=` rows are **unreleased** (#224). A row names
+the effective panel for PRs authored by exactly that login — the reconciler
+computes that PR's required set from the row, minus the author as always —
+and every other author keeps the base `panel=`, which stays mandatory. The
+panel is configured or it is the base one: ceremony never infers a reviewer
+set from the model behind a login. On any earlier pin a bracketed row is a
+**parse failure, not an ignored setting** — the same shape `triage-actors=`
+bought at `0.2.0`, but harsher in practice: the reconcile job dies on every
+PR event and every sweep until the row is removed, so the whole label board
+goes down. Add the row only at or after the pin bump that carries it, never
+before it and never through mixed refs.
+
 Both actor lists are whitespace-separated. `triage-actors` names the identities
 allowed to mint issues without the sweep applying `needs-triage`. Label rows use exactly
 `name|color|description`; blank lines are ignored and extra pipes are refused.
 There are no comment lines: every non-blank line must be the `panel=`
-setting, the `triage-actors=` setting, or a label row, so `#`-prefixed prose
+setting, a `panel[<login>]=` row, the `triage-actors=` setting, or a label
+row, so `#`-prefixed prose
 is a parse failure, not a comment (rig #13's conversion found this the hard
 way — keep the file data only).
 Core state, blocker, work-queue, and release labels come from ceremony. Scope

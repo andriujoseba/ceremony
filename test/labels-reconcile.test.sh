@@ -986,5 +986,48 @@ for ev in schedule pull_request_target; do
   expect "...and deletes nothing" \
     no "$(grep -q '^delete ' "$EXEC/record" && echo yes || echo no)"
 done
+# -- per-author panels (#224): the required set flows from the one ----------
+#    resolution point, and convergence counts the effective set — never the
+#    base panel beside a reduced request set (the must-fail the issue names)
+PANEL_DIR="$RTMP/panel-author"
+mkdir -p "$PANEL_DIR"
+printf '%s\n' 'panel=bot-a bot-b bot-c bot-d' \
+  'panel[builder-z]=bot-b bot-c bot-d' >"$PANEL_DIR/labels.conf"
+load_config "$PANEL_DIR/labels.conf"
+set_required_bots builder-z
+expect "a bracketed author requires exactly its configured row" \
+  "bot-b bot-c bot-d" "${REQUIRED_BOTS[*]}"
+set_required_bots bot-a
+expect "an unbracketed author beside a bracketed row requires panel minus self" \
+  "bot-b bot-c bot-d" "${REQUIRED_BOTS[*]}"
+set_required_bots outsider
+expect "an unbracketed non-panelist author requires the whole base panel" \
+  "bot-a bot-b bot-c bot-d" "${REQUIRED_BOTS[*]}"
+
+# The engine shape: the three configured reviewers approving the head IS the
+# whole round for a bracketed author — bot-a's absent verdict must not hold
+# convergence, or the request side and the convergence side disagree forever
+# (the deadlock crew#285 was filed over).
+set_required_bots builder-z
+THREE_APPROVE="$(reviews \
+  "$(rev bot-b APPROVED head1 ok 2026-08-02T10:00:00Z)" \
+  "$(rev bot-c APPROVED head1 ok 2026-08-02T10:01:00Z)" \
+  "$(rev bot-d APPROVED head1 ok 2026-08-02T10:02:00Z)")"
+DRAFT=false HEAD_SHA=head1 REQUESTED="" REVIEWS_JSON="$THREE_APPROVE" \
+  MERGEABLE=MERGEABLE CHECKS=SUCCESS LABELS=""
+expect "the bracketed author's round converges on its three approvals" \
+  state:needs-human "$(decide_state)"
+expect "...with no blocker standing" "" "$(blockers)"
+# The control: the same three approvals under the base panel are NOT a full
+# round — the fourth verdict is owed and unrequested. If this pair ever
+# reads the same, one side stopped consulting the resolution point.
+printf '%s\n' 'panel=bot-a bot-b bot-c bot-d' >"$PANEL_DIR/labels.conf"
+load_config "$PANEL_DIR/labels.conf"
+set_required_bots builder-z
+expect "without the row the same approvals leave the round incomplete" \
+  state:addressing "$(decide_state)"
+expect "...and the owed, unasked verdict is named" \
+  blocker:unrequested "$(blockers)"
+
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

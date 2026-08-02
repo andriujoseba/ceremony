@@ -65,7 +65,9 @@ saw Y" outranks one that says "this looks like it might".
   wait for the repo to appear on a list: review is reversible
   read-plus-comment work, and the requester already decided it should happen.
 - **A request is authorization, not panel membership.** Convergence is
-  measured against the target repo's `panel=` roster minus the author. If you
+  measured against the target repo's `panel[<author>]=` line if its
+  `labels.conf` defines one for the PR author, else its `panel=` line; minus
+  the author in either case (#224). If you
   are requested off-panel, post the verdict anyway and say in its body that
   it is advisory; neither your silence nor your request-changes is a gate the
   reconciler enforces. The nine-hour wait for kimi's off-panel verdict on
