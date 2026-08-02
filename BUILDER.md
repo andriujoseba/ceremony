@@ -200,6 +200,13 @@ triage bug, and the move is to say so on the issue, not to guess.
   guard still refuses anything that deletes a shipped heading.
 - Follow the repo's conventions file and match the code you touch. Tests are
   not optional: the issue's test plan is the floor, not the ceiling.
+- **A write-capable job gets a repo-owned script, not a third-party action.**
+  If the job's token can write (`packages: write`, `contents: write`,
+  `id-token: write`, deploy secrets), default to a script in the repo that a
+  test can drive; a third-party action there needs an established publisher
+  and a full-commit-SHA pin. Read-only jobs still SHA-pin. The full rule and
+  the red-flag profile a reviewer will apply are in REVIEWER.md §What you
+  review against, item 2 (incubator#53/#54; #216).
 - **Scope discipline: the PR does the issue — whole, and nothing else.**
   Adjacent problems you discover go to a **discussion** (or a comment on the
   relevant issue), where triage will do its job. You do not mint issues —
