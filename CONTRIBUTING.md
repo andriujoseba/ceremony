@@ -96,7 +96,7 @@ Two consumption modes, split by what has a runtime:
   "runtime" is an agent reading the working tree of the repo it stands in —
   a doc that requires a cross-repo fetch before it governs is a doc that
   sometimes goes unread. So the agent-facing set — **AGENTS.md, TRIAGE.md,
-  BUILDER.md, REVIEWER.md, LABELS.md** — is vendored into each governed
+  BUILDER.md, REVIEWER.md, LABELS.md, RELEASES.md** — is vendored into each governed
   repo at **`.ceremony/`**, byte-identical to this repo at the pinned ref,
   by the sync tool (issue #19). A CI guard diffs the mirror against the pin
   on every PR: hand-editing a vendored file, or bumping the pin without

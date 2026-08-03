@@ -11,6 +11,8 @@ triage bug, and the move is to say so on the issue, not to guess.
 - Respect dependency order: inside an epic, take the earliest unblocked
   unclaimed child. Between epics and strays, prefer the issue that unblocks
   the most other work.
+- In a repository that adopts version epics, read [RELEASES.md](RELEASES.md)
+  before choosing among release-window members.
 - **Your own red head outranks a new claim.** A failing check at the head
   of a PR you authored is picked up **before claiming another issue** —
   repairing your own red PR comes ahead of new work, which is why the

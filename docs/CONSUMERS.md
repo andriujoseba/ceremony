@@ -550,13 +550,17 @@ when the pinned taxonomy declares a core label the repository lacks.
 Machinery is consumed by reference — GitHub fetches the workflows and
 actions above from the pin at run time — but documents have no runtime: an
 agent reads the working tree it stands in. So the agent-facing doc set
-(ceremony's `docs/VENDORED.txt`: AGENTS.md, TRIAGE.md, BUILDER.md,
-REVIEWER.md, LABELS.md) is vendored into each consumer at **`.ceremony/`**,
+declared by ceremony's `docs/VENDORED.txt` is vendored into each consumer at **`.ceremony/`**,
 byte-identical to ceremony at the pin, plus a generated `.ceremony/README.md`
 marking the directory machine-managed. `actions/docs-sync` owns the copy:
 `--fix` writes it (and deletes what the manifest dropped — mirror means
 mirror), `--check` re-diffs it in CI on every PR, so a hand edit or a stale
 pin goes red instead of quietly governing.
+
+`RELEASES.md` joins that mirror with the first tag carrying ceremony#248.
+It is **unreleased** until that tag exists: consumers add
+`.ceremony/RELEASES.md` only with the ordinary pin bump and re-sync, never by
+copying it ahead of their pinned doctrine set.
 
 The consumer's ci.yml gains the guard alongside the others:
 
