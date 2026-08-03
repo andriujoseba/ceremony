@@ -38,6 +38,22 @@ rev() { # $1=login $2=state $3=commit $4=body $5=submitted_at → one review obj
 
 reviews() { jq -s '.' <<<"$*"; } # collect review objects into an array
 
+# The blocker:unrequested quiescence inputs (#236 D2). Every fixture below
+# inherits a readable, settled world — a head commit an hour before this
+# sweep's clock — so the cases written before #236 assert exactly what they
+# always asserted. The #236 block sets both per case.
+#
+# One consequence a new fixture has to know: a case that means to raise
+# blocker:unrequested needs a REAL submitted_at on its reviews, because the
+# grace dates the round's newest review. The symbolic stamps this file uses
+# elsewhere (`t1`, `t2`, …) are not unreadable — GNU date reads `t1` as 01:00
+# in military timezone T, i.e. a time on WHATEVER day the suite runs — which is
+# worse: the verdict would flip with the calendar, the hazard the LC_ALL pin at
+# the top of this file guards on the other axis. Hence a fixed NOW here and
+# real timestamps on the three stall fixtures below.
+NOW="$(date -d 2026-08-03T12:00:00Z +%s)"
+HEAD_COMMIT_AT=2026-08-03T11:00:00Z
+
 # -- a sweep-wide read failure is visible without changing any PR ------------
 warning="$(blind_sweep_warning 3 3 "HTTP 403: Resource not accessible by integration")"
 expect "a wholly blind sweep warns, leading with the observed reason" \
@@ -131,8 +147,8 @@ expect "requested bots mean bots-reviewing" state:bots-reviewing "$(decide_state
 #    With a live request that is the bots' ball; with NO request outstanding it
 #    is the agent's, because nothing is coming until somebody asks.
 REQUESTED="$BOT3" REVIEWS_JSON="$(reviews \
-  "$(rev "$BOT1" APPROVED head1 "" t1)" \
-  "$(rev "$BOT2" APPROVED head1 "" t2)")"
+  "$(rev "$BOT1" APPROVED head1 "" 2026-08-03T10:00:00Z)" \
+  "$(rev "$BOT2" APPROVED head1 "" 2026-08-03T10:01:00Z)")"
 expect "a missing bot WITH a live request is bots-reviewing" state:bots-reviewing "$(decide_state)"
 REQUESTED=""
 expect "...but with nobody asked it is the agent's ball" state:addressing "$(decide_state)"
@@ -283,15 +299,15 @@ expect "...and raises no blocker" "" "$(blockers)"
 MERGEABLE=MERGEABLE CHECKS=SUCCESS REQUESTED="" REVIEWS_JSON='[]'
 expect "ready, nobody asked, nothing reviewed raises unrequested" blocker:unrequested "$(blockers)"
 # ...the partial case is equally stalled: one verdict in, nobody asked for the rest
-REVIEWS_JSON="$(reviews "$(rev "$BOT1" APPROVED head1 "" t1)")"
+REVIEWS_JSON="$(reviews "$(rev "$BOT1" APPROVED head1 "" 2026-08-03T10:00:00Z)")"
 expect "one bot in, none requested is still unrequested" blocker:unrequested "$(blockers)"
 # ...a STALE round with nobody asked is the same debt, and arguably worse: the
 #    page carries approvals that no longer describe the tree. Guarding on
 #    MISSING alone let this one through with no blocker at all.
 REVIEWS_JSON="$(reviews \
-  "$(rev "$BOT1" APPROVED oldhead "" t1)" \
-  "$(rev "$BOT2" APPROVED oldhead "" t2)" \
-  "$(rev "$BOT3" APPROVED oldhead "" t3)")"
+  "$(rev "$BOT1" APPROVED oldhead "" 2026-08-03T10:00:00Z)" \
+  "$(rev "$BOT2" APPROVED oldhead "" 2026-08-03T10:01:00Z)" \
+  "$(rev "$BOT3" APPROVED oldhead "" 2026-08-03T10:02:00Z)")"
 expect "a stale round with nobody asked is unrequested too" blocker:unrequested "$(blockers)"
 expect "...and is still the agent's ball" state:addressing "$(decide_state)"
 # ...but a live request means an answer IS coming
@@ -1056,6 +1072,128 @@ expect "a live panel request on a draft surfaces as bots-reviewing" \
 REQUESTED="" REVIEWS_JSON='[]'
 expect "a draft with no round history still reads building" \
   state:building "$(decide_state)"
+
+# ---------------------------------------------------------------------------
+# blocker:unrequested knows when the ask is permitted (#236). The blocker
+# demands an act — request the panel — that BUILDER.md forbids under a head
+# whose checks have not answered, so the predicate that flags the omission has
+# to read CHECKS and has to let a round in motion finish moving. Two guards,
+# each proved load-bearing by a mutation at the end of the block.
+# ---------------------------------------------------------------------------
+DRAFT=false HEAD_SHA=head1 REQUESTED="" MERGEABLE=MERGEABLE LABELS=""
+NOW="$(date -d 2026-08-03T12:00:00Z +%s)"
+# the genuine #26/#39 debt: three approvals of a head a push staled, nobody
+# asked for the re-verdicts, and every fact hours old
+OWED_QUIET_ROUND="$(reviews \
+  "$(rev "$BOT1" APPROVED oldhead "" 2026-08-03T10:00:00Z)" \
+  "$(rev "$BOT2" APPROVED oldhead "" 2026-08-03T10:01:00Z)" \
+  "$(rev "$BOT3" APPROVED oldhead "" 2026-08-03T10:02:00Z)")"
+REVIEWS_JSON="$OWED_QUIET_ROUND" HEAD_COMMIT_AT=2026-08-03T11:00:00Z
+CHECKS=SUCCESS
+expect "green, quiescent, owed and unasked is the stall (the control)" \
+  blocker:unrequested "$(blockers)"
+# D1 — the gate. crew#318's shape: the same debt under a running check, where
+# requesting is the one thing the builder must not do.
+CHECKS=PENDING
+expect "a pending head is CI's move, not a dropped ask" "" "$(blockers)"
+CHECKS=FAILURE
+expect "a red head raises ci-red alone — the two never co-occur" \
+  blocker:ci-red "$(blockers)"
+CHECKS=NONE
+expect "no checks configured is nothing to wait for, so the stall still shows" \
+  blocker:unrequested "$(blockers)"
+# D2 — the grace. ceremony#235's shape: a sweep landing in the ~90 seconds
+# between a round-answer push and the author's re-request.
+CHECKS=SUCCESS HEAD_COMMIT_AT=2026-08-03T11:57:30Z
+expect "a head pushed inside the grace is a round in motion, not a stall" \
+  "" "$(blockers)"
+HEAD_COMMIT_AT=2026-08-03T11:55:00Z
+expect "...and exactly at the grace it flags — the boundary is inclusive" \
+  blocker:unrequested "$(blockers)"
+HEAD_COMMIT_AT=2026-08-03T11:50:00Z
+expect "...and a later pass flags it with nothing else changed" \
+  blocker:unrequested "$(blockers)"
+# a verdict is the other supporting fact, and an old head does not license
+# flagging a round whose newest verdict landed a minute ago
+HEAD_COMMIT_AT=2026-08-03T10:00:00Z
+REVIEWS_JSON="$(reviews "$(rev "$BOT1" APPROVED oldhead "" 2026-08-03T11:59:00Z)")"
+expect "a verdict submitted inside the grace is motion too" "" "$(blockers)"
+# no verdicts at all is not an unreadable round — it is the first-ask stall,
+# and the head's clock is the whole of it
+REVIEWS_JSON='[]' HEAD_COMMIT_AT=2026-08-03T11:00:00Z
+expect "nothing reviewed and nobody asked flags off the head's clock alone" \
+  blocker:unrequested "$(blockers)"
+# an unreadable fact never invents a verdict — the standing rule, applied to
+# both timestamps
+REVIEWS_JSON="$OWED_QUIET_ROUND" HEAD_COMMIT_AT=""
+expect "an unread head date leaves the blocker unjudged" "" "$(blockers)"
+HEAD_COMMIT_AT=null
+expect "...and jq's literal null is unread, not epoch zero" "" "$(blockers)"
+HEAD_COMMIT_AT=2026-08-03T11:00:00Z
+REVIEWS_JSON="$(reviews "$(rev "$BOT1" APPROVED oldhead "" not-a-timestamp)")"
+expect "a round whose newest verdict cannot be dated is unread, not quiescent" \
+  "" "$(blockers)"
+# the constant is overridable the way this file's others are
+REVIEWS_JSON="$OWED_QUIET_ROUND" HEAD_COMMIT_AT=2026-08-03T11:57:30Z
+RECONCILE_UNREQUESTED_GRACE=60
+expect "a shorter configured grace flags the same facts" \
+  blocker:unrequested "$(blockers)"
+RECONCILE_UNREQUESTED_GRACE=300
+
+# the timestamp reader, directly: the three unreadable spellings it must refuse
+expect "iso_epoch reads a real stamp" \
+  "$(date -d 2026-08-03T12:00:00Z +%s)" "$(iso_epoch 2026-08-03T12:00:00Z)"
+expect "iso_epoch refuses an absent stamp" "" "$(iso_epoch "")"
+expect "iso_epoch refuses jq's null" "" "$(iso_epoch null)"
+expect "iso_epoch refuses a stamp date cannot read" "" "$(iso_epoch not-a-timestamp)"
+# ...and the trap it does NOT catch, recorded because a fixture author will
+# reach for it: `t1` is a valid date to GNU date — 01:00 in military timezone T,
+# on the day the suite runs — so it reads as a moving stamp rather than as an
+# unreadable one. Real timestamps in any fixture the grace touches.
+expect "a symbolic stamp is readable, and moves with the run's day" \
+  "$(date -d t1 +%s)" "$(iso_epoch t1)"
+
+# -- the mutation proofs: both guards are load-bearing, and this runs them ----
+# A guard the fixtures cannot see removed is a guard nobody is testing, so each
+# is deleted from a COPY of the script and the fixture that covers it must flip.
+# The sed programs target one token each, so a refactor that moves a guard
+# fails here loudly instead of passing silently.
+mutant_blockers() { # $1 = sed program → blockers() from a copy of the script
+  # The copy keeps its position in the tree — the script sources lib/ruling.sh
+  # relative to its own path, and a copy dropped anywhere else would source
+  # nothing and say so on stderr instead of failing.
+  local root="$RTMP/mutant" mutated
+  mutated="$root/actions/labels-reconcile/labels-reconcile.sh"
+  mkdir -p "$root/actions/labels-reconcile"
+  ln -sfn "$PWD/lib" "$root/lib"
+  sed "$1" actions/labels-reconcile/labels-reconcile.sh >"$mutated"
+  DRAFT="$DRAFT" HEAD_SHA="$HEAD_SHA" REQUESTED="$REQUESTED" \
+    REVIEWS_JSON="$REVIEWS_JSON" MERGEABLE="$MERGEABLE" CHECKS="$CHECKS" \
+    NOW="$NOW" HEAD_COMMIT_AT="$HEAD_COMMIT_AT" \
+    RECONCILE_UNREQUESTED_GRACE="$RECONCILE_UNREQUESTED_GRACE" \
+    bash -u -c '
+      . "$1"
+      load_config .github/labels.conf
+      set_required_bots codex-bot-andresmgsl
+      blockers
+    ' bash "$mutated"
+}
+# the harness itself, unmutated: it must reproduce the verdict the sourced
+# functions give, or a "flip" below proves nothing about the guard
+REVIEWS_JSON="$OWED_QUIET_ROUND" HEAD_COMMIT_AT=2026-08-03T11:00:00Z CHECKS=SUCCESS
+expect "the mutation harness reproduces the control verdict" \
+  blocker:unrequested "$(mutant_blockers 's/^#no-such-line$//')"
+CHECKS=PENDING
+expect "...and the pending fixture is green in the unmutated copy" \
+  "" "$(mutant_blockers 's/^#no-such-line$//')"
+expect "removing the green gate reds the pending fixture" \
+  blocker:unrequested \
+  "$(mutant_blockers 's/checks_permit_the_ask=false/checks_permit_the_ask=true/')"
+CHECKS=SUCCESS HEAD_COMMIT_AT=2026-08-03T11:57:30Z
+expect "removing the grace reds the inside-the-window fixture" \
+  blocker:unrequested \
+  "$(mutant_blockers 's/ \&\& unrequested_quiescent//')"
+HEAD_COMMIT_AT=2026-08-03T11:00:00Z
 
 # -- per-author panels (#224): the required set flows from the one ----------
 #    resolution point, and convergence counts the effective set — never the
