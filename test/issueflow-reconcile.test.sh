@@ -324,17 +324,21 @@ issue_stub_gh() {
   fi
 }
 
-issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged PR specs, $6 body
+issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 merged PR specs, $6 body
   (
     local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_prs="${5:-}"
-    local body="${6:-}" assignee_json='[]' spec pr merged_at
+    local body="${6:-}" assignee_json='[]' open_pr_records="" spec pr merged_at
     [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
     REPO=owner/repo NOW="$INOW"
     ISSUE_LABELS="$2"
     ISSUE_JSON="$(jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
       --argjson assignees "$assignee_json" --arg body "$body" \
       '{created_at: $at, assignees: $assignees, body: $body}')"
-    if [ "$open_pr" = true ]; then OPEN_PR_ISSUES="$1"; else OPEN_PR_ISSUES=""; fi
+    case "$open_pr" in
+      true|closing) open_pr_records="$(printf 'CLOSING\t%s\n' "$1")" ;;
+      refs|draft-refs) open_pr_records="$(printf 'BODY\tRefs #%s\n' "$1")" ;;
+    esac
+    OPEN_PR_ISSUES="$(open_pr_issues <<<"$open_pr_records")"
     # Records are ISSUE<TAB>PR<TAB>MERGED_AT (#242). A spec is `PR` or
     # `PR@<iso>`; the bare form takes a fixed hour-old merge, which is every
     # probe that does not care about merge order. An empty list is no record
@@ -431,13 +435,18 @@ recent_timeline() {
 }
 edit_count_before="$(wc -l <"$TMP/issue-edits")"
 recent_timeline 38
-open_refs="$(issue_probe 38 claimed 1 true 380 '- [ ] verify after merge')"
-check "open Refs PR leaves the issue exactly as found" 0 "" \
+open_refs="$(issue_probe 38 claimed 1 refs 380 '- [ ] verify after merge')"
+check "issue_probe: open Refs PR leaves the issue exactly as found" 0 "" \
   test -z "$open_refs"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
 check "...with no edit or comment" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
   "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-38"
+
+recent_timeline 46
+open_closing="$(issue_probe 46 claimed 1 closing 460 '- [ ] verify after merge')"
+check "issue_probe: closing-linked open PR remains the unchanged control" 0 "" \
+  test -z "$open_closing"
 
 recent_timeline 39
 merged_closes="$(issue_probe 39 claimed 1 false "" '- [ ] verify after merge')"
