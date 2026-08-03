@@ -175,9 +175,11 @@ take. It is hand-set: the machine never sets `attention`, never assigns
 anyone to receive one, and never decides that one has been answered — the
 assignee's removal is the only ack. It writes the label in exactly one
 place, the derived `claimed` → `post-merge` transition below, and nowhere
-else; where it reads the flag it reads it to diagnose, and a diagnosis is a
-comment that leaves the label alone. No reconciler enforces the assignee
-requirement either: an unassigned flag may be reported, never repaired.
+else; where it reads the flag it reads it to diagnose. The PR sweep comments
+when `attention` is put on a pull request, and the issue sweep comments when
+it is put on an issue with no assignee. Both diagnoses leave the label and
+assignees alone; the machine never infers the claim issue, decides that the
+demand was answered, or repairs either malformed shape.
 An `attention` issue without an assignee is therefore a board bug, not a
 demand; anyone may assign it or remove the flag. It never composes with
 `post-merge`, whose released claim has no assignee to answer the demand. The

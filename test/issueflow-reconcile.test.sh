@@ -393,6 +393,95 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
 tfix() { printf '%s/repos_owner_repo_issues_%s_timeline.json' "$TMP" "$1"; }
 cfix() { printf '%s/repos_owner_repo_issues_%s_comments.json' "$TMP" "$1"; }
 
+# -- malformed attention targets are diagnosed, never repaired (#232) -------
+attention_episode() { # $1 issue, $2 labeled timestamp
+  jq -n --arg at "$2" \
+    '[{"event":"labeled","label":{"name":"attention"},"actor":{"login":"setter"},"created_at":$at}]' \
+    >"$(tfix "$1")"
+  printf '[]\n' >"$(cfix "$1")"
+}
+
+: >"$TMP/issue-edits"
+attention_edits_before="$(wc -l <"$TMP/issue-edits")"
+for n in 61 62 63; do
+  attention_episode "$n" "$(iso_at $((INOW - 60)))"
+done
+# The assignment event is the claim clock's own activity fact. The live issue
+# has since lost its assignee, which is exactly the claimed-unassigned shape.
+jq --arg at "$(iso_at $((INOW - 60)))" \
+  '. + [{"event":"assigned","created_at":$at}]' \
+  "$(tfix 63)" >"$(tfix 63).tmp" && mv "$(tfix 63).tmp" "$(tfix 63)"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_999.json"
+
+issue_probe 61 $'ready\nattention' 0 >/dev/null
+check "unassigned attention under ready is diagnosed once" 0 "1" \
+  grep -cF '<!-- ceremony:attention-malformed:' "$TMP/posted-61"
+
+issue_probe 62 $'blocked\nattention' 0 false "" 'Blocked by #999' >/dev/null
+check "unassigned attention under blocked is diagnosed once" 0 "1" \
+  grep -cF '<!-- ceremony:attention-malformed:' "$TMP/posted-62"
+
+claimed_attention="$(issue_probe 63 $'claimed\nattention' 0)"
+check "claimed-unassigned owns the only board comment" 0 "1" \
+  grep -c -- '^----$' "$TMP/posted-63"
+check "the claimed-unassigned marker, not attention's, was posted" 0 "1" \
+  grep -cF '<!-- issueflow:claimed-unassigned -->' "$TMP/posted-63"
+check "the suppressed attention detection remains in the log" 0 "1" \
+  grep -cF 'comment suppressed by claimed-unassigned precedence' <<<"$claimed_attention"
+
+attention_episode 64 "$(iso_at $((INOW - 60)))"
+issue_probe 64 $'ready\nattention' 1 >/dev/null
+check "assigned attention under ready is healthy" 1 "" test -f "$TMP/posted-64"
+attention_episode 65 "$(iso_at $((INOW - 60)))"
+issue_probe 65 $'claimed\nattention' 1 true >/dev/null
+check "assigned attention under claimed is healthy" 1 "" test -f "$TMP/posted-65"
+attention_episode 66 "$(iso_at $((INOW - 60)))"
+issue_probe 66 $'blocked\nattention' 1 false "" 'Blocked by #999' >/dev/null
+check "assigned attention under blocked is healthy" 1 "" test -f "$TMP/posted-66"
+
+attention_episode 67 "$(iso_at $((INOW - 60)))"
+post_merge_attention="$(issue_probe 67 $'post-merge\nattention' 0)"
+check "post-merge precedence leaves exactly its existing comment" 0 "1" \
+  grep -c -- '^----$' "$TMP/posted-67"
+check "post-merge's existing diagnostic wins" 0 "1" \
+  grep -cF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-67"
+check "the post-merge suppression remains in the log" 0 "1" \
+  grep -cF 'comment suppressed by post-merge-assigned precedence' <<<"$post_merge_attention"
+
+attention_episode 68 "$(iso_at $((INOW - 120)))"
+issue_probe 68 $'ready\nattention' 0 >/dev/null
+issue_probe 68 $'ready\nattention' 0 >/dev/null
+check "two sweeps in one malformed episode post once" 0 "1" \
+  grep -cF '<!-- ceremony:attention-malformed:' "$TMP/posted-68"
+jq --arg at "$(iso_at $((INOW - 30)))" \
+  '. + [{"event":"labeled","label":{"name":"attention"},"actor":{"login":"setter"},"created_at":$at}]' \
+  "$(tfix 68)" >"$(tfix 68).tmp" && mv "$(tfix 68).tmp" "$(tfix 68)"
+issue_probe 68 $'ready\nattention' 0 >/dev/null
+check "a re-set flag creates a second episode comment" 0 "2" \
+  grep -cF '<!-- ceremony:attention-malformed:' "$TMP/posted-68"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the two comments carry distinct episode markers" 0 "2" \
+  bash -c 'grep -F "<!-- ceremony:attention-malformed:" "$1" | sort -u | wc -l' _ \
+  "$TMP/posted-68"
+
+: >"$(tfix 69).error"
+printf '[]\n' >"$(cfix 69)"
+unreadable_attention="$(issue_probe 69 $'ready\nattention' 0)"
+check "an unreadable attention timeline posts nothing" 1 "" test -f "$TMP/posted-69"
+check "the unreadable fact is visible in the log" 0 "1" \
+  grep -cF 'attention timeline unreadable' <<<"$unreadable_attention"
+
+: >"$TMP/api-calls"
+printf '[]\n' >"$(tfix 70)"
+printf '[]\n' >"$(cfix 70)"
+issue_probe 70 ready 0 >/dev/null
+check "a flag-free issue performs no attention episode read" 1 "" \
+  grep -qF 'repos/owner/repo/issues/70/timeline' "$TMP/api-calls"
+
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the attention sweep probes perform no issue edits" 0 "$attention_edits_before" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+
 # -- the reclaim clock stops under a pending ruling (48h quiet, no PR) -------
 jq -n --arg l "$(iso_at $((INOW - 10 * 86400)))" \
   '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l},
