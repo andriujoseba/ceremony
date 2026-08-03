@@ -171,8 +171,13 @@ The flag is additive: it composes with `ready`, `claimed`, or `blocked` and
 with `needs-ruling`, and never substitutes for queue state. It pauses no
 clock. Unlike `offsite` and `needs-ruling`, which make silence legitimate,
 unanswered `attention` is exactly the silence the 48-hour reclaim should
-take. It is hand-set doctrine only: nothing in `actions/` sets, clears,
-reads, or validates it, and no reconciler enforces the assignee requirement.
+take. It is hand-set: the machine never sets `attention`, never assigns
+anyone to receive one, and never decides that one has been answered — the
+assignee's removal is the only ack. It writes the label in exactly one
+place, the derived `claimed` → `post-merge` transition below, and nowhere
+else; where it reads the flag it reads it to diagnose, and a diagnosis is a
+comment that leaves the label alone. No reconciler enforces the assignee
+requirement either: an unassigned flag may be reported, never repaired.
 An `attention` issue without an assignee is therefore a board bug, not a
 demand; anyone may assign it or remove the flag. It never composes with
 `post-merge`, whose released claim has no assignee to answer the demand. The
