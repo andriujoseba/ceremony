@@ -139,6 +139,16 @@ refs_references() { # PR body on stdin -> local issue numbers named by Refs
     | awk -F '\t' '$1 == "LOCAL" { print $2 }' | sort -nu
 }
 
+open_pr_issues() { # records on stdin: CLOSING|BODY<TAB>value -> issue numbers
+  local kind value
+  while IFS=$'\t' read -r kind value; do
+    case "$kind" in
+      CLOSING) [ -n "$value" ] && printf '%s\n' "$value" ;;
+      BODY) refs_references <<<"$value" ;;
+    esac
+  done | sort -nu
+}
+
 unchecked_criteria() { # issue body on stdin -> unchecked task-list lines verbatim
   awk '
     /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+\[[[:space:]]\]/ {
@@ -503,16 +513,22 @@ main() {
   fi
   owner="${REPO%%/*}"
   name="${REPO#*/}"
+  # crew#321 released a live claim because the open side read only closing
+  # links while the merged side parsed Refs bodies. One parser now supplies
+  # the local body references on both sides, so transition and reclaim agree.
   OPEN_PR_ISSUES="$(gh api graphql --paginate -f owner="$owner" -f name="$name" -f query='
     query($owner: String!, $name: String!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequests(first: 100, states: OPEN, after: $endCursor) {
-          nodes { closingIssuesReferences(first: 100) { nodes { number } } }
+          nodes { body closingIssuesReferences(first: 100) { nodes { number } } }
           pageInfo { hasNextPage endCursor }
         }
       }
-    }' --jq '.data.repository.pullRequests.nodes[].closingIssuesReferences.nodes[].number' \
-    | sort -nu)"
+    }' --jq '.data.repository.pullRequests.nodes[]
+      | (.closingIssuesReferences.nodes[].number
+          | ["CLOSING", tostring] | @tsv),
+        ((.body // "") | split("\n")[] | ["BODY", .] | @tsv)' \
+    | open_pr_issues)"
   MERGED_REF_PR_RECORDS="$(gh api graphql --paginate -f owner="$owner" -f name="$name" -f query='
     query($owner: String!, $name: String!, $endCursor: String) {
       repository(owner: $owner, name: $name) {

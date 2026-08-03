@@ -95,6 +95,13 @@ check "empty labels do not exempt a claimed issue" 0 "SWEEP" claim_clock_exempt 
 refs_body=$'Refs #12\nAlso refs: #8 and heavy-duty/rig#4.\nCloses #99\nNot refs-ish #7\nfix refs parsing from #200\nCloses #40; refs: none\nRefs #175 (split from #150)'
 check "Refs parser returns only references owned by a valid Refs marker" 0 "" \
   test "$(refs_references <<<"$refs_body")" = $'8\n12\n175'
+open_records=$'BODY\tRefs #5\nCLOSING\t9\nBODY\tRefs heavy-duty/rig#112\nBODY\tRefs #5\nCLOSING\t5'
+check "open PR linkage unions closing and local Refs body references" 0 $'5\n9' \
+  open_pr_issues <<<"$open_records"
+check "cross-repo Refs never enter the local open PR set" 0 "" \
+  open_pr_issues <<< $'BODY\tRefs heavy-duty/rig#112'
+check "an issue named by both linkage paths appears exactly once" 0 "1" \
+  grep -cxF 5 <<<"$(open_pr_issues <<<"$open_records")"
 check "unchecked criteria preserve their source lines verbatim" 0 \
   $'- [ ] first criterion\n  * [ ] indented criterion\n1. [ ] numbered criterion' \
   unchecked_criteria <<< $'- [x] done\n- [ ] first criterion\r\n  * [ ] indented criterion\n1. [ ] numbered criterion'
@@ -730,6 +737,18 @@ check "...leaves the live claim assigned" 1 "" \
 check "...performs no release edit" 1 "" \
   grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
   "$ARRIVAL/fixtures/edits"
+
+sed 's/"isDraft":false/"isDraft":true/' "$ARRIVAL/fixtures/graphql-open.json" \
+  >"$ARRIVAL/fixtures/graphql-open.json.tmp"
+mv "$ARRIVAL/fixtures/graphql-open.json.tmp" "$ARRIVAL/fixtures/graphql-open.json"
+: >"$ARRIVAL/fixtures/edits"
+draft_transition_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+check "a draft Refs-bodied PR suppresses post-merge transition identically" 1 "" \
+  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$draft_transition_out"
 
 # The same body linkage protects the reclaim clock even when no Refs-linked
 # PR has merged. This is the derived half of crew#321's destructive shape.
