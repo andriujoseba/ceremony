@@ -95,6 +95,13 @@ check "empty labels do not exempt a claimed issue" 0 "SWEEP" claim_clock_exempt 
 refs_body=$'Refs #12\nAlso refs: #8 and heavy-duty/rig#4.\nCloses #99\nNot refs-ish #7\nfix refs parsing from #200\nCloses #40; refs: none\nRefs #175 (split from #150)'
 check "Refs parser returns only references owned by a valid Refs marker" 0 "" \
   test "$(refs_references <<<"$refs_body")" = $'8\n12\n175'
+open_records=$'BODY\tRefs #5\nCLOSING\t9\nBODY\tRefs heavy-duty/rig#112\nBODY\tRefs #5\nCLOSING\t5'
+check "open PR linkage unions closing and local Refs body references" 0 $'5\n9' \
+  open_pr_issues <<<"$open_records"
+check "cross-repo Refs never enter the local open PR set" 0 "" \
+  open_pr_issues <<< $'BODY\tRefs heavy-duty/rig#112'
+check "an issue named by both linkage paths appears exactly once" 0 "1" \
+  grep -cxF 5 <<<"$(open_pr_issues <<<"$open_records")"
 check "unchecked criteria preserve their source lines verbatim" 0 \
   $'- [ ] first criterion\n  * [ ] indented criterion\n1. [ ] numbered criterion' \
   unchecked_criteria <<< $'- [x] done\n- [ ] first criterion\r\n  * [ ] indented criterion\n1. [ ] numbered criterion'
@@ -317,17 +324,21 @@ issue_stub_gh() {
   fi
 }
 
-issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged PR specs, $6 body
+issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 merged PR specs, $6 body
   (
     local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_prs="${5:-}"
-    local body="${6:-}" assignee_json='[]' spec pr merged_at
+    local body="${6:-}" assignee_json='[]' open_pr_records="" spec pr merged_at
     [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
     REPO=owner/repo NOW="$INOW"
     ISSUE_LABELS="$2"
     ISSUE_JSON="$(jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
       --argjson assignees "$assignee_json" --arg body "$body" \
       '{created_at: $at, assignees: $assignees, body: $body}')"
-    if [ "$open_pr" = true ]; then OPEN_PR_ISSUES="$1"; else OPEN_PR_ISSUES=""; fi
+    case "$open_pr" in
+      true|closing) open_pr_records="$(printf 'CLOSING\t%s\n' "$1")" ;;
+      refs|draft-refs) open_pr_records="$(printf 'BODY\tRefs #%s\n' "$1")" ;;
+    esac
+    OPEN_PR_ISSUES="$(open_pr_issues <<<"$open_pr_records")"
     # Records are ISSUE<TAB>PR<TAB>MERGED_AT (#242). A spec is `PR` or
     # `PR@<iso>`; the bare form takes a fixed hour-old merge, which is every
     # probe that does not care about merge order. An empty list is no record
@@ -424,13 +435,18 @@ recent_timeline() {
 }
 edit_count_before="$(wc -l <"$TMP/issue-edits")"
 recent_timeline 38
-open_refs="$(issue_probe 38 claimed 1 true 380 '- [ ] verify after merge')"
-check "open Refs PR leaves the issue exactly as found" 0 "" \
+open_refs="$(issue_probe 38 claimed 1 refs 380 '- [ ] verify after merge')"
+check "issue_probe: open Refs PR leaves the issue exactly as found" 0 "" \
   test -z "$open_refs"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
 check "...with no edit or comment" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
   "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-38"
+
+recent_timeline 46
+open_closing="$(issue_probe 46 claimed 1 closing 460 '- [ ] verify after merge')"
+check "issue_probe: closing-linked open PR remains the unchanged control" 0 "" \
+  test -z "$open_closing"
 
 recent_timeline 39
 merged_closes="$(issue_probe 39 claimed 1 false "" '- [ ] verify after merge')"
@@ -630,17 +646,25 @@ cat >"$ARRIVAL/stub/gh" <<'EOF'
 # answers an empty list, a .error sentinel fails the call like a dead API.
 if [ "$1" = api ]; then
   shift
-  endpoint="" jqexpr=""
+  endpoint="" jqexpr="" query=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --jq) jqexpr="$2"; shift ;;
-      -f|-F) shift ;;
+      -f|-F)
+        case "$2" in query=*) query="${2#query=}" ;; esac
+        shift ;;
       -*) ;;
       *) [ -n "$endpoint" ] || endpoint="$1" ;;
     esac
     shift
   done
   file="$GH_FIXTURES/$(printf '%s' "$endpoint" | tr '/?&=' '____').json"
+  if [ "$endpoint" = graphql ]; then
+    case "$query" in
+      *'states: OPEN'*) file="$GH_FIXTURES/graphql-open.json" ;;
+      *'states: MERGED'*) file="$GH_FIXTURES/graphql-merged.json" ;;
+    esac
+  fi
   [ ! -f "$file.error" ] || exit 1
   if [ -f "$file" ]; then payload="$(cat "$file")"; else payload='[]'; fi
   if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$payload"; else printf '%s\n' "$payload"; fi
@@ -653,7 +677,8 @@ EOF
 chmod +x "$ARRIVAL/stub/gh"
 printf '%s\n' \
   '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-  >"$ARRIVAL/fixtures/graphql.json"
+  >"$ARRIVAL/fixtures/graphql-open.json"
+cp "$ARRIVAL/fixtures/graphql-open.json" "$ARRIVAL/fixtures/graphql-merged.json"
 arrival_fixture() { printf '%s\n' "$1" >"$ARRIVAL/fixtures/repos_owner_repo_issues_91.json"; }
 arrival_run() {
   : >"$ARRIVAL/fixtures/edits"
@@ -692,12 +717,16 @@ check "...stands down without minting" 1 "" test -s "$ARRIVAL/fixtures/edits"
 check "...and the sweep still runs" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$pr_out"
 
-# The merged-Refs transition must survive the executable's set -e path too.
-# Keep this at main() granularity: the GraphQL gather and loop are the code
-# a sourced decision probe cannot exercise (#91's lesson).
+# Exercise both directions through main(): a merged-Refs transition still
+# fires without a linked open PR, then the open-body gather suppresses it.
+# A sourced decision probe cannot exercise the GraphQL gather and loop
+# (#91's lesson).
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-open.json"
 printf '%s\n' \
   '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"mergedAt":"2026-07-30T19:05:16Z","body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-  >"$ARRIVAL/fixtures/graphql.json"
+  >"$ARRIVAL/fixtures/graphql-merged.json"
 printf '[{"number":40}]\n' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
 jq -n --arg at "$(iso_at "$INOW")" \
@@ -705,19 +734,94 @@ jq -n --arg at "$(iso_at "$INOW")" \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_40.json"
 printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_40_comments.json"
 : >"$ARRIVAL/fixtures/edits"
+transition_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+transition_rc=$?
+check "an executable sweep with no linked open PR exits 0" 0 "" \
+  test "$transition_rc" -eq 0
+check "...reaches the transition through GraphQL and the issue loop" 0 "" \
+  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$transition_out"
+check "...and performs the release edit from the executable path" 0 "" \
+  grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
+  "$ARRIVAL/fixtures/edits"
+
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":401,"body":"Refs #40","isDraft":false,"closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-open.json"
+: >"$ARRIVAL/fixtures/edits"
 subprocess_out="$(
   env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
     REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
     bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
 )"
 subprocess_rc=$?
-check "executable sweep transitions merged Refs work" 0 "" \
+check "an open Refs-bodied PR suppresses the post-merge transition" 0 "" \
   test "$subprocess_rc" -eq 0
-check "...reaches the transition through GraphQL and the issue loop" 0 "" \
+check "...leaves the live claim assigned" 1 "" \
   grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$subprocess_out"
-check "...and performs the release edit from the executable path" 0 "" \
+check "...performs no release edit" 1 "" \
   grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
   "$ARRIVAL/fixtures/edits"
+
+# The query selects every OPEN PR and deliberately does not select isDraft;
+# this fixture-only flip documents that draft identity cannot narrow the set.
+sed 's/"isDraft":false/"isDraft":true/' "$ARRIVAL/fixtures/graphql-open.json" \
+  >"$ARRIVAL/fixtures/graphql-open.json.tmp"
+mv "$ARRIVAL/fixtures/graphql-open.json.tmp" "$ARRIVAL/fixtures/graphql-open.json"
+: >"$ARRIVAL/fixtures/edits"
+draft_transition_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+check "a draft Refs-bodied PR suppresses post-merge transition identically" 1 "" \
+  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$draft_transition_out"
+
+# The same body linkage protects the reclaim clock even when no Refs-linked
+# PR has merged. This is the derived half of crew#321's destructive shape.
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":411,"body":"Refs #41","isDraft":false,"closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-open.json"
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-merged.json"
+printf '[{"number":41}]\n' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
+jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+  '{number:41,user:{login:"triage-one"},created_at:$at,body:"- [ ] build",labels:[{name:"claimed"}],assignees:[{login:"builder"}]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_41.json"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_41_comments.json"
+jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+  '[{"event":"assigned","created_at":$at}]' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_41_timeline.json"
+: >"$ARRIVAL/fixtures/edits"
+reclaim_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    ISSUEFLOW_NOW="$INOW" REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+reclaim_rc=$?
+check "an open Refs-bodied PR suppresses stale reclaim" 0 "" test "$reclaim_rc" -eq 0
+check "...keeps the quiet live claim" 1 "" \
+  grep -qF '#41: stale claim reclaimed -> ready' <<<"$reclaim_out"
+
+# Drafts are live claim evidence by the same OPEN query (D4). The query does
+# not select isDraft, so this fixture-only flip deliberately leaves production
+# input byte-identical and guards the absence of a draft/readiness predicate.
+sed 's/"isDraft":false/"isDraft":true/' "$ARRIVAL/fixtures/graphql-open.json" \
+  >"$ARRIVAL/fixtures/graphql-open.json.tmp"
+mv "$ARRIVAL/fixtures/graphql-open.json.tmp" "$ARRIVAL/fixtures/graphql-open.json"
+: >"$ARRIVAL/fixtures/edits"
+draft_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    ISSUEFLOW_NOW="$INOW" REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+check "a draft Refs-bodied PR suppresses stale reclaim identically" 1 "" \
+  grep -qF '#41: stale claim reclaimed -> ready' <<<"$draft_out"
 
 # D2 preserved: only the deliberate stand-downs changed; a genuine failure on
 # the arrival path still kills the run loudly.
