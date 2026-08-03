@@ -298,10 +298,9 @@ CONTRIBUTING; the shared flow lives here and is not restated there.)
    ([#50 D11](https://github.com/heavy-duty/ceremony/issues/50)).
 
 **A fix round may ride a draft.** An engine may convert a PR back to draft
-when a round closes, and crew#139's does — an engine whose own rules make a
-builder's mid-round pushes *saves* rather than proposals fires CI at every one
-of them otherwise, 41 of 106 commits across crew's last 25 PRs by that
-issue's measurement. Ceremony implements no such conversion and this passage
+when a round closes, and crew#139's does: where an engine's own rules make a
+builder's mid-round pushes *saves* rather than proposals, every save fires CI
+— 41 of 106 commits across crew's last 25 PRs, by that issue's measurement. Ceremony implements no such conversion and this passage
 specifies none; it is written down because a builder or a reviewer who meets a
 mid-round draft has to find a state the doctrine describes. What it means is
 what a draft already meant while you were building, extended and not changed:
