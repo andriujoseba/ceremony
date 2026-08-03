@@ -36,7 +36,7 @@ mapfile -t refs_targets < <(
   awk '
     {
       rest = tolower($0)
-      while (match(rest, /(^|[^[:alnum:]_])refs?[[:space:]]+#[0-9]+/)) {
+      while (match(rest, /(^|[^[:alnum:]_])refs?[[:space:]]*:?[[:space:]]*[[]?#[0-9]+/)) {
         token = substr(rest, RSTART, RLENGTH)
         sub(/^.*#/, "", token)
         print token + 0
@@ -61,16 +61,24 @@ fi
 sentence_for_issue() {
   local issue="$1" mode="$2"
   awk -v issue="$issue" -v mode="$mode" '
+    /^[[:space:]]*$/ {
+      if (paragraph != "") {
+        text = text paragraph "\n\n"
+        paragraph = ""
+      }
+      next
+    }
     {
-      text = text separator $0
-      separator = "\n"
+      if (paragraph != "") paragraph = paragraph " "
+      paragraph = paragraph $0
     }
     END {
-      count = split(text, sentence, /[.!?][[:space:]]+|\n+/)
+      text = text paragraph
+      count = split(text, sentence, /[.!?][[:space:]]+|\n\n+/)
       if (mode == "closing") {
         needle = "(^|[^[:alnum:]_])(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[[:space:]]+#[[:space:]]*" issue "([^0-9]|$)"
       } else {
-        needle = "(^|[^[:alnum:]_])refs?[[:space:]]+#[[:space:]]*" issue "([^0-9]|$)"
+        needle = "(^|[^[:alnum:]_])refs?[[:space:]]*:?[[:space:]]*\\[?#[[:space:]]*" issue "([^0-9]|$)"
       }
       for (i = 1; i <= count; i++) {
         lower = tolower(sentence[i])

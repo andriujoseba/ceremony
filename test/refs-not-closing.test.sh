@@ -10,6 +10,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 SCRIPT="$ROOT/actions/refs-not-closing/refs-not-closing.sh"
 ACTION="$ROOT/actions/refs-not-closing/action.yml"
+ENTRYPOINT="$ROOT/actions/refs-not-closing/run.sh"
 WORKFLOW="$ROOT/.github/workflows/refs-guard.yml"
 
 TMP="$(mktemp -d)"
@@ -46,7 +47,8 @@ check "failure offers number-first rewrite" 1 "#N is" guard prose 5
 check "failure offers number-free rewrite" 1 "closes the issue" guard prose 5
 
 body code-span 'Refs #5' '' "The body must not contain \`Closes #5\` anywhere."
-check "backticked closing keyword still fails" 1 "Closes #5" guard code-span 5
+check "backticked closing keyword is reported as the match" 1 \
+  "matched: Closes #5" guard code-span 5
 check "backtick failure explains that code spans do not protect" 1 \
   "Backticks do not protect" guard code-span 5
 
@@ -68,6 +70,19 @@ body multiple 'Refs #5 and Refs #7.' 'Triage closes #5 and fixes #7 by hand.'
 check "failure names every intersecting issue" 1 \
   "scheduled to close: #5 #7" guard multiple 5 7
 
+body soft-wrap 'Refs #5' '' 'Triage closes' '#5 by hand after the live proof.'
+check "soft-wrapped closing prose is reported as one sentence" 1 \
+  "sentence: Triage closes #5 by hand after the live proof" \
+  guard soft-wrap 5
+
+body refs-colon 'Refs: #5' '' 'Triage closes #5 after proof.'
+check "Refs colon form is protected" 1 "matched: closes #5" \
+  guard refs-colon 5
+body refs-link 'Refs [#5](https://example.test/issues/5)' '' \
+  'Triage closes #5 after proof.'
+check "linked Refs form is protected" 1 "matched: closes #5" \
+  guard refs-link 5
+
 for number in 207 191 190 176 165 164; do
   body "incident-$number" "Refs #$number"
   check "#$number incident replays green" 0 "no Refs target" \
@@ -79,24 +94,62 @@ check "missing body is a loud failure" 1 "missing or unreadable" \
 check "invalid closing set is a loud failure" 1 "invalid closing issue" \
   guard ref-5 nope
 
-# The action owns the network boundary. These structural assertions keep a
-# future edit from suppressing a failed/partial GraphQL read or splitting the
-# one authoritative query into several drifting reads.
+# The action owns the network boundary. Drive its executable entrypoint with
+# a fake `gh` so failures are behavioral assertions, not YAML text guesses.
+mkdir -p "$TMP/bin"
+cat >"$TMP/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -u
+case "${FAKE_GH_MODE:-success}" in
+  failure)
+    echo "fake GraphQL read failed" >&2
+    exit 42
+    ;;
+  partial)
+    has_next=true
+    ;;
+  success)
+    has_next=false
+    ;;
+  *)
+    echo "unknown fake mode: ${FAKE_GH_MODE:-}" >&2
+    exit 2
+    ;;
+esac
+printf '{"data":{"repository":{"pullRequest":{"body":"Refs #5","closingIssuesReferences":{"nodes":[],"pageInfo":{"hasNextPage":%s}}}}}}\n' "$has_next"
+EOF
+chmod +x "$TMP/bin/gh"
+
+action_boundary() {
+  local mode="$1"
+  env PATH="$TMP/bin:$PATH" FAKE_GH_MODE="$mode" \
+    GITHUB_REPOSITORY="heavy-duty/ceremony" PR_NUMBER=268 \
+    GITHUB_ACTION_PATH="$ROOT/actions/refs-not-closing" \
+    bash "$ENTRYPOINT"
+}
+
+check "action boundary fails when GraphQL read fails" 42 \
+  "fake GraphQL read failed" action_boundary failure
+check "action boundary refuses a partial closing-reference page" 5 \
+  "refusing a partial verdict" action_boundary partial
+check "action boundary accepts a complete GraphQL read" 0 \
+  "no Refs target" action_boundary success
+
 one_graphql_read() {
-  [ "$(grep -c "gh api graphql" "$ACTION")" -eq 1 ]
+  [ "$(grep -c "gh api graphql" "$ENTRYPOINT")" -eq 1 ]
   printf '1\n'
 }
 
 check "action performs exactly one GraphQL read" 0 "1" \
   one_graphql_read
-check "action refuses a partial closing-reference page" 0 "hasNextPage" \
-  grep -F "hasNextPage" "$ACTION"
-check "action does not suppress GraphQL failure" 1 "" \
-  grep -E 'gh api graphql.*(\|\| true|\| true)' "$ACTION"
+check "composite delegates to the tested entrypoint" 0 "run.sh" \
+  grep -F 'run: bash "$GITHUB_ACTION_PATH/run.sh"' "$ACTION"
 
 check "workflow wakes on body edits" 0 "types: [opened, edited, reopened, synchronize]" \
   grep -F "types: [opened, edited, reopened, synchronize]" "$WORKFLOW"
-check "workflow is pull_request-only" 1 "" grep -E '^  (push|pull_request_target|workflow_dispatch):' "$WORKFLOW"
+check "workflow is pull_request-only" 1 "" \
+  grep -E '^  (push|pull_request_target|workflow_dispatch|schedule|issue_comment):' \
+  "$WORKFLOW"
 check "workflow grants read-only pull request access" 0 "pull-requests: read" \
   grep -F "pull-requests: read" "$WORKFLOW"
 
