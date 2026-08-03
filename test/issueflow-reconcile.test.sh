@@ -222,6 +222,75 @@ check "cross-repo-only blocker is flagged distinctly" 0 "FLAG_CROSS_REPO" \
   blocked_decision "" "" "rig#112"
 check "cross-repo blocker prevents false promotion when locals close" 0 "FLAG_CROSS_REPO" \
   blocked_decision "9" "CLOSED" "rig#9"
+
+# The parse echo (#252): the machine states what it read, so a
+# readable-but-wrong declaration is visible in one sweep instead of five days.
+check "the rendered set names the locals in parse order" 0 "{#7, #12}" \
+  blocked_parse_set "$(printf '7\n12\n')" ""
+check "a single blocker still renders as a set" 0 "{#12}" blocked_parse_set "12" ""
+check "an empty parse renders as the empty set" 0 "{}" blocked_parse_set "" ""
+check "cross-repo references are echoed beside the locals" 0 "{#12, rig#9}" \
+  blocked_parse_set "12" "rig#9"
+check "a cross-repo-only parse is echoed too" 0 "{heavy-duty/box#9}" \
+  blocked_parse_set "" "heavy-duty/box#9"
+# crew#308: a *negated* marker phrase unions as the thing it denies, and the
+# silent result was a set nobody saw until a human ran the parser. Echoed, the
+# union is visible in the thread that contains the declaration.
+echo_308="$(blocked_parse_set \
+  "$(blocked_references <<<'Blocked by #162, #265. It is no longer blocked by #221.')" \
+  "$(blocked_cross_references <<<'Blocked by #162, #265. It is no longer blocked by #221.')")"
+check "the #308 shape echoes the negation-unioned blocker verbatim" 0 "" test \
+  "$echo_308" = "{#162, #221, #265}"
+# The marker is scoped to the SET's value — the whole idempotency contract.
+# Mutation proof, both directions: same set must reuse its marker (or a
+# 15-minute cron repeats itself forever), different set must not (or a
+# misparse is echoed under a marker the thread already carries, and stays
+# invisible — exactly the failure this change exists to close).
+check "an unchanged set reuses its marker" 0 "" test \
+  "$(blocked_parse_marker '{#7, #12}')" = "$(blocked_parse_marker '{#7, #12}')"
+check "a changed set takes a different marker" 1 "" test \
+  "$(blocked_parse_marker '{#7, #12}')" = "$(blocked_parse_marker '{#7, #12, #19}')"
+check "the empty set has a marker of its own" 0 "blockers-parsed-none-44136fa355b3" \
+  blocked_parse_marker "{}"
+check "the marker survives a cross-repo reference's punctuation" 0 \
+  "blockers-parsed-12-heavy-duty-box-9-c8e36fe3b793" \
+  blocked_parse_marker "{#12, heavy-duty/box#9}"
+# The readable half of the marker is many-to-one and must not be the identity.
+# Every pair below is two reference tokens `issue_references` classifies, that
+# slug identically; a slug-keyed marker made the second one find the first
+# one's marker and post nothing — silence in the one case the echo exists to
+# speak about. Distinguishing `/` alone would close the first pair and leave
+# the rest, so the digest of the whole rendered set is what decides.
+#
+# Classifies, not parses: three of the four are reachable as a declared set —
+# `{acme.widgets#9}` is not, because the clause parser stops at the `.` and
+# `blocked_reference_records` never hands that token through, though
+# `issue_references` does answer CROSS for it. It stays in the family because
+# the marker's contract is over the tokens the classifier admits, not over the
+# subset today's clause parser happens to reach; the class proof does not rest
+# on it either way, since `{acme-widgets#9}` vs `{acme_widgets#9}` is reachable
+# on both sides and reds the cheap fix on its own.
+check "the slug alone cannot separate a qualified ref from a hyphenated one" 0 "" \
+  test "$(printf '%s' '{acme/widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')" \
+     = "$(printf '%s' '{acme-widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+# Pairwise, and deliberately so. Anchoring every pair on the `/` spelling
+# would pass under a fix that only taught the slug about `/` — and that fix
+# leaves `{acme-widgets#9}`, `{acme_widgets#9}` and `{acme.widgets#9}` sharing
+# one marker. The contract is that no two distinct parses collide, so the test
+# is every pair, not every pair through one representative.
+marker_family=(
+  '{acme/widgets#9}' '{acme-widgets#9}' '{acme_widgets#9}' '{acme.widgets#9}'
+)
+for left in "${marker_family[@]}"; do
+  for right in "${marker_family[@]}"; do
+    [ "$left" != "$right" ] || continue
+    check "...but the marker does: $left vs $right" 1 "" test \
+      "$(blocked_parse_marker "$left")" = "$(blocked_parse_marker "$right")"
+  done
+done
+check "the qualifier's punctuation reaches the marker's identity" 1 "" test \
+  "$(blocked_parse_marker '{#12, heavy-duty/box#9}')" \
+  = "$(blocked_parse_marker '{#12, heavy-duty-box#9}')"
 # shellcheck disable=SC2016 # expansions belong to the generated fake gh
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -437,7 +506,15 @@ issue_probe 65 $'claimed\nattention' 1 true >/dev/null
 check "assigned attention under claimed is healthy" 1 "" test -f "$TMP/posted-65"
 attention_episode 66 "$(iso_at $((INOW - 60)))"
 issue_probe 66 $'blocked\nattention' 1 false "" 'Blocked by #999' >/dev/null
-check "assigned attention under blocked is healthy" 1 "" test -f "$TMP/posted-66"
+# A `blocked` issue now always carries one comment — the parse echo (#252) —
+# so "healthy" can no longer be spelled "no comment file at all". It is spelled
+# the way this section's other cases already spell it: no attention diagnostic.
+# Both halves are pinned, so the case still fails if an attention comment
+# appears beside the echo, or if a second comment of any kind does.
+check "assigned attention under blocked is healthy" 1 "" \
+  grep -qF '<!-- ceremony:attention-malformed:' "$TMP/posted-66"
+check "...drawing the #252 parse echo and nothing else" 0 "1" \
+  grep -c -- '^----$' "$TMP/posted-66"
 
 attention_episode 67 "$(iso_at $((INOW - 60)))"
 post_merge_attention="$(issue_probe 67 $'post-merge\nattention' 0)"
@@ -728,6 +805,134 @@ check "no reconciler mutation names offsite (#68 D4)" 1 "" \
   grep -E 'gh (issue|pr) edit.*offsite' \
     "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" \
     "$ROOT/actions/labels-reconcile/labels-reconcile.sh"
+
+# -- the parse echo: one comment per changed set, none per sweep (#252) ------
+# The whole point is a sweep-visible statement of what was read, so it is
+# probed through the sweep and not only as a rendering: the marker has to
+# survive the comment body, the second pass has to find it, and the third has
+# to miss it because the declaration changed.
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_90.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_91.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_92.json"
+printf '[]\n' >"$(cfix 35)"
+echo_edits_before="$(wc -l <"$TMP/issue-edits")"
+first_echo="$(issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91.")"
+check "a first parse is echoed, naming the set" 0 "" \
+  grep -qF 'parse to: {#90, #91}' "$TMP/posted-35"
+check "...and the sweep log carries the same set" 0 \
+  "issueflow: #35: blocked declarations parse to {#90, #91}" \
+  printf '%s\n' "$first_echo"
+issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91." >/dev/null
+check "an unchanged parse draws nothing on the next sweep" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-35"
+# AC-1's other input, and it is not the sweep above. A re-sweep of a
+# BYTE-IDENTICAL body is quiet under both spellings of the decision — the one
+# that keys on the parse and the one that keys on the body — so it cannot tell
+# them apart. Only an edit that changes the prose and preserves the parse can:
+# the refs are reordered and sentences are added on either side, and the set is
+# still {#90, #91}. What this pins is that the marker is a function of the
+# PARSE and not of the prose around it, which is the property the echo's whole
+# idempotency rests on and which nothing else in the suite states.
+preserved_edits_before="$(wc -l <"$TMP/issue-edits")"
+issue_probe 35 blocked 1 false "" \
+  "Some new prose here. Blocked by #91, #90. And more text." >/dev/null
+check "a body edit that preserves the parse draws nothing" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-35"
+check "...and adds no echo under any other marker either" 0 "1" \
+  grep -cF '<!-- issueflow:blockers-parsed-' "$TMP/posted-35"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and writes no label from the parse-preserving path" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$preserved_edits_before" "$TMP/issue-edits"
+changed_echo="$(issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91, #92.")"
+check "a body edit that changes the set draws exactly one new echo" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91, #92}') -->" "$TMP/posted-35"
+check "...naming the new set" 0 "" \
+  grep -qF 'parse to: {#90, #91, #92}' "$TMP/posted-35"
+check "...and saying so in the sweep log" 0 \
+  "issueflow: #35: blocked declarations parse to {#90, #91, #92}" \
+  printf '%s\n' "$changed_echo"
+check "...and leaving the first echo alone" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-35"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "no label write comes from the echo path" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$echo_edits_before" "$TMP/issue-edits"
+
+# crew#308, replayed through the sweep: the declaration denies #221 and the
+# parse unions it anyway. Nobody saw that set for as long as it stayed inside
+# the machine; the echo puts it in the thread that contains the declaration.
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_162.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_221.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_265.json"
+printf '[]\n' >"$(cfix 36)"
+issue_probe 36 blocked 1 false "" \
+  'Blocked by #162, #265. It is no longer blocked by #221.' >/dev/null
+check "the #308 misparse is echoed verbatim, denial and all" 0 "" \
+  grep -qF 'parse to: {#162, #221, #265}' "$TMP/posted-36"
+
+# The empty parse says so, and the flag that catches the UNREADABLE
+# declaration is untouched beside it: one comment states what was read, the
+# other states that nothing was.
+printf '[]\n' >"$(cfix 37)"
+issue_probe 37 blocked 1 false "" 'No declaration anywhere in this body.' >/dev/null
+check "an empty parse is echoed as the empty set" 0 "" \
+  grep -qF 'parse to: {}' "$TMP/posted-37"
+check "...and blocked-unparseable still fires beside it" 0 "" \
+  grep -qF '<!-- issueflow:blocked-unparseable -->' "$TMP/posted-37"
+
+# The collision the round found, replayed through the sweep: two declarations
+# whose parsed sets differ but whose slugs do not. Keyed on the slug, the
+# second edit found the first echo's marker and posted nothing — the machine
+# silently gating on `acme-widgets#9` while the thread said `acme/widgets#9`,
+# which is the readable-but-wrong shape this whole change exists to surface.
+# Asserted end-to-end, so it is the second echo landing that is observed.
+printf '[]\n' >"$(cfix 38)"
+issue_probe 38 blocked 1 false "" 'Blocked by acme/widgets#9.' >/dev/null
+check "a qualified cross-repo declaration is echoed" 0 "1" \
+  grep -cF 'parse to: {acme/widgets#9}' "$TMP/posted-38"
+collision_edits_before="$(wc -l <"$TMP/issue-edits")"
+issue_probe 38 blocked 1 false "" 'Blocked by acme-widgets#9.' >/dev/null
+check "a slug-colliding edit still draws its own echo" 0 "1" \
+  grep -cF 'parse to: {acme-widgets#9}' "$TMP/posted-38"
+check "...under a marker of its own" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{acme-widgets#9}') -->" "$TMP/posted-38"
+check "...leaving the colliding first echo alone" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{acme/widgets#9}') -->" "$TMP/posted-38"
+# The cross-repo flag is marker-constant across both parses, so it stays at one
+# while the echo moves: what spoke on the second sweep was the changed set.
+check "...and not re-flagging cross-repo, which did not change" 0 "1" \
+  grep -cF '<!-- issueflow:blocked-cross-repo -->' "$TMP/posted-38"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "no label write comes from the colliding-edit path either" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$collision_edits_before" "$TMP/issue-edits"
+
+# A -> B -> A. The marker names the SET, so the return to A is a marker this
+# thread has carried before; the question the echo has to answer is not "have I
+# ever said this" but "is this still what I am saying". Searching the whole
+# history answers the first, and the return went silent while the thread's
+# newest echo asserted B and the sweep gated on A — a stale parse presented as
+# the current one, which is the readable-but-wrong shape #252 exists to kill.
+# All four sweeps are driven, because the bug is only visible as a sequence.
+printf '[]\n' >"$(cfix 52)"
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91.' >/dev/null
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91, #92.' >/dev/null
+return_edits_before="$(wc -l <"$TMP/issue-edits")"
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91.' >/dev/null
+check "a set edited back to a previously echoed one speaks again" 0 "3" \
+  grep -cF '<!-- issueflow:blockers-parsed-' "$TMP/posted-52"
+check "...under the returning set's own marker, twice on the thread now" 0 "2" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-52"
+# The assertion the silence used to fail: it is the NEWEST echo that has to
+# name what the sweep gates on, not merely some echo somewhere in the thread.
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...leaving the newest echo naming the set the sweep now gates on" 0 \
+  "parse to: {#90, #91}" \
+  bash -c 'grep -o "parse to: {[^}]*}" "$1" | tail -n 1' _ "$TMP/posted-52"
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91.' >/dev/null
+check "an unchanged sweep after the return still draws nothing" 0 "3" \
+  grep -cF '<!-- issueflow:blockers-parsed-' "$TMP/posted-52"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "no label write comes from the returning-set path either" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$return_edits_before" "$TMP/issue-edits"
 
 # -- an already-applied stale heals off, and no edit names the flag ----------
 jq -n --arg l "$(iso_at $((INOW - 3600)))" \

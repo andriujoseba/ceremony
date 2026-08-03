@@ -317,6 +317,65 @@ blocked_cross_references() { # body on stdin -> qualified refs, one per line
   blocked_reference_records | awk -F '\t' '$1 == "CROSS" { print $2 }' | sort -u
 }
 
+blocked_parse_set() { # $1 local refs, $2 cross refs -> "{#7, #12}" | "{}"
+  # The parse, rendered once. The comment, the marker and the log line all
+  # read this one string, so the three can never disagree about what the
+  # machine read. Both classes are shown because both are parsed: the locals
+  # in the numeric order blocked_references answers, then the qualified
+  # references blocked_cross_references answers — a cross-repo clause is as
+  # capable of being readable-but-wrong as a local one.
+  local rendered
+  rendered="$(
+    { [ -z "$1" ] || awk '{ print "#" $0 }' <<<"$1"
+      [ -z "${2:-}" ] || printf '%s\n' "$2"
+    } | awk '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 } END { printf "\n" }'
+  )"
+  printf '{%s}\n' "$rendered"
+}
+
+blocked_parse_marker() { # $1 rendered set -> the echo's idempotency marker
+  # Scoped to the SET's value, not to the issue and not to the sweep: the
+  # marker names WHAT was echoed, and blocked_parse_echo_needed decides whether
+  # it is still what the thread is saying.
+  #
+  # The identity is the DIGEST, not the slug beside it. Slugging is many-to-one
+  # — `{acme/widgets#9}` and `{acme-widgets#9}` are both parses this reconciler
+  # accepts, and both slug to `acme-widgets-9` — so a slug-keyed marker lets a
+  # changed set find the old marker and say nothing, silence in precisely the
+  # case the echo exists to speak about. Distinguishing `/` would close that
+  # pair and leave the class: `-`, `_` and `.` are legal in a qualifier token
+  # and all collapse the same way. The slug stays in front so a human reading
+  # the raw comment can still see which set it belongs to; it decides nothing.
+  local slug digest
+  slug="$(printf '%s' "$1" | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+  digest="$(printf '%s' "$1" | sha256sum | cut -c1-12)"
+  printf 'blockers-parsed-%s-%s\n' "${slug:-none}" "$digest"
+}
+
+blocked_parse_echo_needed() { # $1 issue, $2 this parse's marker → 0 echo, 1 quiet
+  # Idempotency for the parse echo is against the LAST parse echo on the
+  # thread, not against any historical one. ensure_comment's any-occurrence
+  # grep is right for a flag like `blocked-unparseable`, whose question is
+  # "have I ever said this"; it is wrong for a value that changes, whose
+  # question is "is this still what I am saying". The difference is A -> B -> A:
+  # under an any-occurrence search the return to A finds A's own first echo and
+  # stays silent, leaving the thread's most recent echo asserting B while the
+  # sweep gates on A. A stale parse presented as the current one is the exact
+  # failure #252 exists to kill, and the third edit changed the parsed set, so
+  # the criterion says it speaks.
+  #
+  # Comparing markers rather than re-rendering the last set keeps the digest as
+  # the only identity: two sets are the same here iff blocked_parse_marker says
+  # so, the same rule the marker itself is built on.
+  local bodies last
+  guarded_read bodies gh api --paginate "repos/$REPO/issues/$1/comments" --jq '.[].body' \
+    || skip_issue "$1" "could not read its comments: $(read_failure_reason "$READ_FAILURE_STDERR")"
+  # The read fails closed above (#247 D1): an unreadable history skips the
+  # issue rather than answering "nothing echoed yet" and re-posting.
+  last="$(grep -o '<!-- issueflow:blockers-parsed-[[:alnum:]-]* -->' <<<"$bodies" | tail -n 1)"
+  [ "$last" != "<!-- issueflow:$2 -->" ]
+}
+
 blocked_decision() { # $1 local refs, $2 OPEN/CLOSED states, $3 cross-repo refs
   local refs="$1" states="$2" cross_refs="${3:-}"
   if [ -n "$cross_refs" ]; then echo FLAG_CROSS_REPO
@@ -453,7 +512,7 @@ last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read 
 
 reconcile_issue() {
   local n="$1" decision refs cross_refs states age created assignees open_pr=false label owners
-  local merged_ref_pr="" transition_marker="" transition_handled=false
+  local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set="" parse_marker=""
   local unchecked="" remove_claimed=claimed
   local attention_active=true attention_suppression=""
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
@@ -556,6 +615,40 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
     cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
+    # The parse is echoed before any verdict is derived from it (#252). The
+    # clause parse is exact and unforgiving, and its output was invisible:
+    # crew#308 silently parsed a negated "no longer blocked by #221" as a
+    # blocker, crew#71 spent five days as an unresolvable queue conflict, and
+    # crew#284's declaration had to be re-derived by hand-running the parser.
+    # Every one of those was found by a human running the parser, hours or
+    # days late. `blocked-unparseable` already catches the UNREADABLE
+    # declaration; this catches the readable-but-wrong one, which no flag can
+    # detect because the machine cannot judge what a human meant — only state
+    # what it read, and let the human see the divergence in one sweep.
+    #
+    # The illustrative `#9` in the body below is code-spanned for the same
+    # reason `blocked-unparseable` code-spans its `Blocked by #N`: an
+    # unbackticked `#N` in a comment this sweep posts on a cron linkifies, and
+    # writes a "mentioned in" event onto an unrelated issue once per echo.
+    parsed_set="$(blocked_parse_set "$refs" "$cross_refs")"
+    parse_marker="$(blocked_parse_marker "$parsed_set")"
+    if blocked_parse_echo_needed "$n" "$parse_marker"; then
+      run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$parse_marker -->
+This issue's \`Blocked by\` declarations parse to: $parsed_set
+
+That is the exact set this sweep gates on — what the machine read, never a
+judgment about whether it is what you meant. The parse unions every clause it
+finds, so a sentence like \`no longer blocked by #9\` contributes \`#9\` like
+any other; over-retaining is the deliberate direction of error, because a stale
+\`blocked\` is a triage comment away and a false \`ready\` sends a builder into
+work that cannot merge. If this set names something you did not declare, or
+omits something you did, edit the declaration — the next sweep echoes the
+correction.
+
+*Comment only: nothing on this path writes a label. The marker carries the set
+itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
+    fi
+    log "#$n: blocked declarations parse to $parsed_set"
     states="$(reference_states <<<"$refs")"
     decision="$(blocked_decision "$refs" "$states" "$cross_refs")"
     case "$decision" in
