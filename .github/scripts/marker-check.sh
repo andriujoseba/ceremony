@@ -3,7 +3,10 @@
 # outlived the releases that shipped their machinery. A release candidate must
 # therefore reject a marker its assembled changelog makes false, while every
 # tree rejects an untraceable marker. Cross-repo citations are traceable but
-# are not compared with this repository's changelog.
+# are not compared with this repository's changelog; a marker for this repo's
+# own issue uses bare #N, never a self-qualified repository citation (#238 D8).
+# CHANGELOG.md is the release oracle and immutable shipped prose, so it and the
+# fragments that feed it are excluded from the documentation scan (#238 D5).
 #
 # Usage: marker-check.sh [tree-dir]   (default: the repository root)
 set -euo pipefail
@@ -26,25 +29,36 @@ trap 'rm -f "$marker_records"' EXIT
 mapfile -d '' markdown_files < <(git -C "$tree" ls-files -z -- '*.md')
 for relative in "${markdown_files[@]}"; do
   case "$relative" in
-    changelog.d/*) continue ;;
+    CHANGELOG.md|changelog.d/*) continue ;;
   esac
 
   if ! awk -v file="$relative" '
-    { lines[NR] = $0 }
+    function without_inline_code(text,    before, after) {
+      while (match(text, /`[^`]*`/)) {
+        before = substr(text, 1, RSTART - 1)
+        after = substr(text, RSTART + RLENGTH)
+        text = before after
+      }
+      return text
+    }
+    {
+      lines[NR] = $0
+      scan_lines[NR] = without_inline_code($0)
+    }
     END {
       token = "**unreleased**"
       citation_re = "^[[:space:]]*\\((([[:alnum:]_.-]+/)?[[:alnum:]_.-]+)?#[0-9]+\\)"
       bad = 0
 
       for (line_no = 1; line_no <= NR; line_no++) {
-        remaining = lines[line_no]
+        remaining = scan_lines[line_no]
         offset = 0
         while ((at = index(remaining, token)) != 0) {
           rest = substr(remaining, at + length(token))
           candidate = rest
           next_line = line_no + 1
           while (candidate ~ /^[[:space:]]*$/ && next_line <= NR) {
-            candidate = candidate " " lines[next_line]
+            candidate = candidate " " scan_lines[next_line]
             next_line++
           }
 
@@ -60,7 +74,7 @@ for relative in "${markdown_files[@]}"; do
           }
 
           offset += at + length(token) - 1
-          remaining = substr(lines[line_no], offset + 1)
+          remaining = substr(scan_lines[line_no], offset + 1)
         }
       }
       exit bad

@@ -84,11 +84,37 @@ EOF
 check "a cross-repo citation is valid and ignored by release comparison" 0 \
   "agree with the tree" run_check cross-repo
 
+fixture self-qualified 0.6.0
+printf 'Ceremony work remains **unreleased** (ceremony#248).\n' \
+  >"$TMP/self-qualified/docs/CONSUMERS.md"
+cat >"$TMP/self-qualified/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## 0.6.0 — 2026-08-03
+
+- Ceremony work shipped (#248).
+EOF
+check "a self-qualified citation is ignored; local markers must use bare #N" 0 \
+  "agree with the tree" run_check self-qualified
+
 fixture exclusions 0.6.0-dev
-printf '# Notes\n\n## Unreleased\n' >"$TMP/exclusions/NOTES.md"
+cat >"$TMP/exclusions/NOTES.md" <<'EOF'
+# Notes
+
+## Unreleased
+
+The marker token is `**unreleased**`.
+EOF
 printf -- '- A fragment may say **unreleased** without being documentation.\n' \
   >"$TMP/exclusions/changelog.d/999.md"
-check "headings and changelog fragments do not trip the guard" 0 \
+cat >"$TMP/exclusions/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## 0.5.0 — 2026-08-03
+
+- Shipped prose may discuss **unreleased** markers without becoming one.
+EOF
+check "headings, inline mentions, changelog entries, and fragments are excluded" 0 \
   "agree with the tree" run_check exclusions
 
 summary
