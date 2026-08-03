@@ -16,10 +16,10 @@ set -euo pipefail
 body_file="${1:-}"
 shift || true
 
-[ -n "$body_file" ] && [ -f "$body_file" ] || {
+if [ -z "$body_file" ] || [ ! -f "$body_file" ]; then
   echo "refs-not-closing: body file is missing or unreadable: ${body_file:-<none>}" >&2
   exit 1
-}
+fi
 
 declare -A closing=()
 for issue in "$@"; do

@@ -45,7 +45,7 @@ check "failure prints the surrounding sentence" 1 \
 check "failure offers number-first rewrite" 1 "#N is" guard prose 5
 check "failure offers number-free rewrite" 1 "closes the issue" guard prose 5
 
-body code-span 'Refs #5' '' 'The body must not contain `Closes #5` anywhere.'
+body code-span 'Refs #5' '' "The body must not contain \`Closes #5\` anywhere."
 check "backticked closing keyword still fails" 1 "Closes #5" guard code-span 5
 check "backtick failure explains that code spans do not protect" 1 \
   "Backticks do not protect" guard code-span 5
@@ -61,7 +61,7 @@ body incidents-211 'Refs #209' 'Triage closes #209 by hand.'
 check "#211 incident replays red" 1 "#209" guard incidents-211 209
 body incidents-214 'Refs #212' 'Triage closes #212 and #209 on that evidence.'
 check "#214 incident replays red" 1 "#212" guard incidents-214 212
-body incidents-200 'Refs #199' 'A later edit added `Closes #199`.'
+body incidents-200 'Refs #199' "A later edit added \`Closes #199\`."
 check "#200 incident replays red" 1 "#199" guard incidents-200 199
 
 body multiple 'Refs #5 and Refs #7.' 'Triage closes #5 and fixes #7 by hand.'
@@ -82,8 +82,13 @@ check "invalid closing set is a loud failure" 1 "invalid closing issue" \
 # The action owns the network boundary. These structural assertions keep a
 # future edit from suppressing a failed/partial GraphQL read or splitting the
 # one authoritative query into several drifting reads.
+one_graphql_read() {
+  [ "$(grep -c "gh api graphql" "$ACTION")" -eq 1 ]
+  printf '1\n'
+}
+
 check "action performs exactly one GraphQL read" 0 "1" \
-  bash -c 'test "$(grep -c "gh api graphql" "$1")" -eq 1; printf 1' _ "$ACTION"
+  one_graphql_read
 check "action refuses a partial closing-reference page" 0 "hasNextPage" \
   grep -F "hasNextPage" "$ACTION"
 check "action does not suppress GraphQL failure" 1 "" \
