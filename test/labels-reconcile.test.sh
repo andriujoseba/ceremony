@@ -701,19 +701,24 @@ trap 'rm -rf "$RTMP"' EXIT
 iso_at() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 RNOW=2000000000
 
-ruling_sweep_probe() { # $1 = the PR's labels → reconcile_pr's log lines
+ruling_sweep_probe() { # $1 labels, $2 PR, $3 assignees, $4 requested, $5 activity age days
   (
+    local n="${2:-77}" assignees="${3:-0}" requested="${4:-}"
+    local activity_days="${5:-8}"
+    local assignee_json='[]'
+    [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
     REPO_LABELS="$(printf 'state:addressing\nstate:needs-human\nmerge-next\nstale\nneeds-ruling')"
     REPO=owner/repo NOW="$RNOW"
     LABELS="$1"
-    DRAFT=false HEAD_SHA=head1 REQUESTED=""
+    DRAFT=false HEAD_SHA=head1 REQUESTED="$requested"
     # Approvals submitted 8 days ago — the newest real activity anywhere.
     REVIEWS_JSON="$(reviews \
-      "$(rev "$BOT1" APPROVED head1 "" "$(iso_at $((RNOW - 8 * 86400)))")" \
-      "$(rev "$BOT2" APPROVED head1 "" "$(iso_at $((RNOW - 8 * 86400)))")" \
-      "$(rev "$BOT3" APPROVED head1 "" "$(iso_at $((RNOW - 8 * 86400)))")")"
+      "$(rev "$BOT1" APPROVED head1 "" "$(iso_at $((RNOW - activity_days * 86400)))")" \
+      "$(rev "$BOT2" APPROVED head1 "" "$(iso_at $((RNOW - activity_days * 86400)))")" \
+      "$(rev "$BOT3" APPROVED head1 "" "$(iso_at $((RNOW - activity_days * 86400)))")")"
     MERGEABLE=MERGEABLE CHECKS=SUCCESS
-    PR_JSON="$(jq -n --arg at "$(iso_at $((RNOW - 10 * 86400)))" '{created_at: $at}')"
+    PR_JSON="$(jq -n --arg at "$(iso_at $((RNOW - 10 * 86400)))" \
+      --argjson assignees "$assignee_json" '{created_at: $at, assignees: $assignees}')"
     run() { "$@"; } # mutations reach the stub and are recorded, not swallowed
     gh() {
       if [ "$1" = api ]; then
@@ -728,6 +733,8 @@ ruling_sweep_probe() { # $1 = the PR's labels → reconcile_pr's log lines
           shift
         done
         file="$RTMP/$(printf '%s' "$endpoint" | tr '/' '_').json"
+        printf '%s\n' "$endpoint" >>"$RTMP/api-calls"
+        [ ! -f "$file.error" ] || return 1
         # A missing fixture is an empty collection — projected through the
         # caller's --jq exactly like real gh, so '.[].foo' yields no lines.
         [ -f "$file" ] || { printf '[]\n' | jq -r "${jqexpr:-.}"; return 0; }
@@ -749,7 +756,7 @@ ruling_sweep_probe() { # $1 = the PR's labels → reconcile_pr's log lines
         printf '%s\n' "$*" >>"$RTMP/edits"
       fi
     }
-    reconcile_pr 77 2>&1
+    reconcile_pr "$n" 2>&1
   )
 }
 
@@ -787,6 +794,60 @@ expect "exactly one nudge across both sweeps" \
   1 "$(grep -c '^----$' "$RTMP/posted-77")"
 expect "no label edit across both sweeps names the ruling flag" \
   no "$(grep -q 'needs-ruling' "$RTMP/edits" 2>/dev/null && echo yes || echo no)"
+
+# ---------------------------------------------------------------------------
+# The attention pass on the PR surface (#232): every PR target is malformed,
+# assigned or not. The episode marker makes the comment once-per-labeling;
+# every other board mutation remains the ordinary state machine's concern.
+# ---------------------------------------------------------------------------
+attention_pr_fixture() { # $1 PR, $2 labeled timestamp
+  jq -n --arg at "$2" \
+    '[{"event":"labeled","label":{"name":"attention"},"actor":{"login":"setter"},"created_at":$at}]' \
+    >"$RTMP/repos_owner_repo_issues_${1}_timeline.json"
+  printf '[]\n' >"$RTMP/repos_owner_repo_issues_${1}_comments.json"
+}
+
+attention_pr_fixture 78 "$(iso_at $((RNOW - 120)))"
+attention_mutations_before="$(wc -l <"$RTMP/edits")"
+attention_pr="$(ruling_sweep_probe $'attention\nstate:needs-human' 78 0 danmt 1)"
+expect "attention on an unassigned PR is diagnosed" yes \
+  "$(grep -q 'malformed attention (pr)' <<<"$attention_pr" && echo yes || echo no)"
+expect "the PR comment points to the assigned claim issue" yes \
+  "$(grep -qF 'assigned issue that owns the claim' "$RTMP/posted-78" && echo yes || echo no)"
+expect "the PR comment does not guess a target issue number" no \
+  "$(grep -Eq '#[0-9]+' "$RTMP/posted-78" && echo yes || echo no)"
+ruling_sweep_probe $'attention\nstate:needs-human' 78 0 danmt 1 >/dev/null
+expect "two PR sweeps in one attention episode post once" 1 \
+  "$(grep -cF '<!-- ceremony:attention-malformed:' "$RTMP/posted-78")"
+jq --arg at "$(iso_at $((RNOW - 30)))" \
+  '. + [{"event":"labeled","label":{"name":"attention"},"actor":{"login":"setter"},"created_at":$at}]' \
+  "$RTMP/repos_owner_repo_issues_78_timeline.json" \
+  >"$RTMP/repos_owner_repo_issues_78_timeline.json.tmp" \
+  && mv "$RTMP/repos_owner_repo_issues_78_timeline.json.tmp" \
+    "$RTMP/repos_owner_repo_issues_78_timeline.json"
+ruling_sweep_probe $'attention\nstate:needs-human' 78 0 danmt 1 >/dev/null
+expect "a re-set PR flag receives a second episode comment" 2 \
+  "$(grep -cF '<!-- ceremony:attention-malformed:' "$RTMP/posted-78")"
+
+attention_pr_fixture 79 "$(iso_at $((RNOW - 60)))"
+ruling_sweep_probe $'attention\nstate:needs-human' 79 1 danmt 1 >/dev/null
+expect "attention on an assigned PR is still diagnosed" 1 \
+  "$(grep -cF '<!-- ceremony:attention-malformed:' "$RTMP/posted-79")"
+
+attention_pr_fixture 80 "$(iso_at $((RNOW - 60)))"
+: >"$RTMP/repos_owner_repo_issues_80_timeline.json.error"
+unreadable_attention="$(ruling_sweep_probe $'attention\nstate:needs-human' 80 0 danmt 1)"
+expect "an unreadable PR attention timeline posts nothing" no \
+  "$([ -f "$RTMP/posted-80" ] && echo yes || echo no)"
+expect "the unreadable fact is logged without a verdict" yes \
+  "$(grep -qF 'attention timeline unreadable' <<<"$unreadable_attention" && echo yes || echo no)"
+
+: >"$RTMP/api-calls"
+ruling_sweep_probe state:needs-human 81 0 danmt 1 >/dev/null
+expect "a flag-free PR performs no attention timeline read" no \
+  "$(grep -qF 'repos/owner/repo/issues/81/timeline' "$RTMP/api-calls" && echo yes || echo no)"
+expect "attention diagnosis caused no PR mutation" "$attention_mutations_before" \
+  "$(wc -l <"$RTMP/edits")"
 
 # -- the sweep wiring observes the existing per-PR skip without writing -------
 blind_main_probe() {

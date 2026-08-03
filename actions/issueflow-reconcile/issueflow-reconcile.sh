@@ -27,6 +27,9 @@ TRIAGE_ACTORS=()
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/ruling.sh"
+# The attention target invariants (#232) — diagnosis only, both surfaces.
+# shellcheck source=lib/attention.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/attention.sh"
 # The guarded read and its reason line (#101, #247) — one implementation for
 # both surfaces.
 # shellcheck source=lib/read.sh
@@ -511,6 +514,7 @@ reconcile_issue() {
   local n="$1" decision refs cross_refs states age created assignees open_pr=false label owners
   local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set="" parse_marker=""
   local unchecked="" remove_claimed=claimed
+  local attention_active=true attention_suppression=""
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
   case "$decision" in
     ADD_NEEDS_TRIAGE)
@@ -554,6 +558,7 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
           --remove-label "$remove_claimed" --add-label post-merge >/dev/null
       fi
       log "#$n: merged Refs PR -> post-merge; claim released"
+      attention_active=false
     else
       created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
       guarded_read age last_issue_activity "$n" "$created" \
@@ -585,6 +590,7 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
           fi
           log "#$n: stale claim reclaimed -> ready" ;;
       esac
+      [ "$decision" != FLAG_UNASSIGNED ] || attention_suppression=claimed-unassigned
       if has_issue_label offsite; then
         local timeline
         if timeline="$(offsite_timeline "$n")"; then
@@ -605,6 +611,7 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
         'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
       log "#$n: assigned or attention-bearing post-merge issue flagged"
     fi
+    attention_suppression=post-merge-assigned
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
     cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
@@ -660,6 +667,14 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
         "Every issue referenced by this epic's task list is closed. Please close the epic or extend its task list."
       log "#$n: completed epic nudged"
     fi
+  fi
+
+  # The flag composes with every build queue state, but requires an assignee.
+  # Existing post-merge/claimed diagnostics take precedence so one board bug
+  # draws one comment (#232 D5); the shared helper still logs the suppression.
+  if [ "$attention_active" = true ] && has_issue_label attention; then
+    [ -n "${assignees:-}" ] || assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
+    reconcile_attention "$n" issue "$assignees" "$attention_suppression"
   fi
 
   # ---- the ruling invariants (#52), on any queue state ----
