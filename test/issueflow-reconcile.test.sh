@@ -459,6 +459,7 @@ jq --arg at "$(iso_at $((INOW - 30)))" \
 issue_probe 68 $'ready\nattention' 0 >/dev/null
 check "a re-set flag creates a second episode comment" 0 "2" \
   grep -cF '<!-- ceremony:attention-malformed:' "$TMP/posted-68"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
 check "the two comments carry distinct episode markers" 0 "2" \
   bash -c 'grep -F "<!-- ceremony:attention-malformed:" "$1" | sort -u | wc -l' _ \
   "$TMP/posted-68"
@@ -477,6 +478,7 @@ issue_probe 70 ready 0 >/dev/null
 check "a flag-free issue performs no attention episode read" 1 "" \
   grep -qF 'repos/owner/repo/issues/70/timeline' "$TMP/api-calls"
 
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
 check "the attention sweep probes perform no issue edits" 0 "$attention_edits_before" \
   bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
