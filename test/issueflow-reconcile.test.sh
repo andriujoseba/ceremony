@@ -256,11 +256,20 @@ check "the marker survives a cross-repo reference's punctuation" 0 \
   "blockers-parsed-12-heavy-duty-box-9-c8e36fe3b793" \
   blocked_parse_marker "{#12, heavy-duty/box#9}"
 # The readable half of the marker is many-to-one and must not be the identity.
-# Every pair below is two declarations this reconciler genuinely accepts, that
+# Every pair below is two reference tokens `issue_references` classifies, that
 # slug identically; a slug-keyed marker made the second one find the first
 # one's marker and post nothing — silence in the one case the echo exists to
 # speak about. Distinguishing `/` alone would close the first pair and leave
 # the rest, so the digest of the whole rendered set is what decides.
+#
+# Classifies, not parses: three of the four are reachable as a declared set —
+# `{acme.widgets#9}` is not, because the clause parser stops at the `.` and
+# `blocked_reference_records` never hands that token through, though
+# `issue_references` does answer CROSS for it. It stays in the family because
+# the marker's contract is over the tokens the classifier admits, not over the
+# subset today's clause parser happens to reach; the class proof does not rest
+# on it either way, since `{acme-widgets#9}` vs `{acme_widgets#9}` is reachable
+# on both sides and reds the cheap fix on its own.
 check "the slug alone cannot separate a qualified ref from a hyphenated one" 0 "" \
   test "$(printf '%s' '{acme/widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')" \
      = "$(printf '%s' '{acme-widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
