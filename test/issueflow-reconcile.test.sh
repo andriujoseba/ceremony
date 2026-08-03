@@ -781,6 +781,35 @@ check "...and not re-flagging cross-repo, which did not change" 0 "1" \
 check "no label write comes from the colliding-edit path either" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$collision_edits_before" "$TMP/issue-edits"
 
+# A -> B -> A. The marker names the SET, so the return to A is a marker this
+# thread has carried before; the question the echo has to answer is not "have I
+# ever said this" but "is this still what I am saying". Searching the whole
+# history answers the first, and the return went silent while the thread's
+# newest echo asserted B and the sweep gated on A — a stale parse presented as
+# the current one, which is the readable-but-wrong shape #252 exists to kill.
+# All four sweeps are driven, because the bug is only visible as a sequence.
+printf '[]\n' >"$(cfix 52)"
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91.' >/dev/null
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91, #92.' >/dev/null
+return_edits_before="$(wc -l <"$TMP/issue-edits")"
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91.' >/dev/null
+check "a set edited back to a previously echoed one speaks again" 0 "3" \
+  grep -cF '<!-- issueflow:blockers-parsed-' "$TMP/posted-52"
+check "...under the returning set's own marker, twice on the thread now" 0 "2" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-52"
+# The assertion the silence used to fail: it is the NEWEST echo that has to
+# name what the sweep gates on, not merely some echo somewhere in the thread.
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...leaving the newest echo naming the set the sweep now gates on" 0 \
+  "parse to: {#90, #91}" \
+  bash -c 'grep -o "parse to: {[^}]*}" "$1" | tail -n 1' _ "$TMP/posted-52"
+issue_probe 52 blocked 1 false "" 'Blocked by #90, #91.' >/dev/null
+check "an unchanged sweep after the return still draws nothing" 0 "3" \
+  grep -cF '<!-- issueflow:blockers-parsed-' "$TMP/posted-52"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "no label write comes from the returning-set path either" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$return_edits_before" "$TMP/issue-edits"
+
 # -- an already-applied stale heals off, and no edit names the flag ----------
 jq -n --arg l "$(iso_at $((INOW - 3600)))" \
   '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' >"$(tfix 23)"
