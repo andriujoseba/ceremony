@@ -314,6 +314,33 @@ blocked_cross_references() { # body on stdin -> qualified refs, one per line
   blocked_reference_records | awk -F '\t' '$1 == "CROSS" { print $2 }' | sort -u
 }
 
+blocked_parse_set() { # $1 local refs, $2 cross refs -> "{#7, #12}" | "{}"
+  # The parse, rendered once. The comment, the marker and the log line all
+  # read this one string, so the three can never disagree about what the
+  # machine read. Both classes are shown because both are parsed: the locals
+  # in the numeric order blocked_references answers, then the qualified
+  # references blocked_cross_references answers — a cross-repo clause is as
+  # capable of being readable-but-wrong as a local one.
+  local rendered
+  rendered="$(
+    { [ -z "$1" ] || sed 's/^/#/' <<<"$1"
+      [ -z "${2:-}" ] || printf '%s\n' "$2"
+    } | awk '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 } END { printf "\n" }'
+  )"
+  printf '{%s}\n' "$rendered"
+}
+
+blocked_parse_marker() { # $1 rendered set -> the echo's idempotency marker
+  # Scoped to the SET's value, not to the issue and not to the sweep: an
+  # unchanged parse finds its own marker and stays quiet on a 15-minute cron,
+  # and a changed one cannot find it, so the change is what speaks. One
+  # consequence is deliberate: a declaration edited back to a set already
+  # echoed stays quiet too, because the thread already carries that echo.
+  local slug
+  slug="$(printf '%s' "$1" | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+  printf 'blockers-parsed-%s\n' "${slug:-none}"
+}
+
 blocked_decision() { # $1 local refs, $2 OPEN/CLOSED states, $3 cross-repo refs
   local refs="$1" states="$2" cross_refs="${3:-}"
   if [ -n "$cross_refs" ]; then echo FLAG_CROSS_REPO
@@ -450,7 +477,7 @@ last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read 
 
 reconcile_issue() {
   local n="$1" decision refs cross_refs states age created assignees open_pr=false label owners
-  local merged_ref_pr="" transition_marker="" transition_handled=false
+  local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set=""
   local unchecked="" remove_claimed=claimed
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
   case "$decision" in
@@ -549,6 +576,32 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
     cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
+    # The parse is echoed before any verdict is derived from it (#252). The
+    # clause parse is exact and unforgiving, and its output was invisible:
+    # crew#308 silently parsed a negated "no longer blocked by #221" as a
+    # blocker, crew#71 spent five days as an unresolvable queue conflict, and
+    # crew#284's declaration had to be re-derived by hand-running the parser.
+    # Every one of those was found by a human running the parser, hours or
+    # days late. `blocked-unparseable` already catches the UNREADABLE
+    # declaration; this catches the readable-but-wrong one, which no flag can
+    # detect because the machine cannot judge what a human meant — only state
+    # what it read, and let the human see the divergence in one sweep.
+    parsed_set="$(blocked_parse_set "$refs" "$cross_refs")"
+    ensure_comment "$n" "$(blocked_parse_marker "$parsed_set")" \
+      "This issue's \`Blocked by\` declarations parse to: $parsed_set
+
+That is the exact set this sweep gates on — what the machine read, never a
+judgment about whether it is what you meant. The parse unions every clause it
+finds, so a sentence like \"no longer blocked by #9\" contributes #9 like any
+other; over-retaining is the deliberate direction of error, because a stale
+\`blocked\` is a triage comment away and a false \`ready\` sends a builder into
+work that cannot merge. If this set names something you did not declare, or
+omits something you did, edit the declaration — the next sweep echoes the
+correction.
+
+*Comment only: nothing on this path writes a label. The marker carries the set
+itself, so an unchanged parse never re-posts.*"
+    log "#$n: blocked declarations parse to $parsed_set"
     states="$(reference_states <<<"$refs")"
     decision="$(blocked_decision "$refs" "$states" "$cross_refs")"
     case "$decision" in
