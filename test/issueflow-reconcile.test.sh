@@ -717,11 +717,12 @@ check "...stands down without minting" 1 "" test -s "$ARRIVAL/fixtures/edits"
 check "...and the sweep still runs" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$pr_out"
 
-# The merged-Refs transition must survive the executable's set -e path too.
-# Keep this at main() granularity: the GraphQL gather and loop are the code
-# a sourced decision probe cannot exercise (#91's lesson).
+# Exercise both directions through main(): a merged-Refs transition still
+# fires without a linked open PR, then the open-body gather suppresses it.
+# A sourced decision probe cannot exercise the GraphQL gather and loop
+# (#91's lesson).
 printf '%s\n' \
-  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":401,"body":"Refs #40","isDraft":false,"closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
   >"$ARRIVAL/fixtures/graphql-open.json"
 printf '%s\n' \
   '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"mergedAt":"2026-07-30T19:05:16Z","body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
@@ -732,6 +733,24 @@ jq -n --arg at "$(iso_at "$INOW")" \
   '{number:40,user:{login:"triage-one"},created_at:$at,body:"- [x] built\n- [ ] verify live label",labels:[{name:"claimed"}],assignees:[{login:"builder"}]}' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_40.json"
 printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_40_comments.json"
+: >"$ARRIVAL/fixtures/edits"
+transition_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+transition_rc=$?
+check "an executable sweep with no linked open PR exits 0" 0 "" \
+  test "$transition_rc" -eq 0
+check "...reaches the transition through GraphQL and the issue loop" 0 "" \
+  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$transition_out"
+check "...and performs the release edit from the executable path" 0 "" \
+  grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
+  "$ARRIVAL/fixtures/edits"
+
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":401,"body":"Refs #40","isDraft":false,"closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-open.json"
 : >"$ARRIVAL/fixtures/edits"
 subprocess_out="$(
   env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
@@ -747,6 +766,8 @@ check "...performs no release edit" 1 "" \
   grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
   "$ARRIVAL/fixtures/edits"
 
+# The query selects every OPEN PR and deliberately does not select isDraft;
+# this fixture-only flip documents that draft identity cannot narrow the set.
 sed 's/"isDraft":false/"isDraft":true/' "$ARRIVAL/fixtures/graphql-open.json" \
   >"$ARRIVAL/fixtures/graphql-open.json.tmp"
 mv "$ARRIVAL/fixtures/graphql-open.json.tmp" "$ARRIVAL/fixtures/graphql-open.json"
@@ -787,8 +808,9 @@ check "an open Refs-bodied PR suppresses stale reclaim" 0 "" test "$reclaim_rc" 
 check "...keeps the quiet live claim" 1 "" \
   grep -qF '#41: stale claim reclaimed -> ready' <<<"$reclaim_out"
 
-# Drafts are live claim evidence by the same OPEN query (D4); no mergeability
-# or readiness field is allowed to narrow this set.
+# Drafts are live claim evidence by the same OPEN query (D4). The query does
+# not select isDraft, so this fixture-only flip deliberately leaves production
+# input byte-identical and guards the absence of a draft/readiness predicate.
 sed 's/"isDraft":false/"isDraft":true/' "$ARRIVAL/fixtures/graphql-open.json" \
   >"$ARRIVAL/fixtures/graphql-open.json.tmp"
 mv "$ARRIVAL/fixtures/graphql-open.json.tmp" "$ARRIVAL/fixtures/graphql-open.json"
