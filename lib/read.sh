@@ -29,6 +29,7 @@ guarded_read() { # $1 = variable to fill, rest = the read; sets READ_FAILURE_STD
   shift
   __err="$(mktemp)" || return 1
   __out="$("$@" 2>"$__err")" || __rc=$?
+  # shellcheck disable=SC2034 # the out-parameter: every caller reads it beside the status
   READ_FAILURE_STDERR="$(cat "$__err")"
   rm -f "$__err"
   printf -v "$__var" '%s' "$__out"

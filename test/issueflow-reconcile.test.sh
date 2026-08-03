@@ -293,6 +293,7 @@ iso_at() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 # crew#329's job log carried, verbatim (#247), and the payload beside it.
 GH_STUB_STDERR="gh: We couldn't respond to your request in time. (HTTP 504)"
 GH_STUB_ERROR_BODY='{"message":"We could not respond to your request in time.","documentation_url":"https://docs.github.com/rest"}'
+export GH_STUB_STDERR # the PATH-stubbed gh of the executable runs reads it too
 
 issue_stub_gh() {
   if [ "$1" = api ]; then
@@ -646,6 +647,119 @@ check "8 real-quiet days nudge through a 2-day-old label churn" 0 "" \
   grep -q 'ruling nudge' <<<"$churned"
 
 # ---------------------------------------------------------------------------
+# An unreadable fact invents no verdict on the issue surface either (#247).
+# `gh api` prints a 5xx body to stdout AND exits non-zero, and GitHub's 5xx
+# body is a JSON object — so the payload that reached the guards was valid
+# JSON, `.labels[]` came back empty, and queue_decision was handed the wrong
+# input. The pure guards first, then the two decisions the fall-through
+# reached.
+# ---------------------------------------------------------------------------
+payload_refused() { ! issue_payload_valid "$@"; } # 0 when the payload is refused
+
+check "a healthy issue payload is accepted" 0 "" \
+  issue_payload_valid 40 <<<'{"number":40,"labels":[{"name":"ready"}]}'
+check "an issue carrying no labels at all is still a valid payload" 0 "" \
+  issue_payload_valid 40 <<<'{"number":40,"labels":[]}'
+# The reported shape: gh renders `gh: <message> (HTTP 504)` from a body with a
+# `message` key, which proves the body was valid JSON. The status check is what
+# catches this one; the shape check refuses it independently.
+check "a JSON error object is not an issue payload" 0 "" \
+  payload_refused 40 <<<"$GH_STUB_ERROR_BODY"
+# The live path a status check alone would leave open (D3): 200, exit 0, and
+# `.labels[]` empties exactly as it does on the 504.
+check "an HTTP 200 whose body is null is refused" 0 "" payload_refused 40 <<<'null'
+check "a payload missing .labels is refused" 0 "" \
+  payload_refused 40 <<<'{"number":40}'
+check "a payload whose .labels is not an array is refused" 0 "" \
+  payload_refused 40 <<<'{"number":40,"labels":"ready"}'
+check "a payload about a different issue is refused" 0 "" \
+  payload_refused 40 <<<'{"number":41,"labels":[]}'
+check "a payload that is not JSON at all is refused" 0 "" \
+  payload_refused 40 <<<'not json'
+check "an empty payload is refused" 0 "" payload_refused 40 </dev/null
+
+# The reason line's shape (#101 D3/D4), reachable from this surface too — it
+# is one implementation in lib/read.sh, not a second spelling.
+check "empty stderr is reported as its own fact" 0 "no error output" \
+  read_failure_reason ""
+check "the captured 504 renders verbatim on one line" 0 \
+  "$GH_STUB_STDERR" read_failure_reason "$GH_STUB_STDERR"
+long_stderr="$(read_failure_reason "$(printf 'e%.0s' {1..400})")"
+check "400 chars of stderr truncate to 300 plus an ellipsis" 0 "" \
+  test "$long_stderr" = "$(printf 'e%.0s' {1..300})…"
+
+# The D6 tail: silent on a whole pass, and naming both count and numbers on a
+# partial one.
+check "a whole pass adds no tail line" 0 "" test -z "$(skipped_tail 0 "")"
+check "one skipped issue is named in the singular" 0 \
+  "1 issue skipped this pass on an unreadable fact: #12" skipped_tail 1 "#12"
+check "several skipped issues are all named" 0 \
+  "2 issues skipped this pass on unreadable facts: #12 #40" \
+  skipped_tail 2 "#12 #40"
+
+# -- the destroyed claim: a 504 on the comments read of a live claim ---------
+# created_at long ago, a comment seconds old, and the comments read fails. The
+# swallowed read dated the issue by created_at and reclaimed it, unassigning
+# the builder under a comment asserting 48 hours of silence.
+jq -n --arg at "$(iso_at $((INOW - 10)))" \
+  '[{"user":{"login":"builder"},"created_at":$at,"html_url":"https://x/live","body":"still on it"}]' \
+  >"$(cfix 50)"
+printf '%s\n' "$GH_STUB_ERROR_BODY" >"$(cfix 50).http-error"
+jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+  '[{"event":"assigned","created_at":$at}]' >"$(tfix 50)"
+claim_edits_before="$(wc -l <"$TMP/issue-edits")"
+check "a 504 on the comments read skips the issue instead of grading its age" \
+  3 "#50: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+  issue_probe 50 claimed 1
+check "...so the live claim is not reclaimed" 1 "" \
+  grep -q 'stale claim reclaimed -> ready' <<<"$(issue_probe 50 claimed 1)"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...no unassign, no label swap, and no reclaim comment" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$claim_edits_before" "$TMP/issue-edits" "$TMP/posted-50"
+
+# -- the suppressed comment: a 504 on the marker read -----------------------
+# The marker is on the issue. Read as "no marker", a failed read re-posts the
+# comment the marker exists to suppress — every sweep, forever.
+jq -n --arg b '<!-- issueflow:blocked-unparseable -->' \
+  --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"user":{"login":"sweep-bot"},"created_at":$at,"html_url":"https://x/m","body":$b}]' \
+  >"$(cfix 51)"
+printf '%s\n' "$GH_STUB_ERROR_BODY" >"$(cfix 51).http-error"
+check "a 504 on the marker read skips rather than reading it as no marker" \
+  3 "#51: skipped this pass — could not read its comments: $GH_STUB_STDERR" \
+  issue_probe 51 blocked 1 false "" "no parseable declaration here"
+check "...so no duplicate comment is posted" 1 "" test -f "$TMP/posted-51"
+
+# -- a deliberate skip is counted; a genuine crash is still named (D4) -------
+printf '%s\n' '{"number":60,"labels":[{"name":"ready"}],"assignees":[]}' \
+  >"$TMP/repos_owner_repo_issues_60.json"
+printf '%s\n' '{"number":61,"labels":[{"name":"ready"}],"assignees":[]}' \
+  >"$TMP/repos_owner_repo_issues_61.json"
+printf '%s\n' "$GH_STUB_ERROR_BODY" >"$TMP/repos_owner_repo_issues_61.json.http-error"
+pass_probe() { # $1 issue; $2 non-empty makes reconcile_issue crash
+  (
+    REPO=owner/repo
+    gh() { issue_stub_gh "$@"; }
+    [ -z "${2:-}" ] || reconcile_issue() { return 9; }
+    SKIPPED_COUNT=0
+    SKIPPED_ISSUES=""
+    reconcile_issue_pass "$1"
+    printf 'rc=%s count=%s issues=%s\n' "$?" "$SKIPPED_COUNT" "$SKIPPED_ISSUES"
+  )
+}
+check "a genuine non-read crash still names the failure byte-identically" 0 \
+  "issueflow: #60: reconcile failed — continuing with the remaining issues" \
+  pass_probe 60 crash
+check "...and the pass still returns 0, so the loop reaches the next issue" 0 \
+  "rc=0" pass_probe 60 crash
+check "...and a crash is not counted as a skip" 0 "count=0" pass_probe 60 crash
+check "a skipped issue is counted and named" 0 "count=1 issues=#61" pass_probe 61
+check "...and is not also reported as a crash" 1 "" \
+  grep -q 'reconcile failed' <<<"$(pass_probe 61)"
+check "...leaving the loop free to continue" 0 "rc=0" pass_probe 61
+
+# ---------------------------------------------------------------------------
 # The arrival path, executed the way the action executes it (#91): four
 # triage-authored mints died silently because the stand-down `return`s in
 # reconcile_opened_issue carried the failed test's status into `set -e`. A
@@ -681,7 +795,15 @@ if [ "$1" = api ]; then
       *'states: MERGED'*) file="$GH_FIXTURES/graphql-merged.json" ;;
     esac
   fi
-  [ ! -f "$file.error" ] || exit 1
+  # `.http-error` is the real 5xx (#247): the response body — GitHub's JSON
+  # error object — goes to STDOUT, the reason to stderr, and the status is
+  # non-zero. `.error` is the payload-free failure, which is the safe path.
+  if [ -f "$file.http-error" ]; then
+    cat "$file.http-error"
+    printf '%s\n' "${GH_STUB_STDERR:-}" >&2
+    exit 1
+  fi
+  [ ! -f "$file.error" ] || { printf '%s\n' "${GH_STUB_STDERR:-}" >&2; exit 1; }
   if [ -f "$file" ]; then payload="$(cat "$file")"; else payload='[]'; fi
   if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$payload"; else printf '%s\n' "$payload"; fi
   exit 0
@@ -848,5 +970,86 @@ check "a dead API on the arrival path still fails the run (D2)" 0 "" \
   test "$err_rc" -eq 1
 check "...and the sweep does not run over a lying arrival" 1 "" \
   grep -qF 'issueflow: reconciled.' <<<"$err_out"
+
+# ---------------------------------------------------------------------------
+# The whole sweep over an unreadable board (#247), executed. The sourced
+# probes above drive one issue's pass; only this path exercises the loop, the
+# counting and the tail — and only this path reproduces crew#329's log, which
+# ended `issueflow: reconciled.` with rc=0 over a label it should never have
+# written. Its own fixture directory: the arrival fixtures above are stateful
+# across their cases.
+# ---------------------------------------------------------------------------
+SWEEP="$TMP/sweep"
+mkdir -p "$SWEEP"
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$SWEEP/graphql-open.json"
+cp "$SWEEP/graphql-open.json" "$SWEEP/graphql-merged.json"
+# 70: the 504 with a JSON error body on the per-issue read.
+printf '%s\n' "$GH_STUB_ERROR_BODY" >"$SWEEP/repos_owner_repo_issues_70.json.http-error"
+# 71: healthy, and carrying no queue label — so if the sweep reaches it, it
+# writes needs-triage. That write is the evidence the loop continued.
+printf '%s\n' \
+  '{"number":71,"user":{"login":"triage-one"},"labels":[{"name":"enhancement"}],"assignees":[]}' \
+  >"$SWEEP/repos_owner_repo_issues_71.json"
+# 72: HTTP 200 whose body is `null` — exit 0, and the label set empties just
+# as it does on the 504. The shape check is the only thing that catches it.
+printf 'null\n' >"$SWEEP/repos_owner_repo_issues_72.json"
+
+sweep_board() { printf '%s\n' "$1" >"$SWEEP/repos_owner_repo_issues_state_open_per_page_100.json"; }
+sweep_run() {
+  : >"$SWEEP/edits"
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$SWEEP" ISSUEFLOW_NOW="$INOW" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+}
+
+sweep_board '[{"number":70},{"number":71}]'
+sweep_out="$(sweep_run)"
+sweep_rc=$?
+check "an unreadable issue does not red the sweep (D7)" 0 "" test "$sweep_rc" -eq 0
+check "the 504's JSON error body is skipped, with the reason named" 0 \
+  "issueflow: #70: skipped this pass — could not read the issue: $GH_STUB_STDERR" \
+  printf '%s\n' "$sweep_out"
+check "...and crew#329's label is never written" 1 "" \
+  grep -qF '#70: needs-triage (no queue state)' <<<"$sweep_out"
+check "...nor any edit at all on the unreadable issue" 1 "" \
+  grep -qF 'issue edit 70' "$SWEEP/edits"
+check "...while the readable issue beside it is reconciled as before" 0 "" \
+  grep -qxF 'issue edit 71 -R owner/repo --add-label needs-triage' "$SWEEP/edits"
+check "...and the partial pass names its count and its issue" 0 \
+  'issueflow: 1 issue skipped this pass on an unreadable fact: #70' \
+  printf '%s\n' "$sweep_out"
+check "...after a byte-identical reconciled. line" 0 "" \
+  grep -qxF 'issueflow: reconciled.' <<<"$sweep_out"
+
+sweep_board '[{"number":72}]'
+null_out="$(sweep_run)"
+null_rc=$?
+check "an HTTP 200 whose body is null exits 0 and writes nothing" 0 "" \
+  test "$null_rc" -eq 0
+check "...because the shape check refuses it, on its own line" 0 \
+  'issueflow: #72: skipped this pass — the issue read answered a payload that is not issue #72 carrying a label array' \
+  printf '%s\n' "$null_out"
+check "...so no label is derived from an empty label set" 1 "" \
+  grep -qF 'issue edit 72' "$SWEEP/edits"
+check "...and the tail names it too" 0 \
+  'issueflow: 1 issue skipped this pass on an unreadable fact: #72' \
+  printf '%s\n' "$null_out"
+
+sweep_board '[{"number":70},{"number":72}]'
+both_out="$(sweep_run)"
+check "two skipped issues are both named, in the plural" 0 \
+  'issueflow: 2 issues skipped this pass on unreadable facts: #70 #72' \
+  printf '%s\n' "$both_out"
+
+sweep_board '[{"number":71}]'
+whole_out="$(sweep_run)"
+whole_rc=$?
+check "a whole pass still exits 0" 0 "" test "$whole_rc" -eq 0
+check "...ends on the byte-identical reconciled. line, with no tail after it" 0 \
+  "issueflow: reconciled." printf '%s\n' "$(tail -n1 <<<"$whole_out")"
+check "...and says nothing about skipping" 1 "" \
+  grep -q 'skipped this pass' <<<"$whole_out"
 
 summary
