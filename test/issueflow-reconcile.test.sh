@@ -143,6 +143,7 @@ check "the sweep still issues exactly two GraphQL queries" 0 "2" \
 check "...with mergedAt selected on the merged-PR node it already fetched" 0 "" \
   grep -qF 'nodes { number mergedAt body }' \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
 check "one closed offsite PR nudges" 0 "NUDGE" offsite_resolved_decision <<<"CLOSED"
 check "two closed offsite PRs nudge" 0 "NUDGE" offsite_resolved_decision <<< $'CLOSED\nCLOSED'
 check "one open offsite PR keeps quiet" 0 "QUIET" offsite_resolved_decision <<< $'CLOSED\nOPEN'
