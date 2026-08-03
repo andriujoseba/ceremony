@@ -506,7 +506,15 @@ issue_probe 65 $'claimed\nattention' 1 true >/dev/null
 check "assigned attention under claimed is healthy" 1 "" test -f "$TMP/posted-65"
 attention_episode 66 "$(iso_at $((INOW - 60)))"
 issue_probe 66 $'blocked\nattention' 1 false "" 'Blocked by #999' >/dev/null
-check "assigned attention under blocked is healthy" 1 "" test -f "$TMP/posted-66"
+# A `blocked` issue now always carries one comment — the parse echo (#252) —
+# so "healthy" can no longer be spelled "no comment file at all". It is spelled
+# the way this section's other cases already spell it: no attention diagnostic.
+# Both halves are pinned, so the case still fails if an attention comment
+# appears beside the echo, or if a second comment of any kind does.
+check "assigned attention under blocked is healthy" 1 "" \
+  grep -qF '<!-- ceremony:attention-malformed:' "$TMP/posted-66"
+check "...drawing the #252 parse echo and nothing else" 0 "1" \
+  grep -c -- '^----$' "$TMP/posted-66"
 
 attention_episode 67 "$(iso_at $((INOW - 60)))"
 post_merge_attention="$(issue_probe 67 $'post-merge\nattention' 0)"
