@@ -825,6 +825,24 @@ check "...and the sweep log carries the same set" 0 \
 issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91." >/dev/null
 check "an unchanged parse draws nothing on the next sweep" 0 "1" \
   grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-35"
+# AC-1's other input, and it is not the sweep above. A re-sweep of a
+# BYTE-IDENTICAL body is quiet under both spellings of the decision — the one
+# that keys on the parse and the one that keys on the body — so it cannot tell
+# them apart. Only an edit that changes the prose and preserves the parse can:
+# the refs are reordered and sentences are added on either side, and the set is
+# still {#90, #91}. What this pins is that the marker is a function of the
+# PARSE and not of the prose around it, which is the property the echo's whole
+# idempotency rests on and which nothing else in the suite states.
+preserved_edits_before="$(wc -l <"$TMP/issue-edits")"
+issue_probe 35 blocked 1 false "" \
+  "Some new prose here. Blocked by #91, #90. And more text." >/dev/null
+check "a body edit that preserves the parse draws nothing" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-35"
+check "...and adds no echo under any other marker either" 0 "1" \
+  grep -cF '<!-- issueflow:blockers-parsed-' "$TMP/posted-35"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and writes no label from the parse-preserving path" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$preserved_edits_before" "$TMP/issue-edits"
 changed_echo="$(issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91, #92.")"
 check "a body edit that changes the set draws exactly one new echo" 0 "1" \
   grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91, #92}') -->" "$TMP/posted-35"
