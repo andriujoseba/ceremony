@@ -323,7 +323,7 @@ blocked_parse_set() { # $1 local refs, $2 cross refs -> "{#7, #12}" | "{}"
   # capable of being readable-but-wrong as a local one.
   local rendered
   rendered="$(
-    { [ -z "$1" ] || sed 's/^/#/' <<<"$1"
+    { [ -z "$1" ] || awk '{ print "#" $0 }' <<<"$1"
       [ -z "${2:-}" ] || printf '%s\n' "$2"
     } | awk '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 } END { printf "\n" }'
   )"

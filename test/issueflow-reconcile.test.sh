@@ -222,6 +222,39 @@ check "cross-repo-only blocker is flagged distinctly" 0 "FLAG_CROSS_REPO" \
   blocked_decision "" "" "rig#112"
 check "cross-repo blocker prevents false promotion when locals close" 0 "FLAG_CROSS_REPO" \
   blocked_decision "9" "CLOSED" "rig#9"
+
+# The parse echo (#252): the machine states what it read, so a
+# readable-but-wrong declaration is visible in one sweep instead of five days.
+check "the rendered set names the locals in parse order" 0 "{#7, #12}" \
+  blocked_parse_set "$(printf '7\n12\n')" ""
+check "a single blocker still renders as a set" 0 "{#12}" blocked_parse_set "12" ""
+check "an empty parse renders as the empty set" 0 "{}" blocked_parse_set "" ""
+check "cross-repo references are echoed beside the locals" 0 "{#12, rig#9}" \
+  blocked_parse_set "12" "rig#9"
+check "a cross-repo-only parse is echoed too" 0 "{heavy-duty/box#9}" \
+  blocked_parse_set "" "heavy-duty/box#9"
+# crew#308: a *negated* marker phrase unions as the thing it denies, and the
+# silent result was a set nobody saw until a human ran the parser. Echoed, the
+# union is visible in the thread that contains the declaration.
+echo_308="$(blocked_parse_set \
+  "$(blocked_references <<<'Blocked by #162, #265. It is no longer blocked by #221.')" \
+  "$(blocked_cross_references <<<'Blocked by #162, #265. It is no longer blocked by #221.')")"
+check "the #308 shape echoes the negation-unioned blocker verbatim" 0 "" test \
+  "$echo_308" = "{#162, #221, #265}"
+# The marker is scoped to the SET's value — the whole idempotency contract.
+# Mutation proof, both directions: same set must reuse its marker (or a
+# 15-minute cron repeats itself forever), different set must not (or a
+# misparse is echoed under a marker the thread already carries, and stays
+# invisible — exactly the failure this change exists to close).
+check "an unchanged set reuses its marker" 0 "" test \
+  "$(blocked_parse_marker '{#7, #12}')" = "$(blocked_parse_marker '{#7, #12}')"
+check "a changed set takes a different marker" 1 "" test \
+  "$(blocked_parse_marker '{#7, #12}')" = "$(blocked_parse_marker '{#7, #12, #19}')"
+check "the empty set has a marker of its own" 0 "blockers-parsed-none" \
+  blocked_parse_marker "{}"
+check "the marker survives a cross-repo reference's punctuation" 0 \
+  "blockers-parsed-12-heavy-duty-box-9" \
+  blocked_parse_marker "{#12, heavy-duty/box#9}"
 # shellcheck disable=SC2016 # expansions belong to the generated fake gh
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -639,6 +672,61 @@ check "no reconciler mutation names offsite (#68 D4)" 1 "" \
   grep -E 'gh (issue|pr) edit.*offsite' \
     "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" \
     "$ROOT/actions/labels-reconcile/labels-reconcile.sh"
+
+# -- the parse echo: one comment per changed set, none per sweep (#252) ------
+# The whole point is a sweep-visible statement of what was read, so it is
+# probed through the sweep and not only as a rendering: the marker has to
+# survive the comment body, the second pass has to find it, and the third has
+# to miss it because the declaration changed.
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_90.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_91.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_92.json"
+printf '[]\n' >"$(cfix 35)"
+echo_edits_before="$(wc -l <"$TMP/issue-edits")"
+first_echo="$(issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91.")"
+check "a first parse is echoed, naming the set" 0 "" \
+  grep -qF 'parse to: {#90, #91}' "$TMP/posted-35"
+check "...and the sweep log carries the same set" 0 \
+  "issueflow: #35: blocked declarations parse to {#90, #91}" \
+  printf '%s\n' "$first_echo"
+issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91." >/dev/null
+check "an unchanged parse draws nothing on the next sweep" 0 "1" \
+  grep -cF '<!-- issueflow:blockers-parsed-90-91 -->' "$TMP/posted-35"
+changed_echo="$(issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91, #92.")"
+check "a body edit that changes the set draws exactly one new echo" 0 "1" \
+  grep -cF '<!-- issueflow:blockers-parsed-90-91-92 -->' "$TMP/posted-35"
+check "...naming the new set" 0 "" \
+  grep -qF 'parse to: {#90, #91, #92}' "$TMP/posted-35"
+check "...and saying so in the sweep log" 0 \
+  "issueflow: #35: blocked declarations parse to {#90, #91, #92}" \
+  printf '%s\n' "$changed_echo"
+check "...and leaving the first echo alone" 0 "1" \
+  grep -cF '<!-- issueflow:blockers-parsed-90-91 -->' "$TMP/posted-35"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "no label write comes from the echo path" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$echo_edits_before" "$TMP/issue-edits"
+
+# crew#308, replayed through the sweep: the declaration denies #221 and the
+# parse unions it anyway. Nobody saw that set for as long as it stayed inside
+# the machine; the echo puts it in the thread that contains the declaration.
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_162.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_221.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_265.json"
+printf '[]\n' >"$(cfix 36)"
+issue_probe 36 blocked 1 false "" \
+  'Blocked by #162, #265. It is no longer blocked by #221.' >/dev/null
+check "the #308 misparse is echoed verbatim, denial and all" 0 "" \
+  grep -qF 'parse to: {#162, #221, #265}' "$TMP/posted-36"
+
+# The empty parse says so, and the flag that catches the UNREADABLE
+# declaration is untouched beside it: one comment states what was read, the
+# other states that nothing was.
+printf '[]\n' >"$(cfix 37)"
+issue_probe 37 blocked 1 false "" 'No declaration anywhere in this body.' >/dev/null
+check "an empty parse is echoed as the empty set" 0 "" \
+  grep -qF 'parse to: {}' "$TMP/posted-37"
+check "...and blocked-unparseable still fires beside it" 0 "" \
+  grep -qF '<!-- issueflow:blocked-unparseable -->' "$TMP/posted-37"
 
 # -- an already-applied stale heals off, and no edit names the flag ----------
 jq -n --arg l "$(iso_at $((INOW - 3600)))" \
