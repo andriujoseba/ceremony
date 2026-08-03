@@ -117,9 +117,11 @@ the machinery at all:
    `**unreleased**` immediately followed by its issue citation (for example,
    `(#238)`); whitespace between them may include a line break. A citation is
    mandatory, because a marker the guard cannot trace is a marker it cannot
-   prove false. A marker for this repository's own issue uses bare `#N`.
-   Cross-repo citations such as `(crew#293)` satisfy the traceability rule but
-   are not compared with this repository's release section. The ceremony-only
+   prove false. A token inside an inline-code span is a mention, not a marker;
+   spans are ignored individually, so unrelated inline code cannot hide one.
+   A marker for this repository's own issue uses bare `#N`. Cross-repo
+   citations such as `(crew#293)` satisfy the traceability rule but are not
+   compared with this repository's release section. The ceremony-only
    `marker-check.sh` guard enforces these rules. The release PR that ships the machinery clears, in that same PR,
    every marker its own assembled section makes false: the section cites its
    issues, each marker cites the same issue, and the release PR's diff is the

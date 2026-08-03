@@ -7,6 +7,8 @@
 # own issue uses bare #N, never a self-qualified repository citation (#238 D8).
 # CHANGELOG.md is the release oracle and immutable shipped prose, so it and the
 # fragments that feed it are excluded from the documentation scan (#238 D5).
+# A token inside inline code is a mention, not a marker; spans are stripped
+# individually so unrelated backticks cannot hide a real marker (#238 D9).
 #
 # Usage: marker-check.sh [tree-dir]   (default: the repository root)
 set -euo pipefail

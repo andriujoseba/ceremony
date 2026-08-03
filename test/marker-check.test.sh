@@ -40,6 +40,26 @@ printf 'The new guard remains **unreleased** for now.\n' \
 check "an uncited marker fails on a dev tree with file and line" 1 \
   "docs/CONSUMERS.md:1" run_check uncited
 
+fixture inline-mention 0.6.0-dev
+cat >"$TMP/inline-mention/docs/CONSUMERS.md" <<'EOF'
+The marker token is `**unreleased**`.
+EOF
+check "an inline-code token is a mention and needs no citation" 0 \
+  "agree with the tree" run_check inline-mention
+
+fixture inline-bare 0.6.0-dev
+printf 'The marker token is **unreleased**.\n' \
+  >"$TMP/inline-bare/docs/CONSUMERS.md"
+check "removing the backticks exposes the uncited marker" 1 \
+  "docs/CONSUMERS.md:1" run_check inline-bare
+
+fixture inline-neighbor 0.6.0-dev
+cat >"$TMP/inline-neighbor/docs/CONSUMERS.md" <<'EOF'
+The `new guard` remains **unreleased** until its tag.
+EOF
+check "unrelated inline code cannot hide an uncited marker on the same line" 1 \
+  "docs/CONSUMERS.md:1" run_check inline-neighbor
+
 fixture shipped 0.6.0
 printf 'The new guard remains **unreleased** (#224).\n' \
   >"$TMP/shipped/docs/CONSUMERS.md"
