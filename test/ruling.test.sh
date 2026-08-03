@@ -109,6 +109,71 @@ check "labels only mid-sentence are malformed — line-anchoring is the rule" 0 
 check "an empty body is missing everything" 0 "MALFORMED Options: Recommend: Blocked: Default:" \
   ruling_shape_decision </dev/null
 
+# -- escalation selection: best-shaped wins, earliest breaks ties (#226) ----
+# The crew#293 incident: a whole-round reply and the escalation land seconds
+# apart inside one window, the reply earlier. Earliest-wins graded the reply.
+# b64 here mirrors jq's @base64 — unwrapped, or the TSV rows would split.
+
+b64enc() { printf '%s' "$1" | base64 | tr -d '\n'; }
+ROUND_REPLY=$'🔧 addressing round on head 86c35f14 — every point answered below'
+PARTIAL=$'Options:  A — x   B — y\nBlocked:  z'
+
+replay="$(printf 'setter %s https://x/reply %s\nsetter %s https://x/escalation %s\n' \
+  "$((L - 40))" "$(b64enc "$ROUND_REPLY")" "$((L - 7))" "$(b64enc "$TPL")")"
+check "crew#293 replay: the complete escalation is selected over the earlier round reply" 0 \
+  "https://x/escalation $(b64enc "$TPL")" ruling_escalation_row setter "$L" <<<"$replay"
+sel="$(ruling_escalation_row setter "$L" <<<"$replay")"
+check "crew#293 replay: the selected body grades SHAPED" 0 "SHAPED" \
+  ruling_shape_decision <<<"$(base64 -d <<<"${sel#* }")"
+check "the nudge's link follows the same selection" 0 "https://x/escalation" \
+  ruling_escalation_url setter "$L" <<<"$replay"
+check "the rung wording reads Default: from the selected body" 0 "DEADLINE 2026-07-23T21:00Z" \
+  ruling_default_decision <<<"$(base64 -d <<<"${sel#* }")"
+
+check "escalation-then-follow-up still selects the escalation" 0 \
+  "https://x/escalation $(b64enc "$TPL")" ruling_escalation_row setter "$L" <<<"$(
+    printf 'setter %s https://x/escalation %s\nsetter %s https://x/followup %s\n' \
+      "$((L - 300))" "$(b64enc "$TPL")" "$((L - 60))" "$(b64enc 'thanks — clarified above')")"
+
+check "a complete escalation beats an earlier partial" 0 \
+  "https://x/complete $(b64enc "$TPL")" ruling_escalation_row setter "$L" <<<"$(
+    printf 'setter %s https://x/partial %s\nsetter %s https://x/complete %s\n' \
+      "$((L - 300))" "$(b64enc "$PARTIAL")" "$((L - 60))" "$(b64enc "$TPL")")"
+check "a complete escalation beats a later partial" 0 \
+  "https://x/complete $(b64enc "$TPL")" ruling_escalation_row setter "$L" <<<"$(
+    printf 'setter %s https://x/complete %s\nsetter %s https://x/partial %s\n' \
+      "$((L - 300))" "$(b64enc "$TPL")" "$((L - 60))" "$(b64enc "$PARTIAL")")"
+
+check "equal full scores break to the earliest" 0 \
+  "https://x/one $(b64enc "$TPL")" ruling_escalation_row setter "$L" <<<"$(
+    printf 'setter %s https://x/one %s\nsetter %s https://x/two %s\n' \
+      "$((L - 300))" "$(b64enc "$TPL")" "$((L - 60))" "$(b64enc "$TPL_BOLD")")"
+check "all-zero scores still break to the earliest" 0 "https://x/first" \
+  ruling_escalation_url setter "$L" <<<"$(
+    printf 'setter %s https://x/first\nsetter %s https://x/second\n' \
+      "$((L - 300))" "$((L - 60))")"
+
+check "an out-of-window all-four row is never selected" 0 \
+  "https://x/in $(b64enc "$PARTIAL")" ruling_escalation_row setter "$L" <<<"$(
+    printf 'setter %s https://x/out %s\nsetter %s https://x/in %s\n' \
+      "$((L - 5000))" "$(b64enc "$TPL")" "$((L - 60))" "$(b64enc "$PARTIAL")")"
+check "an out-of-window all-four row cannot turn an empty result non-empty" 0 "" \
+  ruling_escalation_row setter "$L" <<<"setter $((L - 5000)) https://x/out $(b64enc "$TPL")"
+check "another actor's all-four row is never selected" 0 "" \
+  ruling_escalation_row setter "$L" <<<"bystander $((L - 60)) https://x/other $(b64enc "$TPL")"
+
+check "a garbage body column scores 0 and never errors" 0 \
+  "https://x/good $(b64enc "$PARTIAL")" ruling_escalation_row setter "$L" <<<"$(
+    printf 'setter %s https://x/garbage !!!not-base64!!!\nsetter %s https://x/good %s\n' \
+      "$((L - 300))" "$((L - 60))" "$(b64enc "$PARTIAL")")"
+check "a garbage-only candidate is still a legal selection" 0 \
+  "https://x/garbage !!!not-base64!!!" \
+  ruling_escalation_row setter "$L" <<<"setter $((L - 300)) https://x/garbage !!!not-base64!!!"
+
+# shellcheck disable=SC2016 # the literal $field is the assertion — one spelling, unexpanded
+check "the field matcher has exactly one spelling in lib/ruling.sh" 0 "1" \
+  grep -cF '(\*\*)?$field' "$ROOT/lib/ruling.sh"
+
 # ---------------------------------------------------------------------------
 # The orchestrator, against a recording gh stub. The stub serves fixture JSON
 # per endpoint (missing file = unreadable read), applies the caller's --jq
