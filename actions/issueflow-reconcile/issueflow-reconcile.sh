@@ -157,9 +157,19 @@ post_merge_decision() { # $1 merged Refs PR, $2 linked open PR, $3 already handl
   fi
 }
 
-post_merge_pr_for_issue() { # $1 issue; records are ISSUE<TAB>PR
-  awk -F '\t' -v issue="$1" '$1 == issue { print $2 }' \
-    <<<"${MERGED_REF_PR_RECORDS:-}" | sort -n | tail -n1
+post_merge_pr_for_issue() { # $1 issue; records are ISSUE<TAB>PR<TAB>MERGED_AT
+  # The deliverable is the PR that merged last, not the one numbered highest.
+  # Merge order is not number order in this family: crew#176's two Refs PRs
+  # merged #184 at 19:05:16Z and #182 at 19:05:18Z — the higher number two
+  # seconds earlier. Number order is also what spends a marker on the wrong
+  # PR: crew#321 carries `post-merge-transition-pr-326` while its real
+  # deliverable crew#322 — a lower number, merging later — is still open, so
+  # under the old rule the transition it owes could never fire (#242).
+  # mergedAt is ISO-8601 UTC, so it sorts as a string; ties break by highest
+  # PR number so the answer never depends on input order.
+  awk -F '\t' -v issue="$1" '$1 == issue { print $3 "\t" $2 }' \
+    <<<"${MERGED_REF_PR_RECORDS:-}" \
+    | sort -t $'\t' -k1,1 -k2,2n | tail -n1 | cut -f2
 }
 
 post_merge_transition_marker() { # $1 merged PR number
@@ -507,16 +517,24 @@ main() {
     query($owner: String!, $name: String!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequests(first: 100, states: MERGED, after: $endCursor) {
-          nodes { number body }
+          nodes { number mergedAt body }
           pageInfo { hasNextPage endCursor }
         }
       }
     }' --jq '.data.repository.pullRequests.nodes[]
-      | .number as $pr | .body | split("\n")[]
-      | [$pr, .] | @tsv' \
-    | while IFS=$'\t' read -r pr body; do
+      | .number as $pr | .mergedAt as $merged | .body | split("\n")[]
+      | [$pr, $merged, .] | @tsv' \
+    | while IFS= read -r record; do
+        # Split on exact tabs rather than IFS: tab is IFS whitespace, so bash
+        # collapses a run of them, and a middle column that ever came back
+        # empty would silently shift the body one field left. The body is
+        # arbitrary text and stays last, where the remainder belongs.
+        pr="${record%%$'\t'*}"
+        rest="${record#*$'\t'}"
+        merged="${rest%%$'\t'*}"
+        body="${rest#*$'\t'}"
         while IFS= read -r issue; do
-          [ -n "$issue" ] && printf '%s\t%s\n' "$issue" "$pr"
+          [ -n "$issue" ] && printf '%s\t%s\t%s\n' "$issue" "$pr" "$merged"
         done < <(refs_references <<<"$body")
       done)"
 
