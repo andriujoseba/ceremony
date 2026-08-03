@@ -64,6 +64,10 @@ check "#214 incident replays red" 1 "#212" guard incidents-214 212
 body incidents-200 'Refs #199' 'A later edit added `Closes #199`.'
 check "#200 incident replays red" 1 "#199" guard incidents-200 199
 
+body multiple 'Refs #5 and Refs #7.' 'Triage closes #5 and fixes #7 by hand.'
+check "failure names every intersecting issue" 1 \
+  "scheduled to close: #5 #7" guard multiple 5 7
+
 for number in 207 191 190 176 165 164; do
   body "incident-$number" "Refs #$number"
   check "#$number incident replays green" 0 "no Refs target" \

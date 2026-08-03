@@ -44,9 +44,11 @@ runs:
           .data.repository.pullRequest
           | if . == null then error("pull request was not returned") else .body // "" end
         ' <<<"$facts" >"$body_file"
-        jq -er '
+        jq -r '
           .data.repository.pullRequest.closingIssuesReferences
-          | if .pageInfo.hasNextPage then
+          | if . == null then
+              error("closing issue references were not returned")
+            elif .pageInfo.hasNextPage then
               error("more than 100 closing issue references; refusing a partial verdict")
             else
               .nodes[].number

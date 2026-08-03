@@ -124,14 +124,41 @@ the machinery at all:
    consumer. In particular, `0.1.0` carries `changelog-armed`,
    `changelog-monotonic` and `drill-recorded` plus `docs-sync`, but not
    `changelog-assembled` or `runner-isolated`.
-6. **Labels automation** (optional but recommended): the two callers from
+6. **`.github/workflows/refs-guard.yml`** — the body-aware guard is its own
+   caller because `edited` is load-bearing: #200 gained its accidental
+   closing keyword after the PR opened, with no push to wake ordinary CI.
+   It costs the consumer one read-only workflow file and no other machinery:
+
+   ```yaml
+   name: Refs guard
+
+   on:
+     pull_request:
+       types: [opened, edited, reopened, synchronize]
+
+   permissions:
+     contents: read
+     pull-requests: read
+
+   jobs:
+     refs-not-closing:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+         - uses: heavy-duty/ceremony/actions/refs-not-closing@<pinned-tag>
+   ```
+
+   `refs-not-closing` is **unreleased** until the first tag carrying #218.
+   Adopt this caller with that ordinary pin bump; never point only this file
+   at a moving or newer ref.
+7. **Labels automation** (optional but recommended): the two callers from
    [Labels automation](#labels-automation) — the event-facing labels
    caller and the sweep caller (#209) — plus `.github/labels.conf`
    (panel + the repo's `scope:*` rows) and `.github/labeler.yml` (the
    path→scope globs). Run the sweep caller's `workflow_dispatch` once —
    **this bootstraps the taxonomy, `release` label included** — and use it
    again whenever an operator needs a full-board sweep immediately.
-7. **The artifact hook** (optional): `.github/actions/release-artifact/`
+8. **The artifact hook** (optional): `.github/actions/release-artifact/`
    per [The artifact hook](#the-artifact-hook). No hook → the source
    tarball is the package.
 
@@ -156,6 +183,8 @@ precisely so the machinery is safe to work on
       sibling `push:` silently kills a door (rig's review catch).
 - [ ] Swap the guard *script* steps in `ci.yml` for the `uses:` steps in
       the bootstrap list above (with `fetch-depth: 0` on the checkout).
+- [ ] Add `refs-guard.yml` from the bootstrap list with the same ceremony
+      pin as the release caller and CI guard steps.
 - [ ] Replace `labels.yml` with the caller from
       [Labels automation](#labels-automation) and add the sweep caller
       `labels-sweep.yml` beside it (#209); extract

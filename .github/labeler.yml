@@ -32,9 +32,12 @@ scope:guards:
           - actions/changelog-armed/**
           - actions/changelog-monotonic/**
           - actions/drill-recorded/**
+          - actions/refs-not-closing/**
+          - .github/workflows/refs-guard.yml
           - test/changelog-armed.test.sh
           - test/changelog-monotonic.test.sh
           - test/drill-recorded.test.sh
+          - test/refs-not-closing.test.sh
 scope:labels:
   - changed-files:
       - any-glob-to-any-file:

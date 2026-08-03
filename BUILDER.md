@@ -182,6 +182,13 @@ triage bug, and the move is to say so on the issue, not to guess.
   absent that instruction `Closes #N` remains the default. The exception was
   bought the hard way: #143 carried `Closes #137` as doctrine then required,
   and the merge closed #137 with its post-merge criterion unmet (#151).
+  On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
+  `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
+  immediately before `#N` anywhere in the body — including the sentence
+  explaining why the PR does not close it. GitHub reads the whole body by
+  adjacency, not intent. Put the number first (`#N is closed by hand`) or
+  omit it (`triage closes the issue by hand`). A code span does not protect
+  the phrase: a backticked `Closes #199` still closed #199 (#200, #218).
   Drafts are invisible to the reviewer panel on
   purpose — the draft phase is yours.
 - **The issue's acceptance criteria are your definition of done.** Reproduce
