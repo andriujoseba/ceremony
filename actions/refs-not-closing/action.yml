@@ -1,0 +1,16 @@
+name: Refs not closing
+description: >-
+  Refuse a pull request whose `Refs #N` promise contradicts GitHub's
+  closing-issue graph (#218). GitHub recognizes closing keywords anywhere
+  in a PR body, including ordinary prose and code spans; the action reads
+  the graph once and lets a pure script decide whether any Refs target is
+  already scheduled to close.
+runs:
+  using: composite
+  steps:
+    - name: refs targets are not closing
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: bash "$GITHUB_ACTION_PATH/run.sh"

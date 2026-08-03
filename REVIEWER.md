@@ -34,7 +34,12 @@ In order of authority:
    not a defect: the issue directs it, triage owns that close, and a
    request-changes on the "missing" keyword enforces the bug the shape
    exists to fix — `Closes #137` closed its issue with a post-merge
-   criterion unmet (#151). Check every
+   criterion unmet (#151). For a `Refs #N` body, also verify that no closing
+   keyword immediately precedes `#N` anywhere in the body, even in prose
+   explaining the hand close or inside a code span: GitHub used those exact
+   shapes to close #209, #212 and #199 (#200, #218). The safe forms put the
+   number first (`#N is closed by hand`) or omit it (`triage closes the issue
+   by hand`). Check every
    criterion; a PR that ships less than the issue says is a request-changes
    even if the code is beautiful.
 2. **The repo's load-bearing constraints** — the rules bought with
