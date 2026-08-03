@@ -9,6 +9,44 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.5.0 — 2026-08-03
+
+### Added
+
+- `labels.conf` accepts optional `panel[<login>]=` rows: the required set for
+  a PR authored by that login is the row minus the author; other authors keep
+  `panel=`. Consumers gain the row at their next pin bump — adding it before
+  that bump is a parse failure that takes the label board down (#224).
+
+### Changed
+
+- Doctrine: third-party actions never hold a write-capable token by default —
+  repo-owned scripts in write-capable jobs, established publisher plus
+  full-SHA pin for the exception, SHA pins everywhere. Canonical in
+  REVIEWER.md, short form in BUILDER.md; consumers adopt at the pin bump
+  (#216).
+
+### Fixed
+
+- `ruling_escalation_row` selects the setter's best-shaped in-window comment,
+  ties broken to the earliest, instead of the earliest outright — a whole-round
+  reply landing seconds before the escalation is no longer graded in its place
+  (crew#293).
+- The escalation selector and `ruling_shape_decision` share one field-presence
+  matcher, and an undecodable body column scores 0 instead of erroring the
+  sweep.
+- Five stale **unreleased** markers in `docs/CONSUMERS.md` now name their
+  tags: fragment mode, `changelog-assembled` and `runner-isolated` at
+  `0.2.0`; the additive labeler at `0.3.0`; the two-caller split at `0.4.1`
+  (#221).
+- The marker convention now names its clearing owner: the release PR that
+  ships machinery clears, in that same PR, every marker its assembled
+  section makes false (#221).
+- A standing non-approving verdict now outranks draft in `decide_state`: a
+  re-drafted PR mid-round reads `state:addressing`, a live panel request on a
+  draft surfaces as `state:bots-reviewing`, and a draft with no round history
+  still reads `state:building` (#205).
+
 ## 0.4.1 — 2026-08-01
 
 ### Changed
