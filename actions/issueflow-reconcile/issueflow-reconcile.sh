@@ -625,6 +625,11 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     # declaration; this catches the readable-but-wrong one, which no flag can
     # detect because the machine cannot judge what a human meant — only state
     # what it read, and let the human see the divergence in one sweep.
+    #
+    # The illustrative `#9` in the body below is code-spanned for the same
+    # reason `blocked-unparseable` code-spans its `Blocked by #N`: an
+    # unbackticked `#N` in a comment this sweep posts on a cron linkifies, and
+    # writes a "mentioned in" event onto an unrelated issue once per echo.
     parsed_set="$(blocked_parse_set "$refs" "$cross_refs")"
     parse_marker="$(blocked_parse_marker "$parsed_set")"
     if blocked_parse_echo_needed "$n" "$parse_marker"; then
@@ -633,8 +638,8 @@ This issue's \`Blocked by\` declarations parse to: $parsed_set
 
 That is the exact set this sweep gates on — what the machine read, never a
 judgment about whether it is what you meant. The parse unions every clause it
-finds, so a sentence like \"no longer blocked by #9\" contributes #9 like any
-other; over-retaining is the deliberate direction of error, because a stale
+finds, so a sentence like \`no longer blocked by #9\` contributes \`#9\` like
+any other; over-retaining is the deliberate direction of error, because a stale
 \`blocked\` is a triage comment away and a false \`ready\` sends a builder into
 work that cannot merge. If this set names something you did not declare, or
 omits something you did, edit the declaration — the next sweep echoes the
