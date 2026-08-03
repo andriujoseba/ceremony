@@ -606,12 +606,49 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     fi
   elif has_issue_label post-merge; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
+    # The evidence nudge's clock is read BEFORE any comment this branch
+    # posts. `ensure_comment` below is itself activity, so reading after it
+    # would let the assigned-flag comment silence the nudge for another 7
+    # days — the same self-silencing the ruling nudge avoids by reading its
+    # facts once, at the top of the pass.
+    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+    guarded_read age last_issue_activity "$n" "$created" \
+      || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
     if [ "$assignees" -gt 0 ] || has_issue_label attention; then
       ensure_comment "$n" post-merge-assigned \
         'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
       log "#$n: assigned or attention-bearing post-merge issue flagged"
     fi
     attention_suppression=post-merge-assigned
+    # ---- the post-merge evidence nudge (#254), the ruling nudge's twin ----
+    # A `post-merge` item waits on named evidence with a named owner, and
+    # nothing nudged when the wait went quiet: crew#181's real-host criterion
+    # starved four separate times across two releases, crew#240/#264 sat
+    # until an operator happened to run the right read. Same 7-day rule, same
+    # constant, same no-marker property — `ruling_nudge_decision` is the one
+    # spelling of all three (lib/ruling.sh), and a second `7 * 24 * 3600`
+    # here is the drift that file exists to prevent.
+    #
+    # The addressee is the triage actor, not `HUMAN_REVIEWER`: `post-merge`
+    # is triage's completion queue by contract (TRIAGE.md), so a starving
+    # wake condition is triage's to answer, and routing it to the operator
+    # asks the wrong party for a move it does not owe. `triage-actors=` is
+    # mandatory config — `load_issueflow_config` refuses to run without it —
+    # so there is nothing to fall back to, and a silent fallback is exactly
+    # how the wrong addressee comes back.
+    if [ "$(ruling_nudge_decision "$NOW" "$age")" = NUDGE ]; then
+      local quiet_days=$(((NOW - age) / 86400))
+      run gh issue comment "$n" -R "$REPO" --body "@${TRIAGE_ACTORS[0]} — this \`post-merge\` item has had no activity for ${quiet_days} days: https://github.com/$REPO/issues/$n
+
+Its wake evidence is still owed. \`post-merge\` means the merge landed and
+triage owns completion — judge the remaining criteria against the evidence
+and close the issue, or say what is still outstanding and who owes it. The
+sweep names no criterion: which one starved is prose, and the machine never
+judges prose (the link is the payload).
+
+*This nudge is comment-only and carries no idempotency marker on purpose: the comment itself is activity, so posting it resets the 7-day window and the rule self-rate-limits to one nudge per 7 quiet days. Do not add a marker.*" >/dev/null
+      log "#$n: post-merge evidence nudge (${quiet_days}d quiet — triage owes the wake evidence)"
+    fi
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
     cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
