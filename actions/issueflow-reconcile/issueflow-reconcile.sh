@@ -524,7 +524,15 @@ main() {
     }' --jq '.data.repository.pullRequests.nodes[]
       | .number as $pr | .mergedAt as $merged | .body | split("\n")[]
       | [$pr, $merged, .] | @tsv' \
-    | while IFS=$'\t' read -r pr merged body; do
+    | while IFS= read -r record; do
+        # Split on exact tabs rather than IFS: tab is IFS whitespace, so bash
+        # collapses a run of them, and a middle column that ever came back
+        # empty would silently shift the body one field left. The body is
+        # arbitrary text and stays last, where the remainder belongs.
+        pr="${record%%$'\t'*}"
+        rest="${record#*$'\t'}"
+        merged="${rest%%$'\t'*}"
+        body="${rest#*$'\t'}"
         while IFS= read -r issue; do
           [ -n "$issue" ] && printf '%s\t%s\t%s\n' "$issue" "$pr" "$merged"
         done < <(refs_references <<<"$body")

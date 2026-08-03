@@ -106,6 +106,43 @@ check "a handled merged Refs episode does not transition again" 0 "KEEP" \
   post_merge_decision 12 false true <<<"- [ ] verify after merge"
 check "merged Refs with all criteria checked does not transition" 0 "KEEP" \
   post_merge_decision 12 false false </dev/null
+
+# The deliverable is the PR that merged last, not the one numbered highest
+# (#242). The first row is crew#176's measured shape — #184 merged
+# 19:05:16Z, #182 merged 19:05:18Z — so it fails against the old sort -n.
+MERGED_REF_PR_RECORDS=$'176\t184\t2026-07-30T19:05:16Z\n176\t182\t2026-07-30T19:05:18Z'
+check "the later merge wins over the higher PR number" 0 "182" \
+  post_merge_pr_for_issue 176
+MERGED_REF_PR_RECORDS=$'12\t100\t2026-07-30T10:00:00Z\n12\t101\t2026-07-30T11:00:00Z'
+check "number order agreeing with merge order still answers the later merge" 0 "101" \
+  post_merge_pr_for_issue 12
+MERGED_REF_PR_RECORDS=$'176\t184\t2026-07-30T19:05:16Z\n321\t326\t2026-08-03T14:44:46Z\n176\t182\t2026-07-30T19:05:18Z\n321\t322\t2026-08-03T16:00:00Z'
+check "interleaved issues each resolve to their own last merge" 0 "182" \
+  post_merge_pr_for_issue 176
+check "...and a neighbouring issue's later merge never leaks in" 0 "322" \
+  post_merge_pr_for_issue 321
+# Two PRs can share a mergedAt second, so the tie-break is specified rather
+# than left to whichever record the sweep happened to emit first.
+MERGED_REF_PR_RECORDS=$'55\t70\t2026-07-30T19:05:16Z\n55\t71\t2026-07-30T19:05:16Z'
+check "an identical mergedAt breaks to the highest PR number" 0 "71" \
+  post_merge_pr_for_issue 55
+MERGED_REF_PR_RECORDS=$'55\t71\t2026-07-30T19:05:16Z\n55\t70\t2026-07-30T19:05:16Z'
+check "...and swapping the two input lines gives the same answer" 0 "71" \
+  post_merge_pr_for_issue 55
+MERGED_REF_PR_RECORDS=$'176\t184\t2026-07-30T19:05:16Z'
+check "an issue with no merged Refs PR still answers empty" 0 "" \
+  test -z "$(post_merge_pr_for_issue 999)"
+check "...so its post-merge decision is KEEP" 0 "KEEP" \
+  post_merge_decision "$(post_merge_pr_for_issue 999)" false false \
+  <<<"- [ ] verify after merge"
+MERGED_REF_PR_RECORDS=""
+# mergedAt must stay a field on the merged-PR node set already fetched: the
+# record shape gets richer, the request count does not (#242).
+check "the sweep still issues exactly two GraphQL queries" 0 "2" \
+  grep -c 'gh api graphql' "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+check "...with mergedAt selected on the merged-PR node it already fetched" 0 "" \
+  grep -qF 'nodes { number mergedAt body }' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 check "one closed offsite PR nudges" 0 "NUDGE" offsite_resolved_decision <<<"CLOSED"
 check "two closed offsite PRs nudge" 0 "NUDGE" offsite_resolved_decision <<< $'CLOSED\nCLOSED'
 check "one open offsite PR keeps quiet" 0 "QUIET" offsite_resolved_decision <<< $'CLOSED\nOPEN'
@@ -279,10 +316,10 @@ issue_stub_gh() {
   fi
 }
 
-issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged PR, $6 body
+issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged PR specs, $6 body
   (
-    local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_pr="${5:-}"
-    local body="${6:-}" assignee_json='[]'
+    local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_prs="${5:-}"
+    local body="${6:-}" assignee_json='[]' spec pr merged_at
     [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
     REPO=owner/repo NOW="$INOW"
     ISSUE_LABELS="$2"
@@ -290,11 +327,18 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 open PR, $5 merged PR, $
       --argjson assignees "$assignee_json" --arg body "$body" \
       '{created_at: $at, assignees: $assignees, body: $body}')"
     if [ "$open_pr" = true ]; then OPEN_PR_ISSUES="$1"; else OPEN_PR_ISSUES=""; fi
-    if [ -n "$merged_ref_pr" ]; then
-      MERGED_REF_PR_RECORDS="$(printf '%s\t%s\n' "$1" "$merged_ref_pr")"
-    else
-      MERGED_REF_PR_RECORDS=""
-    fi
+    # Records are ISSUE<TAB>PR<TAB>MERGED_AT (#242). A spec is `PR` or
+    # `PR@<iso>`; the bare form takes a fixed hour-old merge, which is every
+    # probe that does not care about merge order. An empty list is no record
+    # at all, so the no-merged-PR probes read exactly as they did.
+    MERGED_REF_PR_RECORDS="$(
+      # shellcheck disable=SC2086 # the spec list is deliberately word-split
+      for spec in $merged_ref_prs; do
+        pr="${spec%%@*}"
+        merged_at="${spec#*@}"
+        [ "$merged_at" != "$spec" ] || merged_at="$(iso_at $((INOW - 3600)))"
+        printf '%s\t%s\t%s\n' "$1" "$pr" "$merged_at"
+      done)"
     run() { "$@"; }
     gh() { issue_stub_gh "$@"; }
     reconcile_issue "$1" 2>&1
@@ -431,6 +475,25 @@ check "a later merged Refs PR gets an episode-specific transition comment" 0 "" 
   grep -qF '<!-- issueflow:post-merge-transition-pr-441 -->' "$TMP/posted-44"
 check "...and the later episode still transitions" 0 "" \
   grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$second_transition"
+
+# End to end on the crew#321 shape: the later merge is the *lower*-numbered
+# PR, and its marker is already on the issue. Selecting by number would find
+# no marker for #461, fire the transition a second time, and release a claim
+# the board already released (#242).
+recent_timeline 46
+jq -n --arg b '<!-- issueflow:post-merge-transition-pr-460 -->' \
+  --arg at "$(iso_at $((INOW - 60)))" \
+  '[{"body":$b,"created_at":$at}]' >"$(cfix 46)"
+spent_edit_count="$(wc -l <"$TMP/issue-edits")"
+spent="$(issue_probe 46 claimed 1 false \
+  "461@$(iso_at $((INOW - 7200))) 460@$(iso_at $((INOW - 3600)))" \
+  '- [ ] verify after merge')"
+check "the marker of the later-merged lower-numbered PR is the one read" 0 "" \
+  test -z "$spent"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...so the spent transition is not fired a second time" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
+  "$spent_edit_count" "$TMP/issue-edits" "$TMP/posted-46"
 
 printf '[]\n' >"$(cfix 45)"
 issue_probe 45 $'claimed\npost-merge' >/dev/null
@@ -632,7 +695,7 @@ check "...and the sweep still runs" 0 "" \
 # Keep this at main() granularity: the GraphQL gather and loop are the code
 # a sourced decision probe cannot exercise (#91's lesson).
 printf '%s\n' \
-  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"mergedAt":"2026-07-30T19:05:16Z","body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
   >"$ARRIVAL/fixtures/graphql.json"
 printf '[{"number":40}]\n' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
