@@ -316,7 +316,14 @@ issue_stub_gh() {
     # way), and is why this class was never caught. Both now speak on stderr,
     # because the real gh always does and the reason line renders it.
     if [ -f "$file.http-error" ]; then
-      cat "$file.http-error"
+      # A --jq call gets the filter applied to the error body, as gh does.
+      # That is what "yields no timestamps" looks like — the shape that let
+      # last_issue_activity fall back to created_at and reclaim a live claim.
+      if [ -n "$jqexpr" ]; then
+        jq -r "$jqexpr" "$file.http-error" 2>/dev/null || true
+      else
+        cat "$file.http-error"
+      fi
       printf '%s\n' "$GH_STUB_STDERR" >&2
       return 1
     fi
@@ -593,6 +600,16 @@ unreadable="$(issue_probe 32 $'claimed\noffsite')"
 check "an unreadable timeline stays silent" 1 "" test -f "$TMP/posted-32"
 check "...and leaves the sweep running without an alarming log" 1 "" \
   grep -qiE 'error|failed' <<<"$unreadable"
+# Both checks above still hold, and #247 D1 changed what reaches them:
+# last_issue_activity reads the same timeline endpoint, so the issue is now
+# skipped before the offsite verification runs. The skip is why nothing is
+# posted, and its reason line is a deliberate report rather than an alarm
+# (D4). D8 leaves offsite_timeline's own silence alone, so it is pinned here
+# directly rather than through a probe that can no longer reach it.
+offsite_timeline_probe() { ( REPO=owner/repo; gh() { issue_stub_gh "$@"; }; offsite_timeline "$1" ); }
+check "an unreadable offsite timeline yields nothing and still fails closed" 1 "" \
+  offsite_timeline_probe 32
+check "...while a readable one answers its payload" 0 "[]" offsite_timeline_probe 31
 
 : >"$TMP/api-calls"
 printf '[]\n' >"$(tfix 33)"
@@ -799,7 +816,11 @@ if [ "$1" = api ]; then
   # error object — goes to STDOUT, the reason to stderr, and the status is
   # non-zero. `.error` is the payload-free failure, which is the safe path.
   if [ -f "$file.http-error" ]; then
-    cat "$file.http-error"
+    if [ -n "$jqexpr" ]; then
+      jq -r "$jqexpr" "$file.http-error" 2>/dev/null || true
+    else
+      cat "$file.http-error"
+    fi
     printf '%s\n' "${GH_STUB_STDERR:-}" >&2
     exit 1
   fi
