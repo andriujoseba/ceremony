@@ -11,8 +11,10 @@ repo-local description differs from this file, this file governs.
 Represent each planned release with one version epic. The epic is the working
 surface for that release: it states the goal, names the members, and records
 the ordered waves as checklists. Keep the machine-readable progress checklist
-under the exact heading `## Task list`; the issue-flow sweep reads that heading
-when it decides whether to nudge triage about a completed epic.
+under a heading matching `## Task list`, case-insensitively; the issue-flow
+sweep reads task rows there until the next heading when it decides whether to
+nudge triage about a completed epic. Other member or wave headings are not
+completion inputs.
 
 Keep a short repo-local roadmap beside the epics. The roadmap shows the whole
 ladder and points to each working surface; it does not duplicate the live
@@ -23,12 +25,13 @@ maps the ladder whose `0.1.2` working surface moved from the crufty ledger
 
 ## Gates
 
-Each version epic declares the predecessor that opens it. Special ordering —
-a double gate or an out-of-chain gate — is written explicitly on that epic;
-there is no hidden global schedule. Shipping closes the current epic, and its
-close is the signal for triage to open the next release-init cycle by hand.
-Version epics carry `epic`, not a queue label: `ready` offers work to builders,
-and builders never pick epics.
+Each version epic declares `Blocked by <predecessor>`. Special ordering — a
+double gate or an out-of-chain gate — is written explicitly on that epic;
+there is no hidden global schedule. The epic carries `epic`, the repository's
+release label, and `blocked` while the gate stands. Shipping closes the current
+epic; the ordinary blocker-cleared sweep path then replaces `blocked` with
+`ready` on the next epic in the same pass. No special epic promotion exists or
+is required: the reconciler dispatches `blocked` before `epic`.
 
 The gate orders windows, not their contents. Members enter a release only by
 decision during release-init. The double gate on heavy-duty/crew#163 and the
@@ -37,7 +40,11 @@ are worked examples of exceptions declared where they apply.
 
 ## Release-init
 
-The preceding epic's close is the trigger. Triage then runs five steps:
+A `ready` version epic is the trigger, and today triage must notice it and run
+the cycle. [heavy-duty/ceremony#253](https://github.com/heavy-duty/ceremony/issues/253)
+tracks the not-yet-shipped sweep announcement of that duty; do not treat the
+announcement as present until the consumer's pin carries it. Triage runs five
+steps:
 
 1. Mint the epic's “to mint when this arc opens” list together with findings,
    deferred work, and discussion outcomes accumulated since the epic was
