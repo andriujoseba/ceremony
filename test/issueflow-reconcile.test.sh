@@ -250,11 +250,28 @@ check "an unchanged set reuses its marker" 0 "" test \
   "$(blocked_parse_marker '{#7, #12}')" = "$(blocked_parse_marker '{#7, #12}')"
 check "a changed set takes a different marker" 1 "" test \
   "$(blocked_parse_marker '{#7, #12}')" = "$(blocked_parse_marker '{#7, #12, #19}')"
-check "the empty set has a marker of its own" 0 "blockers-parsed-none" \
+check "the empty set has a marker of its own" 0 "blockers-parsed-none-44136fa355b3" \
   blocked_parse_marker "{}"
 check "the marker survives a cross-repo reference's punctuation" 0 \
-  "blockers-parsed-12-heavy-duty-box-9" \
+  "blockers-parsed-12-heavy-duty-box-9-c8e36fe3b793" \
   blocked_parse_marker "{#12, heavy-duty/box#9}"
+# The readable half of the marker is many-to-one and must not be the identity.
+# Every pair below is two declarations this reconciler genuinely accepts, that
+# slug identically; a slug-keyed marker made the second one find the first
+# one's marker and post nothing — silence in the one case the echo exists to
+# speak about. Distinguishing `/` alone would close the first pair and leave
+# the rest, so the digest of the whole rendered set is what decides.
+check "the slug alone cannot separate a qualified ref from a hyphenated one" 0 "" \
+  test "$(printf '%s' '{acme/widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')" \
+     = "$(printf '%s' '{acme-widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+for collides_with_acme_widgets in '{acme-widgets#9}' '{acme_widgets#9}' '{acme.widgets#9}'; do
+  check "...but the marker does, against $collides_with_acme_widgets" 1 "" test \
+    "$(blocked_parse_marker '{acme/widgets#9}')" \
+    = "$(blocked_parse_marker "$collides_with_acme_widgets")"
+done
+check "the qualifier's punctuation reaches the marker's identity" 1 "" test \
+  "$(blocked_parse_marker '{#12, heavy-duty/box#9}')" \
+  = "$(blocked_parse_marker '{#12, heavy-duty-box#9}')"
 # shellcheck disable=SC2016 # expansions belong to the generated fake gh
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -691,17 +708,17 @@ check "...and the sweep log carries the same set" 0 \
   printf '%s\n' "$first_echo"
 issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91." >/dev/null
 check "an unchanged parse draws nothing on the next sweep" 0 "1" \
-  grep -cF '<!-- issueflow:blockers-parsed-90-91 -->' "$TMP/posted-35"
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-35"
 changed_echo="$(issue_probe 35 blocked 1 false "" "Part of #1. Blocked by #90, #91, #92.")"
 check "a body edit that changes the set draws exactly one new echo" 0 "1" \
-  grep -cF '<!-- issueflow:blockers-parsed-90-91-92 -->' "$TMP/posted-35"
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91, #92}') -->" "$TMP/posted-35"
 check "...naming the new set" 0 "" \
   grep -qF 'parse to: {#90, #91, #92}' "$TMP/posted-35"
 check "...and saying so in the sweep log" 0 \
   "issueflow: #35: blocked declarations parse to {#90, #91, #92}" \
   printf '%s\n' "$changed_echo"
 check "...and leaving the first echo alone" 0 "1" \
-  grep -cF '<!-- issueflow:blockers-parsed-90-91 -->' "$TMP/posted-35"
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{#90, #91}') -->" "$TMP/posted-35"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
 check "no label write comes from the echo path" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$echo_edits_before" "$TMP/issue-edits"
@@ -727,6 +744,32 @@ check "an empty parse is echoed as the empty set" 0 "" \
   grep -qF 'parse to: {}' "$TMP/posted-37"
 check "...and blocked-unparseable still fires beside it" 0 "" \
   grep -qF '<!-- issueflow:blocked-unparseable -->' "$TMP/posted-37"
+
+# The collision the round found, replayed through the sweep: two declarations
+# whose parsed sets differ but whose slugs do not. Keyed on the slug, the
+# second edit found the first echo's marker and posted nothing — the machine
+# silently gating on `acme-widgets#9` while the thread said `acme/widgets#9`,
+# which is the readable-but-wrong shape this whole change exists to surface.
+# Asserted end-to-end, so it is the second echo landing that is observed.
+printf '[]\n' >"$(cfix 38)"
+issue_probe 38 blocked 1 false "" 'Blocked by acme/widgets#9.' >/dev/null
+check "a qualified cross-repo declaration is echoed" 0 "1" \
+  grep -cF 'parse to: {acme/widgets#9}' "$TMP/posted-38"
+collision_edits_before="$(wc -l <"$TMP/issue-edits")"
+issue_probe 38 blocked 1 false "" 'Blocked by acme-widgets#9.' >/dev/null
+check "a slug-colliding edit still draws its own echo" 0 "1" \
+  grep -cF 'parse to: {acme-widgets#9}' "$TMP/posted-38"
+check "...under a marker of its own" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{acme-widgets#9}') -->" "$TMP/posted-38"
+check "...leaving the colliding first echo alone" 0 "1" \
+  grep -cF "<!-- issueflow:$(blocked_parse_marker '{acme/widgets#9}') -->" "$TMP/posted-38"
+# The cross-repo flag is marker-constant across both parses, so it stays at one
+# while the echo moves: what spoke on the second sweep was the changed set.
+check "...and not re-flagging cross-repo, which did not change" 0 "1" \
+  grep -cF '<!-- issueflow:blocked-cross-repo -->' "$TMP/posted-38"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "no label write comes from the colliding-edit path either" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ "$collision_edits_before" "$TMP/issue-edits"
 
 # -- an already-applied stale heals off, and no edit names the flag ----------
 jq -n --arg l "$(iso_at $((INOW - 3600)))" \

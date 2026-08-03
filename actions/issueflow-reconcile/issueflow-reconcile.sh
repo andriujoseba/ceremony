@@ -336,9 +336,19 @@ blocked_parse_marker() { # $1 rendered set -> the echo's idempotency marker
   # and a changed one cannot find it, so the change is what speaks. One
   # consequence is deliberate: a declaration edited back to a set already
   # echoed stays quiet too, because the thread already carries that echo.
-  local slug
+  #
+  # The identity is the DIGEST, not the slug beside it. Slugging is many-to-one
+  # — `{acme/widgets#9}` and `{acme-widgets#9}` are both parses this reconciler
+  # accepts, and both slug to `acme-widgets-9` — so a slug-keyed marker lets a
+  # changed set find the old marker and say nothing, silence in precisely the
+  # case the echo exists to speak about. Distinguishing `/` would close that
+  # pair and leave the class: `-`, `_` and `.` are all legal in a qualifier and
+  # all collapse the same way. The slug stays in front so a human reading the
+  # raw comment can still see which set it belongs to; it decides nothing.
+  local slug digest
   slug="$(printf '%s' "$1" | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
-  printf 'blockers-parsed-%s\n' "${slug:-none}"
+  digest="$(printf '%s' "$1" | sha256sum | cut -c1-12)"
+  printf 'blockers-parsed-%s-%s\n' "${slug:-none}" "$digest"
 }
 
 blocked_decision() { # $1 local refs, $2 OPEN/CLOSED states, $3 cross-repo refs
