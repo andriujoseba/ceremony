@@ -328,8 +328,17 @@ issue_stub_gh() {
       return 1
     fi
     [ ! -f "$file.error" ] || { printf '%s\n' "$GH_STUB_STDERR" >&2; return 1; }
-    [ -f "$file" ] || { printf '[]\n'; return 0; }
-    if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$file"; else cat "$file"; fi
+    # An absent fixture answers an empty list, and a --jq call gets the filter
+    # applied to it — the arrival stub's shape, and gh's. Returning the raw
+    # `[]` to a --jq caller made every missing fixture answer a literal `[]`
+    # where the real API answers nothing, and `[]` outsorts an ISO-8601
+    # timestamp in the C locale but not in a UTF-8 one, so last_issue_activity
+    # dated an issue by a stub artifact on the runner and by its created_at
+    # here. The old code swallowed the resulting date failure; #247's guards
+    # turn it into a skip, which is what made the lie visible.
+    local payload='[]'
+    [ ! -f "$file" ] || payload="$(cat "$file")"
+    if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$payload"; else printf '%s\n' "$payload"; fi
   elif [ "$1" = issue ] && [ "$2" = comment ]; then
     local n="$3" body="" file
     shift 3
