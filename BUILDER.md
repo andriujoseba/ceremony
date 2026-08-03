@@ -252,14 +252,31 @@ CONTRIBUTING; the shared flow lives here and is not restated there.)
    explicitly and names the evidence (e.g. "the same job fails identically
    on `origin/main` at `<sha>`"). Silence about a red check is what is
    prohibited; an argued exception shifts the burden to the author.
-   *Green* is a ruled term (operator, 2026-07-27): a **cancelled or
-   stale** check is not a green head — the rollup is scoped to the current
-   head, so what survives there is same-head cancellation, not
-   supersession by a newer push — while a **skipped or neutral** one *is*
-   green: those are deliberate "passed / not applicable" conclusions, and
-   reddening them would red every conditional job the fleet skips on
-   purpose. The costs behind the line are asymmetric: a false green spends
-   a three-reviewer round; a false red spends one author session.
+   *Green* is a ruled term (operator, 2026-07-27), and it is read from
+   each check's **`conclusion`**, never its `status`: a check carrying a
+   terminal conclusion is green or not-green by that conclusion whatever
+   its `status` field still reports — the two can disagree, and on #259 a
+   finished job's `status` lagged its own `conclusion: success` at the
+   head. A check with no conclusion at all is neither class: a configured
+   run still in progress is not green, and waiting for it is compliance,
+   not a stall. A **cancelled or stale** check is not a green head —
+   *stale* means a check belonging to a superseded head, which the
+   head-scoped rollup does not show anyway, so what survives there is
+   same-head cancellation, never a same-head node whose `status` lags its
+   conclusion — while a **skipped or neutral** one *is* green: those are
+   deliberate "passed / not applicable" conclusions, and reddening them
+   would red every conditional job the fleet skips on purpose. And a head
+   with **no checks configured** is the third ruled case, not an argued
+   exception: nothing is configured, so there is nothing to wait for —
+   the precondition is satisfied and the request goes out straight away,
+   no evidence or explanation owed, because the argued-exception path
+   above exists for a check that ran and came up red. This rules
+   nothing-configured, never nothing-answered-yet: a pending run has an
+   owner, CI, and is waited on as above. The machine partitions the same
+   way — `blocker:unrequested` admits the ask on `SUCCESS` and on `NONE`
+   alike (#236) — so doctrine and gate state one rule and each points at
+   the other. The costs behind the line are asymmetric: a false green
+   spends a three-reviewer round; a false red spends one author session.
 2. **Wait for every verdict, then answer the round whole** — one reply
    covering every point and stating what changed and what was verified.
    That reply is the written round record: the engine mirrors it under the
@@ -330,8 +347,7 @@ way too: `blocker:unrequested` does not fire while a head's checks are pending
 or red, because the one blocker that demands an act has to know when the act
 is permitted (#236 — crew#318 carried it at ~12:44Z on 2026-08-03 while its
 head's run was still in progress, which is the label flagging a builder for
-obeying this section). A head with no checks configured has nothing to wait
-for and is requested straight away, the same reading that sweep gives it.
+obeying this section).
 
 ## The ruling ask
 
