@@ -297,6 +297,42 @@ CONTRIBUTING; the shared flow lives here and is not restated there.)
    is one kind of human-owned decision; use the ruling ask below
    ([#50 D11](https://github.com/heavy-duty/ceremony/issues/50)).
 
+**A fix round may ride a draft.** An engine may convert a PR back to draft
+when a round closes; crew#139 proposes exactly that, and is still an open
+proposal. What it names is the status quo without it: where an engine's own
+rules make a builder's mid-round pushes *saves* rather than proposals, every
+one of those saves fires CI while the PR sits ready — 41 of 106 commits
+across crew's last 25 PRs, by that issue's measurement — and converting back
+to draft is what would stop them. Ceremony implements no such conversion and
+this passage specifies none; it is written down because a builder or a
+reviewer who meets a mid-round draft has to find a state the doctrine
+describes. What it means is what a draft already meant while you were
+building, extended and not changed: the draft phase is yours and the panel
+cannot see it (Building, above). Whose ball it is does not change either —
+the round outranks the draft, so you still owe it whole, the fixes and the
+reply and the flip. The label axis says the same thing in the machine's
+voice rather than in this one, and [LABELS.md](LABELS.md)'s `state:building`
+row is where to read it (#205).
+
+**Ready-for-review is the act that ends the round, and it is the builder's
+alone.** No engine marks a PR ready. The flip asserts that the round was
+answered whole, and that assertion is the one judgement about a round its
+author cannot delegate to a machine: an engine may draft a PR, which is what
+crew#139 proposes engines do, but only the builder undrafts it.
+
+**Where a draft suppressed the checks, green is proven at the flip and the
+request still follows it.** Step 1's precondition is the whole rule and this
+adds no second one — it says only *when* the head answers: marking ready is
+what runs the checks the draft held back, so the order is flip, let the head
+answer, then request, and the argued exception stays the only way past a red
+one. Waiting there is compliance, not a stall, and the machine reads it that
+way too: `blocker:unrequested` does not fire while a head's checks are pending
+or red, because the one blocker that demands an act has to know when the act
+is permitted (#236 — crew#318 carried it at ~12:44Z on 2026-08-03 while its
+head's run was still in progress, which is the label flagging a builder for
+obeying this section). A head with no checks configured has nothing to wait
+for and is requested straight away, the same reading that sweep gives it.
+
 ## The ruling ask
 
 Set `needs-ruling` whenever a decision belongs to a human: org policy,

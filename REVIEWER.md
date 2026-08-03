@@ -141,6 +141,11 @@ saw Y" outranks one that says "this looks like it might".
 - The builder answers rounds whole and re-requests you; until re-requested,
   the ball is not yours (`state:addressing` is the builder working — pile-on
   reviews mid-address just churn the target).
+- A **draft carrying `state:addressing` is a fix round in progress**, not
+  abandonment: an engine may convert a PR back to draft at round close so the
+  builder's mid-round saves stop firing CI, and the flip back to ready is the
+  builder's own act announcing the round is answered
+  ([BUILDER.md](BUILDER.md#the-review-round)).
 - Convergence = every panel verdict approves the current head, no
   `blocker:*` standing. Then the builder hands off (`state:needs-human`) and
   the panel's job is done.
