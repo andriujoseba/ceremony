@@ -143,7 +143,7 @@ one_graphql_read() {
 check "action performs exactly one GraphQL read" 0 "1" \
   one_graphql_read
 check "composite delegates to the tested entrypoint" 0 "run.sh" \
-  grep -F 'run: bash "$GITHUB_ACTION_PATH/run.sh"' "$ACTION"
+  grep -F "run: bash \"\$GITHUB_ACTION_PATH/run.sh\"" "$ACTION"
 
 check "workflow wakes on body edits" 0 "types: [opened, edited, reopened, synchronize]" \
   grep -F "types: [opened, edited, reopened, synchronize]" "$WORKFLOW"

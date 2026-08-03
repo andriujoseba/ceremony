@@ -12,6 +12,8 @@ name="${GITHUB_REPOSITORY#*/}"
   exit 1
 }
 
+# GraphQL variables are literal API syntax; the shell must not expand them.
+# shellcheck disable=SC2016
 facts="$(gh api graphql \
   -f query='query($owner: String!, $name: String!, $number: Int!) {
     repository(owner: $owner, name: $name) {
