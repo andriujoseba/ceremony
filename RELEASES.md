@@ -27,21 +27,24 @@ maps the ladder whose `0.1.2` working surface moved from the crufty ledger
 
 Each version epic declares `Blocked by <predecessor>`. Special ordering — a
 double gate or an out-of-chain gate — is written explicitly on that epic;
-there is no hidden global schedule. The epic carries `epic`, the repository's
-release label, and `blocked` while the gate stands. Shipping closes the current
-epic; the ordinary blocker-cleared sweep path then replaces `blocked` with
-`ready` on the next epic in the same pass. No special epic promotion exists or
-is required: the reconciler dispatches `blocked` before `epic`.
+there is no hidden global schedule. The epic carries `epic` and the
+repository's release label, with no queue label. Its `Blocked by` line is a
+declaration a human reads: shipping closes the predecessor, then triage opens
+the next window by hand as the first step of release-init. The issue-flow
+sweep does not promote version epics; automating that gate would require a
+separately specified change to its queue-category model.
 
 The gate orders windows, not their contents. Members enter a release only by
-decision during release-init. The double gate on heavy-duty/crew#163 and the
+decision during release-init. The double gate on
+[heavy-duty/crew#163](https://github.com/heavy-duty/crew/issues/163) and the
 out-of-chain track on [heavy-duty/crew#348](https://github.com/heavy-duty/crew/issues/348)
 are worked examples of exceptions declared where they apply.
 
 ## Release-init
 
-A `ready` version epic is the trigger, and today triage must notice it and run
-the cycle. [heavy-duty/ceremony#253](https://github.com/heavy-duty/ceremony/issues/253)
+The predecessor closing and clearing the next epic's declared gate is the
+trigger, and today triage must notice it and open that window by hand.
+[heavy-duty/ceremony#253](https://github.com/heavy-duty/ceremony/issues/253)
 tracks the not-yet-shipped sweep announcement of that duty; do not treat the
 announcement as present until the consumer's pin carries it. Triage runs five
 steps:
@@ -80,11 +83,14 @@ small crew-side bridge remains in the primary window.
 
 ## Flip mechanics
 
-To admit a member, strike its live `Blocked by <the epic>` declaration and
-swap `blocked` to `ready` in the same edit. Never preserve history by negating
-the marker phrase — the blocker parser unions declarations even when prose
-says they no longer apply. Preserve the old text only after striking or
-rewriting the parseable clause, then verify the parser's resulting set.
+To admit a member, delete or rewrite its literal, parseable
+`Blocked by <the epic>` declaration and swap `blocked` to `ready` in the same
+edit. Markdown or HTML strikethrough is insufficient: the blocker parser reads
+the raw marker text and still returns the reference. Never preserve history by
+negating the marker phrase — the parser unions declarations even when prose
+says they no longer apply. Preserve the history only after rewriting the
+marker into non-parseable prose, then verify that the parser returns an empty
+set for the release gate.
 
 Release membership is a decision, never a sweep default. Triage performs each
 flip only after the operator blesses the wave; the issue-flow sweep may resolve

@@ -18,6 +18,12 @@ SCRIPT="$ROOT/actions/docs-sync/docs-sync.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# RELEASES.md's consumer-availability promise is true only when the real
+# manifest carries it (#248's review round). The fixture cases below prove
+# manifest-driven behavior; this row binds that behavior to the promised file.
+check "real manifest includes the release doctrine" 0 "RELEASES.md" \
+  grep -Fx RELEASES.md "$ROOT/docs/VENDORED.txt"
+
 # --- fixture builders --------------------------------------------------------
 
 # The main fake ceremony tree: three manifest entries, one in a subdirectory
