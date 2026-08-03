@@ -12,6 +12,19 @@ PATH_SCRIPT="$ROOT/.github/scripts/release-path.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+library_refs() {
+  awk '
+    /^[[:space:]]*#/ { next }
+    {
+      line = $0
+      while (match(line, /lib\/[[:alnum:]_.-]+\.sh/)) {
+        print substr(line, RSTART, RLENGTH)
+        line = substr(line, RSTART + RLENGTH)
+      }
+    }
+  ' "$1"
+}
+
 # derive_path <tree> — print the workflow, bin/ when a bin command sources a
 # door library, and the workflow's direct + transitive lib dependencies.
 derive_path() {
@@ -20,7 +33,7 @@ derive_path() {
   workflow="$tree/.github/workflows/release.yml"
 
   printf '%s\n' .github/workflows/release.yml
-  pending="$(sed -n 's|.*\(lib/[[:alnum:]_.-]*\.sh\).*|\1|p' "$workflow" | sort -u)"
+  pending="$(library_refs "$workflow" | sort -u)"
 
   while [ -n "$pending" ]; do
     lib="$(printf '%s\n' "$pending" | sed -n '1p')"
@@ -32,7 +45,7 @@ derive_path() {
     printf '%s\n' "$lib"
     file="$tree/$lib"
     [ -f "$file" ] || continue
-    refs="$(sed -n 's|.*\(lib/[[:alnum:]_.-]*\.sh\).*|\1|p' "$file" | sort -u)"
+    refs="$(library_refs "$file" | sort -u)"
     if [ -n "$refs" ]; then
       pending="$(printf '%s\n%s\n' "$pending" "$refs" | sed '/^$/d' | sort -u)"
     fi
@@ -41,7 +54,7 @@ derive_path() {
   if [ -d "$tree/bin" ]; then
     for file in "$tree"/bin/*; do
       [ -f "$file" ] || continue
-      refs="$(sed -n 's|.*\(lib/[[:alnum:]_.-]*\.sh\).*|\1|p' "$file")"
+      refs="$(library_refs "$file")"
       for ref in $refs; do
         case "$seen" in
           *" $ref "*) bin_uses_lib=yes ;;
