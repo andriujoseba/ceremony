@@ -31,6 +31,10 @@ jobs:
         # The pin rules (issue #9; #1 D3): a stale CEREMONY_SELF_REF fails
         # CI here, not a consumer's release.
         run: bash .github/scripts/self-ref-check.sh
+      - name: Documentation availability markers
+        # Five stale markers survived the tags that shipped their machinery
+        # (#221); #238 makes the release candidate reject that drift.
+        run: bash .github/scripts/marker-check.sh
       - name: Tests
         env:
           # The npm-backed version_write case may skip locally when npm is
