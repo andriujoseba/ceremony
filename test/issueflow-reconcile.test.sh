@@ -289,6 +289,11 @@ check "claimed plus attention is a healthy issue" 0 "KEEP" \
 INOW=2000000000
 iso_at() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 
+# gh's own rendering of a 5xx whose body carries a `message` key — the line
+# crew#329's job log carried, verbatim (#247), and the payload beside it.
+GH_STUB_STDERR="gh: We couldn't respond to your request in time. (HTTP 504)"
+GH_STUB_ERROR_BODY='{"message":"We could not respond to your request in time.","documentation_url":"https://docs.github.com/rest"}'
+
 issue_stub_gh() {
   if [ "$1" = api ]; then
     shift
@@ -303,7 +308,18 @@ issue_stub_gh() {
     done
     file="$TMP/$(printf '%s' "$endpoint" | tr '/' '_').json"
     printf '%s\n' "$endpoint" >>"$TMP/api-calls"
-    [ ! -f "$file.error" ] || return 1
+    # A `.http-error` sentinel is the real 5xx (#247): `gh api` prints the
+    # response body — GitHub's JSON error object — to STDOUT, says why on
+    # stderr, and exits non-zero. The `.error` sentinel models a failure with
+    # no payload, which is the *safe* path (an empty label set is empty either
+    # way), and is why this class was never caught. Both now speak on stderr,
+    # because the real gh always does and the reason line renders it.
+    if [ -f "$file.http-error" ]; then
+      cat "$file.http-error"
+      printf '%s\n' "$GH_STUB_STDERR" >&2
+      return 1
+    fi
+    [ ! -f "$file.error" ] || { printf '%s\n' "$GH_STUB_STDERR" >&2; return 1; }
     [ -f "$file" ] || { printf '[]\n'; return 0; }
     if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$file"; else cat "$file"; fi
   elif [ "$1" = issue ] && [ "$2" = comment ]; then

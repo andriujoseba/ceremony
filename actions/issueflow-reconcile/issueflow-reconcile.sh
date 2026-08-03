@@ -27,9 +27,32 @@ TRIAGE_ACTORS=()
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/ruling.sh"
+# The guarded read and its reason line (#101, #247) — one implementation for
+# both surfaces.
+# shellcheck source=lib/read.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/read.sh"
+
+# The status a per-issue subshell exits with when it walked away from an
+# unreadable fact (#247 D4). Distinguished from every other non-zero status so
+# a deliberate skip is counted rather than reported as a crash — and so the
+# existing crash handler still names a genuine one.
+ISSUEFLOW_SKIP=3
+# Set by reconcile_issue_pass, read once by main for the D6 tail.
+SKIPPED_COUNT=0
+SKIPPED_ISSUES=""
 
 log() { printf 'issueflow: %s\n' "$*"; }
 run() { if [ -n "${DRY_RUN:-}" ]; then log "DRY_RUN: $*"; else "$@"; fi; }
+
+skip_issue() { # $1 = issue, $2 = the whole reason clause — ends this issue's pass
+  # Leaves the issue exactly as it is: nothing is derived from a read that
+  # did not answer. Called from wherever the read lives, so no call site can
+  # forget to check — which is why it exits rather than returns. Every caller
+  # runs inside the per-issue subshell, so the exit ends that issue's pass and
+  # nothing else. The reason rides its own `#$n:`-prefixed line (#247 D5).
+  log "#$1: skipped this pass — $2"
+  exit "$ISSUEFLOW_SKIP"
+}
 
 load_issueflow_config() { # $1 = labels.conf
   local conf="$1" line seen=false
@@ -287,6 +310,31 @@ offsite_resolved_decision() { # PR states on stdin -> NUDGE | QUIET
   fi
 }
 
+issue_payload_valid() { # $1 = the requested issue; payload on stdin
+  # The second of D3's two required guards, and neither subsumes the other.
+  # The status check catches the 504 whose body is GitHub's JSON error object
+  # — valid JSON that passes every jq guard and empties the label set. THIS
+  # one catches an HTTP 200 whose body is `null`, which exits 0 and empties it
+  # just the same. `.number` is checked against the issue asked for, so a
+  # payload about some other issue can never be reconciled as this one.
+  jq -e --arg n "$1" '
+    type == "object" and (.number | tostring) == $n and (.labels | type) == "array"
+  ' >/dev/null 2>&1
+}
+
+skipped_tail() { # $1 = skip count, $2 = the issue numbers → the D6 line, or nothing
+  # `reconciled.` stays byte-identical when the pass was whole — tests pin that
+  # exact string, and #101 D1 is the precedent for not folding new text into a
+  # matched line. A partial pass says so on a line of its own, after it, so a
+  # consumer reading only the tail of a job log can see it.
+  [ "$1" -gt 0 ] || return 0
+  if [ "$1" -eq 1 ]; then
+    printf '%s issue skipped this pass on an unreadable fact: %s\n' "$1" "$2"
+  else
+    printf '%s issues skipped this pass on unreadable facts: %s\n' "$1" "$2"
+  fi
+}
+
 # API edge. Marker comments make warnings and nudges idempotent across sweeps.
 ensure_comment() { # $1 issue, $2 marker, $3 message
   local n="$1" marker="$2" message="$3"
@@ -295,9 +343,15 @@ ensure_comment() { # $1 issue, $2 marker, $3 message
 $message" >/dev/null
 }
 
-issue_comment_has_marker() { # $1 issue, $2 marker
-  gh api --paginate "repos/$REPO/issues/$1/comments" --jq '.[].body' \
-    | grep -qF "<!-- issueflow:$2 -->"
+issue_comment_has_marker() { # $1 issue, $2 marker → 0 found, 1 genuinely absent
+  # A failed read used to answer "no marker", which re-posts the comment the
+  # marker exists to suppress — absence of evidence read as evidence of
+  # absence (#247 D1). It cannot be a return value: every caller treats
+  # non-zero as "absent", so the skip is taken here, at the read.
+  local bodies
+  guarded_read bodies gh api --paginate "repos/$REPO/issues/$1/comments" --jq '.[].body' \
+    || skip_issue "$1" "could not read its comments: $(read_failure_reason "$READ_FAILURE_STDERR")"
+  grep -qF "<!-- issueflow:$2 -->" <<<"$bodies"
 }
 
 reference_states() {
@@ -324,22 +378,27 @@ offsite_timeline() { # unreadable timelines are deliberately silent
   gh api --paginate "repos/$REPO/issues/$1/timeline" 2>/dev/null || return 1
 }
 
-last_issue_activity() {
-  local n="$1" created="$2" latest
-  latest="$({
-      printf '%s\n' "$created"
-      gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].created_at'
-      # Assignment is the claim itself. Ignoring it would let an old issue be
-      # reclaimed in the seconds between assignment and its required draft PR.
-      gh api --paginate "repos/$REPO/issues/$n/timeline" \
-        --jq '.[] | select(.event == "assigned") | .created_at'
-    } \
-    | sort | tail -n1)"
+last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read failed
+  # Both reads are checked, and a failure reports rather than answering an age
+  # (#247 D1). Swallowed, the comments read falls back to `created_at`, and a
+  # `claimed` issue created months ago but commented on seconds earlier is
+  # reclaimed — the live builder unassigned, under a comment asserting 48
+  # hours of silence. `needs-triage` is cheap to remove; that is not.
+  # gh's stderr is left to flow to this function's own, where the caller's
+  # guarded_read captures it for the reason line.
+  local n="$1" created="$2" comments timeline latest
+  comments="$(gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].created_at')" \
+    || return 1
+  # Assignment is the claim itself. Ignoring it would let an old issue be
+  # reclaimed in the seconds between assignment and its required draft PR.
+  timeline="$(gh api --paginate "repos/$REPO/issues/$n/timeline" \
+    --jq '.[] | select(.event == "assigned") | .created_at')" || return 1
+  latest="$(printf '%s\n%s\n%s\n' "$created" "$comments" "$timeline" | sort | tail -n1)"
   date -d "$latest" +%s
 }
 
 reconcile_issue() {
-  local n="$1" decision refs cross_refs states age assignees open_pr=false label owners
+  local n="$1" decision refs cross_refs states age created assignees open_pr=false label owners
   local merged_ref_pr="" transition_marker="" transition_handled=false
   local unchecked="" remove_claimed=claimed
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
@@ -386,7 +445,9 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
       fi
       log "#$n: merged Refs PR -> post-merge; claim released"
     else
-      age="$(last_issue_activity "$n" "$(jq -r '.created_at' <<<"$ISSUE_JSON")")"
+      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+      guarded_read age last_issue_activity "$n" "$created" \
+        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
       if [ "$(claim_clock_exempt <<<"$ISSUE_LABELS")" = EXEMPT ]; then
         # Legitimately quiet work does not run the reclaim clock. Only the
         # clock stops: an unassigned claim is still a repair the decision must
@@ -474,8 +535,11 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
       run gh issue edit "$n" -R "$REPO" --remove-label stale >/dev/null
       log "#$n: unstale (a ruling is pending)"
     fi
-    [ -n "${age:-}" ] \
-      || age="$(last_issue_activity "$n" "$(jq -r '.created_at' <<<"$ISSUE_JSON")")"
+    if [ -z "${age:-}" ]; then
+      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+      guarded_read age last_issue_activity "$n" "$created" \
+        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    fi
     reconcile_ruling "$n" "$age" "$NOW"
   fi
 }
@@ -501,6 +565,34 @@ reconcile_opened_issue() {
     run gh issue edit "$n" -R "$REPO" --add-label needs-triage >/dev/null
   fi
   log "#$n: needs-triage (opened by $author)"
+}
+
+reconcile_issue_pass() { # $1 = issue — one issue's whole pass, in its own subshell
+  # The subshell is #91's resilience: one unreadable or broken issue must not
+  # take the sweep down. What it is NOT is an errexit boundary — a command
+  # whose status is tested by `||` runs with errexit suppressed, and the
+  # suppression extends through the whole subshell body, so the handler below
+  # is what disables the errexit that would have caught a failed read (#247
+  # D2). Removing it would revive errexit and lose #91. Explicit per-read
+  # checks are the mechanism instead, and each one exits with ISSUEFLOW_SKIP.
+  local n="$1" status=0
+  (
+    guarded_read ISSUE_JSON gh api "repos/$REPO/issues/$n" \
+      || skip_issue "$n" "could not read the issue: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    issue_payload_valid "$n" <<<"$ISSUE_JSON" \
+      || skip_issue "$n" "the issue read answered a payload that is not issue #$n carrying a label array"
+    jq -e 'has("pull_request") | not' <<<"$ISSUE_JSON" >/dev/null || exit 0
+    ISSUE_LABELS="$(jq -r '.labels[].name' <<<"$ISSUE_JSON")"
+    reconcile_issue "$n"
+  ) || status=$?
+  if [ "$status" -eq "$ISSUEFLOW_SKIP" ]; then
+    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+    SKIPPED_ISSUES="${SKIPPED_ISSUES:+$SKIPPED_ISSUES }#$n"
+  elif [ "$status" -ne 0 ]; then
+    # Byte-identical, and still owed: a skip is deliberate, a crash is not,
+    # and folding the two together would hide one behind the other (D4).
+    log "#$n: reconcile failed — continuing with the remaining issues"
+  fi
 }
 
 main() {
@@ -554,17 +646,21 @@ main() {
         done < <(refs_references <<<"$body")
       done)"
 
-  local n
+  local n tail_line
+  SKIPPED_COUNT=0
+  SKIPPED_ISSUES=""
   for n in $(gh api --paginate "repos/$REPO/issues?state=open&per_page=100" \
       --jq '.[] | select(has("pull_request") | not) | .number'); do
-    (
-      ISSUE_JSON="$(gh api "repos/$REPO/issues/$n")"
-      jq -e 'has("pull_request") | not' <<<"$ISSUE_JSON" >/dev/null || exit 0
-      ISSUE_LABELS="$(jq -r '.labels[].name' <<<"$ISSUE_JSON")"
-      reconcile_issue "$n"
-    ) || log "#$n: reconcile failed — continuing with the remaining issues"
+    reconcile_issue_pass "$n"
   done
   log "reconciled."
+  # The job stays green (D7): an hourly sweep over a hundred-issue board meets
+  # transient 504s as a matter of course, and reddening the whole run for one
+  # skipped issue trains consumers to ignore red — the outcome #95 and #101
+  # both steered away from on the PR surface. This line is what buys back the
+  # auditability that costs.
+  tail_line="$(skipped_tail "$SKIPPED_COUNT" "$SKIPPED_ISSUES")"
+  [ -z "$tail_line" ] || log "$tail_line"
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi
