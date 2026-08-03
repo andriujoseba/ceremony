@@ -74,6 +74,12 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/ruling.sh"
+# The guarded read and its reason line (#101) — one implementation for both
+# surfaces. read_failure_reason lived here until the issue surface needed the
+# identical rule (#247); a second copy of it is the failure lib/ruling.sh's
+# own header was written to record.
+# shellcheck source=lib/read.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/read.sh"
 
 log() { printf 'labels: %s\n' "$*"; }
 
@@ -95,25 +101,6 @@ blind_sweep_warning() { # $1 = unreadable PRs, $2 = all open PRs, $3 = sampled r
     else
       echo "::warning::labels: every open PR was unreadable; no reason was captured — one candidate is missing checks: read, statuses: read and actions: read in the caller (private repos do not imply them)"
     fi
-  fi
-}
-
-read_failure_reason() { # $1 = captured stderr → one bounded line; pure (#101)
-  # Verbatim, collapsed, bounded (D3): gh emits multi-line errors and GraphQL
-  # blobs. Collapsed so the reason is exactly one log line — a raw newline
-  # inside the captured per-PR output block could collide with a matched
-  # string — and truncated because an unbounded paste per PR per sweep is
-  # noise, and annotations are capped anyway.
-  local reason
-  reason="$(printf '%s' "${1-}" | tr '\n' ' ')"
-  if [ -z "$reason" ]; then
-    # Empty stderr is itself a fact (D4): a read that failed silently is a
-    # different observation from a denial, and must not read as one.
-    echo "no error output"
-  elif [ "${#reason}" -gt 300 ]; then
-    printf '%s…\n' "${reason:0:300}"
-  else
-    printf '%s\n' "$reason"
   fi
 }
 
