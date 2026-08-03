@@ -630,17 +630,25 @@ cat >"$ARRIVAL/stub/gh" <<'EOF'
 # answers an empty list, a .error sentinel fails the call like a dead API.
 if [ "$1" = api ]; then
   shift
-  endpoint="" jqexpr=""
+  endpoint="" jqexpr="" query=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --jq) jqexpr="$2"; shift ;;
-      -f|-F) shift ;;
+      -f|-F)
+        case "$2" in query=*) query="${2#query=}" ;; esac
+        shift ;;
       -*) ;;
       *) [ -n "$endpoint" ] || endpoint="$1" ;;
     esac
     shift
   done
   file="$GH_FIXTURES/$(printf '%s' "$endpoint" | tr '/?&=' '____').json"
+  if [ "$endpoint" = graphql ]; then
+    case "$query" in
+      *'states: OPEN'*) file="$GH_FIXTURES/graphql-open.json" ;;
+      *'states: MERGED'*) file="$GH_FIXTURES/graphql-merged.json" ;;
+    esac
+  fi
   [ ! -f "$file.error" ] || exit 1
   if [ -f "$file" ]; then payload="$(cat "$file")"; else payload='[]'; fi
   if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$payload"; else printf '%s\n' "$payload"; fi
@@ -653,7 +661,8 @@ EOF
 chmod +x "$ARRIVAL/stub/gh"
 printf '%s\n' \
   '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-  >"$ARRIVAL/fixtures/graphql.json"
+  >"$ARRIVAL/fixtures/graphql-open.json"
+cp "$ARRIVAL/fixtures/graphql-open.json" "$ARRIVAL/fixtures/graphql-merged.json"
 arrival_fixture() { printf '%s\n' "$1" >"$ARRIVAL/fixtures/repos_owner_repo_issues_91.json"; }
 arrival_run() {
   : >"$ARRIVAL/fixtures/edits"
@@ -696,8 +705,11 @@ check "...and the sweep still runs" 0 "" \
 # Keep this at main() granularity: the GraphQL gather and loop are the code
 # a sourced decision probe cannot exercise (#91's lesson).
 printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":401,"body":"Refs #40","isDraft":false,"closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-open.json"
+printf '%s\n' \
   '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"mergedAt":"2026-07-30T19:05:16Z","body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-  >"$ARRIVAL/fixtures/graphql.json"
+  >"$ARRIVAL/fixtures/graphql-merged.json"
 printf '[{"number":40}]\n' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
 jq -n --arg at "$(iso_at "$INOW")" \
@@ -711,13 +723,55 @@ subprocess_out="$(
     bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
 )"
 subprocess_rc=$?
-check "executable sweep transitions merged Refs work" 0 "" \
+check "an open Refs-bodied PR suppresses the post-merge transition" 0 "" \
   test "$subprocess_rc" -eq 0
-check "...reaches the transition through GraphQL and the issue loop" 0 "" \
+check "...leaves the live claim assigned" 1 "" \
   grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$subprocess_out"
-check "...and performs the release edit from the executable path" 0 "" \
+check "...performs no release edit" 1 "" \
   grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
   "$ARRIVAL/fixtures/edits"
+
+# The same body linkage protects the reclaim clock even when no Refs-linked
+# PR has merged. This is the derived half of crew#321's destructive shape.
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":411,"body":"Refs #41","isDraft":false,"closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-open.json"
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$ARRIVAL/fixtures/graphql-merged.json"
+printf '[{"number":41}]\n' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
+jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+  '{number:41,user:{login:"triage-one"},created_at:$at,body:"- [ ] build",labels:[{name:"claimed"}],assignees:[{login:"builder"}]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_41.json"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_41_comments.json"
+jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+  '[{"event":"assigned","created_at":$at}]' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_41_timeline.json"
+: >"$ARRIVAL/fixtures/edits"
+reclaim_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    ISSUEFLOW_NOW="$INOW" REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+reclaim_rc=$?
+check "an open Refs-bodied PR suppresses stale reclaim" 0 "" test "$reclaim_rc" -eq 0
+check "...keeps the quiet live claim" 1 "" \
+  grep -qF '#41: stale claim reclaimed -> ready' <<<"$reclaim_out"
+
+# Drafts are live claim evidence by the same OPEN query (D4); no mergeability
+# or readiness field is allowed to narrow this set.
+sed 's/"isDraft":false/"isDraft":true/' "$ARRIVAL/fixtures/graphql-open.json" \
+  >"$ARRIVAL/fixtures/graphql-open.json.tmp"
+mv "$ARRIVAL/fixtures/graphql-open.json.tmp" "$ARRIVAL/fixtures/graphql-open.json"
+: >"$ARRIVAL/fixtures/edits"
+draft_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    ISSUEFLOW_NOW="$INOW" REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+check "a draft Refs-bodied PR suppresses stale reclaim identically" 1 "" \
+  grep -qF '#41: stale claim reclaimed -> ready' <<<"$draft_out"
 
 # D2 preserved: only the deliberate stand-downs changed; a genuine failure on
 # the arrival path still kills the run loudly.
