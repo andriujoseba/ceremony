@@ -66,6 +66,46 @@ record is the only thing that survives the drill, and 0.2.0's record shipped
 its first draft asserting a cleanup that had not happened (#135) — false
 evidence in the one file whose job is to be evidence.
 
+A record has one of three shapes. A **rehearsal** records the disposable-repo
+run above. **Doors unchanged** records the mechanically checked claim below
+when a new rehearsal would execute the same bytes as the last one. **WAIVED**
+records a maintainer's judgement under the standing paragraph below. If the
+doors-unchanged conditions do not all hold, the release owes a rehearsal or a
+waiver; the narrower shape is never a substitute for either.
+
+## Doors unchanged
+
+The builder may assert that no disposable-repo rehearsal is owed only when
+all three conditions below hold at the candidate head. The release PR's panel
+verifies the claim like any other evidence, and if any reviewer rules a full
+drill owed, that verdict wins.
+
+1. `git diff <last-rehearsed-tag>..HEAD -- <release-path>` contains no change
+   except the `CEREMONY_SELF_REF` pin line in
+   `.github/workflows/release.yml`.
+2. The release path is exactly the output of
+   `.github/scripts/release-path.sh`: `.github/workflows/release.yml`, `bin/`,
+   `lib/version.sh`, `lib/decide.sh`, `lib/facts.sh`, and
+   `lib/changelog.sh`. The script is the record author's copy-paste source;
+   its contract test keeps this inline list and the workflow's direct and
+   transitive dependencies in agreement.
+3. The last rehearsed tag's own record is a full rehearsal, its release is
+   published, and `main` was re-armed to `-dev` after it.
+
+The baseline is the last **rehearsed** tag, never merely the previous tag. A
+previous-tag baseline could chain one doors-unchanged assertion from another
+while the doors drift a small diff at a time; the last-rehearsed anchor makes
+any accumulated release-path change force a new rehearsal.
+
+The record carries all three measurements as observed at its candidate head,
+never copied from an earlier record. `drills/0.4.1.md` and
+`drills/0.5.0.md` are the worked examples; the latter's amendment from a
+predicted empty `lib/` diff to the observed `lib/ruling.sh` delta is why each
+candidate is measured afresh (#233). Re-running its stricter baseline now is
+also the path-enumeration proof: `git diff 0.4.0 0.5.0 -- <release-path>` is
+only the `CEREMONY_SELF_REF` pin, while adding `lib/ruling.sh` makes the diff
+non-empty even though neither release door reads that file (#217, #237).
+
 `actions/drill-recorded` refuses any bare-version tree whose record is
 missing or blank. A waived drill is still a record: the file says WAIVED and
 why — a maintainer's call, visible and reviewable in the release PR's diff,
