@@ -99,18 +99,40 @@ ruling_bare_comment_needed() { # $1 labeled epoch, $2 newest marked-comment epoc
   fi
 }
 
+ruling_shape_field_present() { # $1 field label; escalation body on stdin → 0 iff present
+  # THE one spelling of the field-presence test — the escalation selector
+  # scores by it and the shape check grades by it, on purpose in one place:
+  # a selector scoring by one grep while the check grades by another is how
+  # the crew#293 misgrade would come back from the other side (#226).
+  # Line-anchored, allowing leading whitespace and Markdown bold
+  # (`**Options:**` is how the live escalations write them): the labels
+  # appearing only mid-sentence is not the template.
+  local field="$1"
+  grep -Eq "^[[:space:]]*(\*\*)?$field"
+}
+
+ruling_shape_score() { # escalation body on stdin → 0–4, one point per field present
+  # The selection rule's metric (#226). An empty body scores 0 through the
+  # same loop — no special case, and never an error.
+  local body field score=0
+  body="$(cat)"
+  for field in "${RULING_SHAPE_FIELDS[@]}"; do
+    if ruling_shape_field_present "$field" <<<"$body"; then score=$((score + 1)); fi
+  done
+  echo "$score"
+}
+
 ruling_shape_decision() { # escalation body on stdin → SHAPED | MALFORMED <missing labels>
   # Presence only (#50 D4): that `Recommend:` exists is checkable, that the
   # recommendation is any good is not — no counting options, no parsing the
-  # prose. Line-anchored, allowing leading whitespace and Markdown bold
-  # (`**Options:**` is how the live escalations write them): the labels
-  # appearing only mid-sentence is not the template. The `🧭 needs-ruling`
-  # header line is deliberately unchecked — it is prose, and an emoji grep
-  # on an LC_ALL=C runner is a portability trap for zero enforcement value.
+  # prose. The per-field test is ruling_shape_field_present, shared with the
+  # selector (#226). The `🧭 needs-ruling` header line is deliberately
+  # unchecked — it is prose, and an emoji grep on an LC_ALL=C runner is a
+  # portability trap for zero enforcement value.
   local body field missing=""
   body="$(cat)"
   for field in "${RULING_SHAPE_FIELDS[@]}"; do
-    grep -Eq "^[[:space:]]*(\*\*)?$field" <<<"$body" || missing="$missing $field"
+    ruling_shape_field_present "$field" <<<"$body" || missing="$missing $field"
   done
   if [ -z "$missing" ]; then echo SHAPED; else echo "MALFORMED$missing"; fi
 }
@@ -170,17 +192,32 @@ ruling_newest_flag() { # "login<TAB>iso8601" lines on stdin → the newest line
 }
 
 ruling_escalation_row() { # $1 setter, $2 labeled epoch; "login epoch url [b64]" lines on stdin
-  # → "url b64" of the EARLIEST in-window comment by the setter, or nothing.
-  # Earliest, because the natural shape is escalation-then-flag: the first
-  # qualifying comment is the escalation itself, later ones are follow-ups.
-  # The body rides along base64-encoded (#73's shape check reads it); rows
-  # without the column still resolve, with an empty body.
-  local setter="$1" labeled="$2" login epoch url b64 best_epoch="" best=""
+  # → "url b64" of the BEST-SHAPED in-window comment by the setter, or
+  # nothing: highest ruling_shape_score wins, equal scores break to the
+  # earliest epoch. Earliest-wins outright was the rule until crew#293
+  # (2026-08-02): a builder answered its round whole and escalated 33
+  # seconds later — both in one window, the reply earlier — and the sweep
+  # graded the round reply, told a correct escalation it was malformed, and
+  # the setter re-posted a shape it had already met. Score resolves both
+  # orderings; the earliest tiebreak keeps escalation-then-follow-ups
+  # wherever the scores cannot tell candidates apart, including all-zero.
+  # An undecodable or absent body scores 0 and stays a legal candidate —
+  # an unreadable fact never invents a verdict, and never errors the sweep.
+  # The window and the setter gate candidacy before any score is taken.
+  local setter="$1" labeled="$2" login epoch url b64 body score
+  local best_score=-1 best_epoch="" best=""
   while read -r login epoch url b64; do
     [ -n "$login" ] || continue
     [ "$login" = "$setter" ] || continue
     ruling_accompanies "$epoch" "$labeled" || continue
-    if [ -z "$best_epoch" ] || [ "$epoch" -lt "$best_epoch" ]; then
+    if body="$(base64 -d <<<"${b64:-}" 2>/dev/null)"; then
+      score="$(ruling_shape_score <<<"$body")"
+    else
+      score=0
+    fi
+    if [ "$score" -gt "$best_score" ] \
+      || { [ "$score" -eq "$best_score" ] && [ "$epoch" -lt "$best_epoch" ]; }; then
+      best_score="$score"
       best_epoch="$epoch"
       best="$url ${b64:-}"
     fi
