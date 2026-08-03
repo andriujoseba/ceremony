@@ -682,7 +682,7 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     # how the wrong addressee comes back.
     if [ "$(ruling_nudge_decision "$NOW" "$evidence_age")" = NUDGE ]; then
       local quiet_days=$(((NOW - evidence_age) / 86400))
-      run gh issue comment "$n" -R "$REPO" --body "@${TRIAGE_ACTORS[0]} — this \`post-merge\` item has had no activity for ${quiet_days} days: https://github.com/$REPO/issues/$n
+      run gh issue comment "$n" -R "$REPO" --body "@${TRIAGE_ACTORS[0]} — this \`post-merge\` item has had no comment for ${quiet_days} days: https://github.com/$REPO/issues/$n
 
 Its wake evidence is still owed. \`post-merge\` means the merge landed and
 triage owns completion — judge the remaining criteria against the evidence
