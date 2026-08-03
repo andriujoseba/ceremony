@@ -55,6 +55,12 @@ LABELS=""
 # retirement heals the board instead of stranding a label nothing recomputes.
 RETIRED=(state:needs-rebase)
 STALE_AFTER=$((48 * 3600))
+# How long the facts behind blocker:unrequested must have stood still before it
+# is written (#236 D2). The operator's "more than 5 minutes", measured off the
+# inputs' own timestamps rather than off sweep memory — this script is
+# stateless per pass and stays that way. Overridable the way this file's other
+# constants are, for a caller whose round cadence is slower or faster.
+RECONCILE_UNREQUESTED_GRACE="${RECONCILE_UNREQUESTED_GRACE:-300}"
 # The workflow whose runs checks_state must never grade — its own (#208).
 # GITHUB_WORKFLOW is ambient in every Actions step and names the CALLER (the
 # consumer's PR-facing workflow, since consumers name the caller), so this
@@ -277,6 +283,8 @@ set_required_bots() { # the PR author is recused by construction
 #   MERGEABLE    MERGEABLE | CONFLICTING | UNKNOWN  (GitHub's own verdict)
 #   CHECKS       SUCCESS | FAILURE | PENDING | NONE (the check rollup)
 #   LABELS       newline-separated labels currently on the PR
+#   HEAD_COMMIT_AT  the head commit's own date, ISO-8601; empty when unread
+#   NOW          this sweep's epoch seconds (main sets it once per run)
 # ---------------------------------------------------------------------------
 
 requested() { grep -qxF "$1" <<<"$REQUESTED"; }
@@ -429,6 +437,44 @@ bot_verdict() { # $1 = login → MISSING | BLOCK | APPROVE | STALE | FEEDBACK
   esac
 }
 
+iso_epoch() { # $1 = ISO-8601 timestamp → epoch seconds; nothing, rc 1, when unreadable
+  # An absent field reaches this as the empty string or as jq's literal "null";
+  # both are "we did not read a time", and neither may be graded as one.
+  local at="${1-}" epoch
+  case "$at" in "" | null) return 1 ;; esac
+  epoch="$(date -d "$at" +%s 2>/dev/null)" || return 1
+  [ -n "$epoch" ] || return 1
+  printf '%s\n' "$epoch"
+}
+
+unrequested_quiescent() { # 0 when the unrequested facts have stood for the grace (#236 D2)
+  # The stall blocker's supporting facts are the head and the round's newest
+  # submitted review: the ask it demands is owed only once both have stopped
+  # moving. Measured off those timestamps, not off sweep memory — ceremony#235
+  # was flagged inside the ~90 seconds between a round-answer push and the
+  # author's re-request, because a sweep read the facts before the request
+  # landed and wrote after it. That is a round in motion, not a dropped ball.
+  #
+  # "Newest submitted review" is any submitted review, COMMENTED included: a
+  # non-verdict is still evidence the round is live, and counting it can only
+  # delay a flag, never invent one.
+  #
+  # A timestamp we could not read refuses the blocker (the standing rule: an
+  # unreadable fact never invents a verdict). This direction is deliberate and
+  # asymmetric — a missed flag costs one sweep of the 15-minute cadence, a
+  # false one flags a builder for doing exactly what BUILDER.md requires.
+  local newest verdict_at verdict_epoch
+  newest="$(iso_epoch "${HEAD_COMMIT_AT:-}")" || return 1
+  verdict_at="$(jq -r '[.[].submitted_at] | max // empty' <<<"${REVIEWS_JSON:-[]}")"
+  if [ -n "$verdict_at" ]; then
+    # A round WITH verdicts whose newest one cannot be dated is unreadable, not
+    # quiescent; a round with no verdicts at all is simply the head's clock.
+    verdict_epoch="$(iso_epoch "$verdict_at")" || return 1
+    [ "$verdict_epoch" -gt "$newest" ] && newest="$verdict_epoch"
+  fi
+  [ $((${NOW:-0} - newest)) -ge "$RECONCILE_UNREQUESTED_GRACE" ]
+}
+
 human_request_needed() { # 0 when needs-human requires a FRESH human request
   # already requested → the handoff is live; head-current human approval →
   # nothing left to ask. Anything else (never reviewed, an old comment, an
@@ -464,7 +510,27 @@ blockers() { # → the blocker:* labels this PR should carry, one per line
   # A draft is exempt (the bots ignore drafts by design), and so is an
   # explicit human request — a maintainer claiming a PR early is deliberate,
   # not a dropped ball.
-  if [ "$DRAFT" != true ] && ! requested "$HUMAN"; then
+  #
+  # And so is a head whose checks have not answered yet (#236 D1). This is the
+  # one blocker that names an act the author must PERFORM, so it is the one
+  # that has to know when performing it is permitted: BUILDER.md's review round
+  # requires a green check at the head before requesting, so a builder waiting
+  # out a pending run is complying, and flagging compliance teaches its readers
+  # to ignore the label. Both 2026-08-03 instances were exactly that —
+  # crew#318 at ~12:44Z carried state:addressing + blocker:unrequested while
+  # the head's run was IN_PROGRESS, and ceremony#235 at 12:30Z caught the
+  # ~90-second gap between a round-answer push and the re-request.
+  #
+  # PENDING and FAILURE each already have an owner, which is why gating loses
+  # no coverage: on PENDING the next move is CI's and state:addressing /
+  # state:bots-reviewing already say what the PR is doing; on FAILURE
+  # blocker:ci-red owns that head, and stacking a second blocker on it
+  # double-flags one stall. NONE joins SUCCESS because no checks configured is
+  # nothing to wait for — the same reading the request rule gives the builder.
+  # UNREADABLE never arrives here: the caller skips the PR before deciding.
+  local checks_permit_the_ask=false
+  case "${CHECKS:-NONE}" in SUCCESS | NONE) checks_permit_the_ask=true ;; esac
+  if [ "$DRAFT" != true ] && [ "$checks_permit_the_ask" = true ] && ! requested "$HUMAN"; then
     local b v owed=false any_requested=false
     for b in "${REQUIRED_BOTS[@]}"; do
       requested "$b" && any_requested=true
@@ -475,7 +541,10 @@ blockers() { # → the blocker:* labels this PR should carry, one per line
       v="$(bot_verdict "$b")"
       case "$v" in MISSING | STALE) owed=true ;; esac
     done
-    if [ "$owed" = true ] && [ "$any_requested" = false ]; then
+    # The quiescence grace (#236 D2) is the last question, after the debt is
+    # established: it asks whether the debt has stood long enough to be a
+    # dropped ball rather than a round still in motion.
+    if [ "$owed" = true ] && [ "$any_requested" = false ] && unrequested_quiescent; then
       echo blocker:unrequested
     fi
   fi
@@ -932,6 +1001,29 @@ main() {
         log "#$n: could not read mergeability/checks — left alone this pass"
         log "#$n: read failed: $(read_failure_reason "$GH_VIEW_ERR")"
         exit 0
+      fi
+      # The head's own clock, for the blocker:unrequested grace (#236 D2). One
+      # read, pinned to the head SHA — not `gh pr view --json commits`, which
+      # asks for the FIRST hundred commits and would date a longer PR by a
+      # commit that is not its head. Last of the fetches on purpose: a PR the
+      # skip above walked away from must not pay for it, and neither do drafts,
+      # which never reach that blocker. Empty (a failed read, or a body without
+      # the field) leaves the blocker unjudged, by unrequested_quiescent.
+      HEAD_COMMIT_AT=""
+      if [ "$DRAFT" != true ]; then
+        HEAD_COMMIT_ERR_FILE="$(mktemp)"
+        HEAD_COMMIT_AT="$(gh api "repos/$REPO/commits/$HEAD_SHA" \
+          --jq '.commit.committer.date' 2>"$HEAD_COMMIT_ERR_FILE" || echo "")"
+        HEAD_COMMIT_ERR="$(cat "$HEAD_COMMIT_ERR_FILE")"
+        rm -f "$HEAD_COMMIT_ERR_FILE"
+        case "$HEAD_COMMIT_AT" in
+          "" | null)
+            # Say why it degraded (#101 D2/D4), on its own line: this one
+            # narrows a blocker rather than skipping the PR, so it must not
+            # read as the wholly-blind shape the counted line above matches.
+            HEAD_COMMIT_AT=""
+            log "#$n: could not read the head commit's date: $(read_failure_reason "$HEAD_COMMIT_ERR") — blocker:unrequested not judged this pass" ;;
+        esac
       fi
       reconcile_pr "$n"
       ) 2>&1
