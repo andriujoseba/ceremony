@@ -506,7 +506,7 @@ rows only; adding `triage-actors=` is a parse failure, not an ignored setting.
 Add it at the same pin bump as the `issues:` trigger — `0.2.0` or later —
 never before it and never through mixed refs.
 
-The optional `panel[<login>]=` rows are **unreleased** (#224). A row names
+The optional `panel[<login>]=` rows are available at `0.5.0` and later (#224). A row names
 the effective panel for PRs authored by exactly that login — the reconciler
 computes that PR's required set from the row, minus the author as always —
 and every other author keeps the base `panel=`, which stays mandatory. The
