@@ -971,28 +971,6 @@ main() {
       # PENDING reviews are unsubmitted drafts in someone's browser — not a verdict
       REVIEWS_JSON="$(gh api --paginate "repos/$REPO/pulls/$n/reviews" --jq '.[]' \
         | jq -s '[.[] | select(.state != "PENDING")]')"
-      # The head's own clock, for the blocker:unrequested grace (#236 D2). One
-      # read, pinned to the head SHA — not `gh pr view --json commits`, which
-      # asks for the FIRST hundred commits and would date a longer PR by a
-      # commit that is not its head. Drafts never reach that blocker, so they
-      # do not pay for the call. Empty (a failed read, or a body without the
-      # field) leaves the blocker unjudged this pass, by unrequested_quiescent.
-      HEAD_COMMIT_AT=""
-      if [ "$DRAFT" != true ]; then
-        HEAD_COMMIT_ERR_FILE="$(mktemp)"
-        HEAD_COMMIT_AT="$(gh api "repos/$REPO/commits/$HEAD_SHA" \
-          --jq '.commit.committer.date' 2>"$HEAD_COMMIT_ERR_FILE" || echo "")"
-        HEAD_COMMIT_ERR="$(cat "$HEAD_COMMIT_ERR_FILE")"
-        rm -f "$HEAD_COMMIT_ERR_FILE"
-        case "$HEAD_COMMIT_AT" in
-          "" | null)
-            # Say why it degraded (#101 D2/D4), on its own line: this one
-            # narrows a blocker rather than skipping the PR, so it must not
-            # read as the wholly-blind shape the counted line above matches.
-            HEAD_COMMIT_AT=""
-            log "#$n: could not read the head commit's date: $(read_failure_reason "$HEAD_COMMIT_ERR") — blocker:unrequested not judged this pass" ;;
-        esac
-      fi
       # mergeability + the check rollup, the two facts the state machine was
       # blind to (#136). `gh pr view` rather than the REST PR object: the API's
       # `mergeable` is a tri-state boolean that GitHub computes lazily, while
@@ -1023,6 +1001,29 @@ main() {
         log "#$n: could not read mergeability/checks — left alone this pass"
         log "#$n: read failed: $(read_failure_reason "$GH_VIEW_ERR")"
         exit 0
+      fi
+      # The head's own clock, for the blocker:unrequested grace (#236 D2). One
+      # read, pinned to the head SHA — not `gh pr view --json commits`, which
+      # asks for the FIRST hundred commits and would date a longer PR by a
+      # commit that is not its head. Last of the fetches on purpose: a PR the
+      # skip above walked away from must not pay for it, and neither do drafts,
+      # which never reach that blocker. Empty (a failed read, or a body without
+      # the field) leaves the blocker unjudged, by unrequested_quiescent.
+      HEAD_COMMIT_AT=""
+      if [ "$DRAFT" != true ]; then
+        HEAD_COMMIT_ERR_FILE="$(mktemp)"
+        HEAD_COMMIT_AT="$(gh api "repos/$REPO/commits/$HEAD_SHA" \
+          --jq '.commit.committer.date' 2>"$HEAD_COMMIT_ERR_FILE" || echo "")"
+        HEAD_COMMIT_ERR="$(cat "$HEAD_COMMIT_ERR_FILE")"
+        rm -f "$HEAD_COMMIT_ERR_FILE"
+        case "$HEAD_COMMIT_AT" in
+          "" | null)
+            # Say why it degraded (#101 D2/D4), on its own line: this one
+            # narrows a blocker rather than skipping the PR, so it must not
+            # read as the wholly-blind shape the counted line above matches.
+            HEAD_COMMIT_AT=""
+            log "#$n: could not read the head commit's date: $(read_failure_reason "$HEAD_COMMIT_ERR") — blocker:unrequested not judged this pass" ;;
+        esac
       fi
       reconcile_pr "$n"
       ) 2>&1

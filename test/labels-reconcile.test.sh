@@ -840,6 +840,77 @@ expect "each blind PR logs its reason as its own line beside the counted one" 2 
 expect "exactly the blind PRs match the counted shape whole-line — no more, no less" 2 \
   "$(grep -c '^labels: #[0-9]*: could not read mergeability/checks — left alone this pass$' <<<"$blind_main")"
 
+# -- the grace's own wiring: the fixtures above prove the predicate, and only a
+#    sweep can prove the fetch that feeds it (#236 D2). The fixture-only version
+#    of this change would have passed with the global never assigned — the #91
+#    shape, where the probes could not reach the per-PR path at all.
+unrequested_main_probe() { # $1 = read | denied, the head-commit read's outcome
+  (
+    GITHUB_EVENT_NAME=schedule
+    REPO=owner/repo
+    LABELS_CONF=.github/labels.conf
+    UMODE="$1"
+    gh() {
+      if [ "$1" = label ] && [ "$2" = list ]; then core_label_rows | cut -d'|' -f1; return 0; fi
+      if [ "$1" = pr ] && [ "$2" = list ]; then printf '303\n'; return 0; fi
+      if [ "$1" = pr ] && [ "$2" = view ]; then
+        # green, so the D1 gate is open and D2 is the only question left
+        jq -n '{mergeable:"MERGEABLE",
+                statusCheckRollup:[{__typename:"CheckRun",workflowName:"ci",
+                                    name:"check",conclusion:"SUCCESS",
+                                    startedAt:"2026-07-01T00:00:00Z"}]}'
+        return 0
+      fi
+      # recorded to a file, not to stdout: reconcile_pr sends the edit call's
+      # stdout to /dev/null, so a narrating stub would look like no edit at all
+      if [ "$1" = issue ] && [ "$2" = edit ]; then printf '%s\n' "$*" >>"$RTMP/uedits-$UMODE"; return 0; fi
+      [ "$1" = api ] || return 0
+      shift
+      local jqexpr="" endpoint=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --jq) jqexpr="$2"; shift ;;
+          -*) ;;
+          *) [ -n "$endpoint" ] || endpoint="$1" ;;
+        esac
+        shift
+      done
+      case "$endpoint" in
+        */commits/*) # the head-commit read; ordered before the commit LIST below
+          if [ "$UMODE" = denied ]; then
+            printf 'gh: Not Found (HTTP 404)\n' >&2
+            return 1
+          fi
+          jq -n '{commit:{committer:{date:"2026-07-01T00:00:00Z"}}}' | jq -r "${jqexpr:-.}" ;;
+        */pulls/303)
+          jq -n '{draft:false,user:{login:"author"},head:{sha:"headsha"},
+                  base:{sha:"basesha"},labels:[],requested_reviewers:[],
+                  created_at:"2026-07-01T00:00:00Z"}' ;;
+        *) printf '[]\n' | jq -r "${jqexpr:-.}" ;; # every collection empty
+      esac
+    }
+    main
+  )
+}
+
+read_sweep="$(unrequested_main_probe read)"
+expect "the sweep reads the head's date and writes the stall it now dates" yes \
+  "$(grep -q 'blocker:unrequested' "$RTMP/uedits-read" && echo yes || echo no)"
+expect "...saying nothing about a degraded read" no \
+  "$(grep -q "could not read the head commit's date" <<<"$read_sweep" && echo yes || echo no)"
+denied_sweep="$(unrequested_main_probe denied)"
+expect "a denied head-commit read names the denial (#101's shape)" yes \
+  "$(grep -q "^labels: #303: could not read the head commit's date: gh: Not Found (HTTP 404)" <<<"$denied_sweep" \
+    && echo yes || echo no)"
+expect "...and writes no blocker it could not date" no \
+  "$(grep -q 'blocker:unrequested' "$RTMP/uedits-denied" && echo yes || echo no)"
+# ...while the PR is still converged: this read narrows one blocker, it does not
+# skip the PR the way an unreadable rollup does
+expect "...while the state still converges — one blocker unjudged, not a skip" yes \
+  "$(grep -q 'state:addressing' "$RTMP/uedits-denied" && echo yes || echo no)"
+expect "...and the sweep does not report it as a blind pass" 0 \
+  "$(grep -c 'could not read mergeability/checks' <<<"$denied_sweep" || true)"
+
 # ---------------------------------------------------------------------------
 # bootstrap_labels retires the GitHub defaults (#93). LABELS.md published
 # them as deleted at bootstrap; nothing deleted them — incubator's first
