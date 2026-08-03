@@ -74,6 +74,9 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/ruling.sh"
+# The attention target invariants (#232) — diagnosis only, both surfaces.
+# shellcheck source=lib/attention.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/attention.sh"
 # The guarded read and its reason line (#101) — one implementation for both
 # surfaces. read_failure_reason lived here until the issue surface needed the
 # identical rule (#247); a second copy of it is the failure lib/ruling.sh's
@@ -920,6 +923,12 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   # always — cost no extra API reads.
   if has_label needs-ruling; then
     reconcile_ruling "$n" "$last_activity_epoch" "$NOW"
+  fi
+
+  # `attention` belongs on the assigned issue that owns the claim, never on
+  # a pull request (#232). Behind the label gate so ordinary PRs pay no read.
+  if has_label attention; then
+    reconcile_attention "$n" pr "$(jq '.assignees | length' <<<"$PR_JSON")" ""
   fi
 }
 
