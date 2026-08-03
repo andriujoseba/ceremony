@@ -298,19 +298,18 @@ CONTRIBUTING; the shared flow lives here and is not restated there.)
    ([#50 D11](https://github.com/heavy-duty/ceremony/issues/50)).
 
 **A fix round may ride a draft.** An engine may convert a PR back to draft
-when a round closes, and crew#139's does: the 15-minute cadence makes a
-builder's fix-round pushes *saves* rather than proposals, and 41 of 106
-commits across crew's last 25 PRs — 39% — were fired at CI as if they were
-proposals. Ceremony implements no such conversion and this passage specifies
-none; it is written down because a builder or a reviewer who meets a mid-round
-draft has to find a state the doctrine describes. What it means is what a
-draft already meant during the build, extended and not changed: the draft
-phase is yours, the panel cannot see it, and the checkpoint discipline
-(Building, above) runs through the round unaltered. Whose ball it is does not
-change either — the round outranks the draft flag, which is what
-[LABELS.md](LABELS.md)'s `state:building` row already says in the machine's
-voice: a draft carrying a standing non-approving verdict is a fix round and
-reads `state:addressing` (#205).
+when a round closes, and crew#139's does — an engine whose own rules make a
+builder's mid-round pushes *saves* rather than proposals fires CI at every one
+of them otherwise, 41 of 106 commits across crew's last 25 PRs by that
+issue's measurement. Ceremony implements no such conversion and this passage
+specifies none; it is written down because a builder or a reviewer who meets a
+mid-round draft has to find a state the doctrine describes. What it means is
+what a draft already meant while you were building, extended and not changed:
+the draft phase is yours and the panel cannot see it (Building, above). Whose
+ball it is does not change either — the round outranks the draft, so you still
+owe it whole, the fixes and the reply and the flip. The label axis says the
+same thing in the machine's voice rather than in this one, and
+[LABELS.md](LABELS.md)'s `state:building` row is where to read it (#205).
 
 **Ready-for-review is the act that ends the round, and it is the builder's
 alone.** No engine marks a PR ready. The flip asserts that the round was
