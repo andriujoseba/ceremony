@@ -749,6 +749,7 @@ check "the claim clock counts the assignment, the evidence clock the comment" 0 
   "$((INOW - 3600)) $((INOW - 5 * 86400))" printf '%s\n' "$two_clocks"
 # One body, two callers: a second activity computation is the drift the
 # reuse exists to prevent, so the timeline read has exactly one spelling.
+# shellcheck disable=SC2016 # the read is asserted as a literal, unexpanded
 check "the timeline read is not respelled for the evidence clock" 0 "1" \
   grep -c 'issues/\$n/timeline' \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
