@@ -637,6 +637,14 @@ check "...only the evidence nudge speaks" 0 "1" \
   grep -c -- '^----$' "$TMP/posted-36"
 
 printf '[]\n' >"$(cfix 37)"
+# The live shape of an assigned `post-merge` issue: the assignee in the issue
+# payload AND the `assigned` event that put it there in the timeline. With an
+# empty timeline this fixture could not see the defect it exists to guard —
+# the evidence clock counting that hour-old assignment as activity and
+# silencing the nudge for another 7 days, on the one board state where an
+# assignee is itself the bug being reported.
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"assigned","created_at":$at}]' >"$(tfix 37)"
 issue_probe 37 post-merge 1 >/dev/null
 check "assigned post-merge is flagged" 0 "" \
   grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-37"
@@ -711,6 +719,40 @@ fresh="$(issue_probe 83 post-merge 0)"
 check "an hour-old comment does reset it" 1 "" \
   grep -q 'post-merge evidence nudge' <<<"$fresh"
 
+# Neither is an assignment. That event is the *claim* clock's activity fact —
+# 48 hours of silence must not include the seconds between a claim and its
+# required draft PR — and `post-merge` has no claim for it to protect: an
+# assignee here is the invalid composition the flag above reports. Counting
+# it would let a broken board buy the item another 7 days of quiet, which is
+# this issue's failure direction taken backwards. No current assignee on this
+# probe, so nothing stands between the clock rule and the nudge.
+quiet_comment 93 $((8 * 86400))
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"assigned","created_at":$at},{"event":"unassigned","created_at":$at}]' >"$(tfix 93)"
+assigned_clock="$(issue_probe 93 post-merge 0)"
+check "an hour-old assignment does not reset the evidence clock either" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$assigned_clock"
+
+# The two clocks over the one computation, asserted directly rather than
+# through a probe: same fixture, one input's difference, and the reclaim
+# clock is pinned unmoved by the split.
+jq -n --arg at "$(iso_at $((INOW - 5 * 86400)))" \
+  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c95","body":"evidence pending"}]' \
+  >"$(cfix 95)"
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"assigned","created_at":$at}]' >"$(tfix 95)"
+two_clocks="$( (REPO=owner/repo; gh() { issue_stub_gh "$@"; }
+  printf '%s %s\n' \
+    "$(last_issue_activity 95 "$(iso_at $((INOW - 10 * 86400)))")" \
+    "$(last_issue_comment_activity 95 "$(iso_at $((INOW - 10 * 86400)))")") )"
+check "the claim clock counts the assignment, the evidence clock the comment" 0 \
+  "$((INOW - 3600)) $((INOW - 5 * 86400))" printf '%s\n' "$two_clocks"
+# One body, two callers: a second activity computation is the drift the
+# reuse exists to prevent, so the timeline read has exactly one spelling.
+check "the timeline read is not respelled for the evidence clock" 0 "1" \
+  grep -c 'issues/\$n/timeline' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
 # Both waits are quiet, both are owed, and to different parties: suppressing
 # one because the other spoke is a starved criterion, which is the failure
 # this nudge exists to remove.
@@ -766,7 +808,7 @@ check "the 7-day rule is not respelled in the sweep" 1 "" \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 # shellcheck disable=SC2016 # the call site is asserted as a literal
 check "...it is reused from lib/ruling.sh" 0 "" \
-  grep -qF 'ruling_nudge_decision "$NOW" "$age"' \
+  grep -qF 'ruling_nudge_decision "$NOW" "$evidence_age"' \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 
 # `post-merge` is the one queue state whose whole meaning is that the machine
@@ -1187,6 +1229,28 @@ check "...so the live claim is not reclaimed" 1 "" \
 check "...no unassign, no label swap, and no reclaim comment" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
   "$claim_edits_before" "$TMP/issue-edits" "$TMP/posted-50"
+
+# -- the quiet diagnostic: a 504 on a post-merge activity read (#254) --------
+# The guarded read is unconditional at the top of the branch, so a
+# `post-merge` issue can be skipped where before this change it never could —
+# and the assigned flag, which needed no read at all, goes quiet with it.
+# That is #247 D1's direction (a whole pass or none of it, never a verdict
+# derived from a read that did not answer) and the trade `claimed`, `blocked`
+# and `needs-ruling` already make. It is still a new way for that diagnostic
+# to fall silent, so it is pinned here rather than left to inspection.
+jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c94","body":"evidence pending"}]' \
+  >"$(cfix 94)"
+printf '%s\n' "$GH_STUB_ERROR_BODY" >"$(cfix 94).http-error"
+post_merge_skip_edits="$(wc -l <"$TMP/issue-edits")"
+check "a 504 on a post-merge activity read skips the issue" \
+  3 "#94: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+  issue_probe 94 post-merge 1
+check "...so neither the nudge nor the assigned flag speaks" 1 "" test -f "$TMP/posted-94"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and the skipped pass edits nothing" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ \
+  "$post_merge_skip_edits" "$TMP/issue-edits"
 
 # -- the suppressed comment: a 504 on the marker read -----------------------
 # The marker is on the issue. Read as "no marker", a failed read re-posts the
