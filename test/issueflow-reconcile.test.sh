@@ -747,6 +747,28 @@ for spec in "${non_post_merge[@]}"; do
     <<<"$(issue_probe "$n" "$state" "$probe_assignees" "$probe_pr")"
 done
 
+# The machine never judges prose: which criterion starved is not a fact the
+# sweep reads, so a body it could not parse if it tried still nudges.
+quiet_comment 90 $((8 * 86400))
+unparseable_body="$(issue_probe 90 post-merge 0 false "" '¯\_(ツ)_/¯ wake: ask danmt sometime')"
+check "an unparseable body still nudges — the link is the payload" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$unparseable_body"
+check "...and the nudge quotes none of it" 1 "" \
+  grep -qF 'ask danmt sometime' "$TMP/posted-90"
+
+# One spelling of the 7-day rule. `lib/ruling.sh` exists because this family
+# already paid for two copies of a constant; a second one here is the drift,
+# and it is cheap to pin at the grep level.
+# Code lines only: the branch's comment names the constant it must not
+# respell, which is the sentence a future reader needs and not a second copy.
+check "the 7-day rule is not respelled in the sweep" 1 "" \
+  grep -nE '^[^#]*(7 \* 24 \* 3600|604800)' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+# shellcheck disable=SC2016 # the call site is asserted as a literal
+check "...it is reused from lib/ruling.sh" 0 "" \
+  grep -qF 'ruling_nudge_decision "$NOW" "$age"' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
 # `post-merge` is the one queue state whose whole meaning is that the machine
 # owes nothing (LABELS.md: the sweep never reclaims it). This issue makes the
 # quiet visible; it must never make it actionable.
