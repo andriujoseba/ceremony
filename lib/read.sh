@@ -11,9 +11,15 @@
 # sweep wrote `needs-triage` onto a healthy epic and called the pass a
 # success (crew#329, #247).
 #
-# Two helpers, both used on both surfaces:
+# Two helpers:
 #   - guarded_read  — run a read, keep its stderr, report its status
 #   - read_failure_reason — render that stderr into one bounded log line
+#
+# `read_failure_reason` is called from both surfaces. `guarded_read` is
+# called from the issue surface only, and that is deliberate rather than
+# unfinished: labels-reconcile's two capture sites are byte-identical to each
+# other and predate this file, and converting them is a cleanup #247 does not
+# own. Do not go looking for a labels-side caller — there is none yet.
 #
 # What the CALLER does with a failed read is the caller's: labels-reconcile
 # leaves the PR alone for the pass, issueflow-reconcile skips the issue. The

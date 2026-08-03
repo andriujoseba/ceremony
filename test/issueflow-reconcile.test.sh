@@ -1082,4 +1082,164 @@ check "...ends on the byte-identical reconciled. line, with no tail after it" 0 
 check "...and says nothing about skipping" 1 "" \
   grep -q 'skipped this pass' <<<"$whole_out"
 
+# ---------------------------------------------------------------------------
+# The ordering invariant (#247 D1): a skip implies ZERO writes, wherever in
+# the pass the failed read lives. Round 1 measured what the per-read guards
+# alone left standing — a pass could remove `stale`, or mint `needs-triage`,
+# and only then reach a guarded read, fail it, and report the issue as
+# skipped. The sweep said it had touched nothing while a write had landed:
+# the same false report #247 exists to close, one layer along.
+#
+# Every composition is driven TWICE against identical fixtures, differing
+# only in whether the late read answers. The healthy run is the control — it
+# proves the mutation is genuinely on this path, so the failing run's "no
+# edit" is a fact about the guard and not about a branch that never fired.
+# Executed through the sweep, because staging is a property of the pass.
+# ---------------------------------------------------------------------------
+ORDER="$TMP/order"
+mkdir -p "$ORDER"
+cp "$SWEEP/graphql-open.json" "$SWEEP/graphql-merged.json" "$ORDER/"
+order_board() { printf '%s\n' "$1" >"$ORDER/repos_owner_repo_issues_state_open_per_page_100.json"; }
+order_fixture() { # $1 issue, $2 labels JSON, $3 body
+  jq -n --argjson n "$1" --argjson labels "$2" --arg body "${3:-}" \
+    --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+    '{number: $n, created_at: $at, user: {login: "triage-one"},
+      labels: $labels, assignees: [], body: $body}' \
+    >"$ORDER/repos_owner_repo_issues_$1.json"
+}
+order_run() {
+  : >"$ORDER/edits"
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ORDER" ISSUEFLOW_NOW="$INOW" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+}
+# The late read fails, or answers. `guarded_read` is what turns either into a
+# skip, so which endpoint carries the sentinel is what picks the composition.
+order_breaks() { printf '%s\n' "$GH_STUB_ERROR_BODY" >"$ORDER/repos_owner_repo_issues_$1_$2.json.http-error"; }
+order_heals() { rm -f "$ORDER/repos_owner_repo_issues_$1_$2.json.http-error"; }
+# A skip must leave no trace of the staged effect: not the write, and not the
+# log line that would have announced it. Both halves, because a landed write
+# under a "skipped" line and a "reconciled" line over no write are the same
+# lie told from opposite ends.
+order_wrote() { grep -qF "issue $2 $1" "$ORDER/edits"; }
+
+# -- 1. unstale, then a failed activity read (the round's first composition) -
+# `needs-ruling` heals an applied `stale` off before the tail reads the
+# issue's activity. The read is two statements later; the write is already
+# gone.
+order_fixture 80 '[{"name":"ready"},{"name":"needs-ruling"},{"name":"stale"}]'
+order_board '[{"number":80}]'
+order_heals 80 comments
+healthy_unstale="$(order_run)"
+check "the control: a healthy pass really does unstale a pending ruling" 0 "" \
+  order_wrote 80 edit
+check "...and says so" 0 "issueflow: #80: unstale (a ruling is pending)" \
+  printf '%s\n' "$healthy_unstale"
+order_breaks 80 comments
+broken_unstale="$(order_run)"
+check "a failed activity read skips the unstale composition" 0 \
+  "issueflow: #80: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+  printf '%s\n' "$broken_unstale"
+check "...and the stale label is still on the issue" 1 "" order_wrote 80 edit
+check "...and nothing claims it came off" 1 "" \
+  grep -qF 'unstale (a ruling is pending)' <<<"$broken_unstale"
+
+# -- 2. ADD_NEEDS_TRIAGE, then a failed activity read (the second) -----------
+# The mint falls through — unlike FLAG_CONFLICT, which returns — into the
+# same tail. crew#329's own label, written and then disowned by the log.
+order_fixture 81 '[{"name":"enhancement"},{"name":"needs-ruling"}]'
+order_board '[{"number":81}]'
+order_heals 81 comments
+healthy_mint="$(order_run)"
+check "the control: a healthy pass really does mint needs-triage here" 0 "" \
+  order_wrote 81 edit
+check "...and says so" 0 "issueflow: #81: needs-triage (no queue state)" \
+  printf '%s\n' "$healthy_mint"
+order_breaks 81 comments
+broken_mint="$(order_run)"
+check "a failed activity read skips the needs-triage composition" 0 \
+  "issueflow: #81: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+  printf '%s\n' "$broken_mint"
+check "...and crew#329's label is not written on the way out" 1 "" \
+  order_wrote 81 edit
+check "...and nothing claims it was" 1 "" \
+  grep -qF '#81: needs-triage (no queue state)' <<<"$broken_mint"
+
+# -- 3. the blockers->ready flip, then a failed TIMELINE read ----------------
+# The wider class: the failing read is the second one inside
+# last_issue_activity, so the comments read answers and the marker check and
+# the flip both complete first. A comment AND a label edit are staged.
+printf '%s\n' '{"number":82,"state":"closed"}' \
+  >"$ORDER/repos_owner_repo_issues_82.json"
+order_fixture 83 '[{"name":"blocked"},{"name":"needs-ruling"}]' 'Blocked by #82.'
+order_board '[{"number":83}]'
+order_heals 83 timeline
+healthy_flip="$(order_run)"
+check "the control: a healthy pass really does flip cleared blockers to ready" 0 \
+  "issueflow: #83: blockers closed -> ready" printf '%s\n' "$healthy_flip"
+check "...writing the label edit" 0 "" order_wrote 83 edit
+check "...and posting the blockers-cleared comment" 0 "" order_wrote 83 comment
+order_breaks 83 timeline
+broken_flip="$(order_run)"
+check "a failed timeline read skips the blockers->ready composition" 0 \
+  "issueflow: #83: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+  printf '%s\n' "$broken_flip"
+check "...leaving the issue blocked" 1 "" order_wrote 83 edit
+check "...with no comment posted about it" 1 "" order_wrote 83 comment
+check "...and nothing claiming the flip happened" 1 "" \
+  grep -qF 'blockers closed -> ready' <<<"$broken_flip"
+
+# -- 4. a posted nudge, then a failed TIMELINE read -------------------------
+# The comment-only half of the class: an epic nudge is staged, and the
+# ruling tail's activity read fails after it. A comment is as much a
+# mutation as a label — it is the thing markers exist to make idempotent.
+order_fixture 84 '[{"name":"epic"},{"name":"needs-ruling"}]' \
+  '## Task list
+
+- [x] #82'
+order_board '[{"number":84}]'
+order_heals 84 timeline
+healthy_nudge="$(order_run)"
+check "the control: a healthy pass really does nudge a completed epic" 0 \
+  "issueflow: #84: completed epic nudged" printf '%s\n' "$healthy_nudge"
+check "...by posting a comment" 0 "" order_wrote 84 comment
+order_breaks 84 timeline
+broken_nudge="$(order_run)"
+check "a failed timeline read skips the epic-nudge composition" 0 \
+  "issueflow: #84: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+  printf '%s\n' "$broken_nudge"
+check "...and the nudge comment is never posted" 1 "" order_wrote 84 comment
+check "...and nothing claims it was" 1 "" \
+  grep -qF 'completed epic nudged' <<<"$broken_nudge"
+
+# -- the skip is still just a skip: counted, tailed, and green (D4, D6, D7) --
+check "a mutation-bearing composition that skips is still not a crash" 1 "" \
+  grep -qF 'reconcile failed' <<<"$broken_flip"
+check "...is still counted in the D6 tail" 0 \
+  'issueflow: 1 issue skipped this pass on an unreadable fact: #83' \
+  printf '%s\n' "$broken_flip"
+order_board '[{"number":83}]'
+order_run >/dev/null
+check "...and still leaves the job green (D7)" 0 "" test $? -eq 0
+
+# -- the invariant is enforced at the source, not remembered ----------------
+# Staging only holds while every mutation goes through run(). A future call
+# site reaching gh directly would reopen this hole silently, so it is pinned
+# here rather than left to review — the shape lib/ruling.sh already uses for
+# #50 D9. reconcile_opened_issue is deliberately exempt: it runs outside the
+# per-issue subshell, under live errexit, and stages nothing (#247 D8).
+mutation_calls() {
+  grep -nE '(^|[^_[:alnum:]])gh issue (edit|comment)' \
+    "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" "$ROOT/lib/ruling.sh" \
+    | grep -vE '^\S+:[0-9]+: *#' || true
+}
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "every issue mutation on this surface goes through run()" 0 "" \
+  bash -c 'while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in *"run gh issue "*) ;; *) printf "unstaged mutation: %s\n" "$line"; exit 1 ;; esac
+  done <<<"$1"' _ "$(mutation_calls)"
+check "...and the pin sees the call sites it is guarding" 0 "" \
+  test "$(mutation_calls | wc -l)" -ge 8
+
 summary

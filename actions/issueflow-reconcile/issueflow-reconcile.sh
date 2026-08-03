@@ -41,16 +41,67 @@ ISSUEFLOW_SKIP=3
 SKIPPED_COUNT=0
 SKIPPED_ISSUES=""
 
-log() { printf 'issueflow: %s\n' "$*"; }
-run() { if [ -n "${DRY_RUN:-}" ]; then log "DRY_RUN: $*"; else "$@"; fi; }
+# A per-issue pass is ATOMIC: it commits its whole effect or none of it
+# (#247 D1). Inside reconcile_issue_pass's subshell, `run` and `log` do not
+# act — they append here, and commit_staged_effects replays them in order
+# once the pass has completed. Everywhere else (the arrival path, the sweep's
+# own lines) they act immediately, as they always did.
+#
+# This is the ordering invariant itself, not a fix for the two sites that
+# happened to violate it: a mutation reached before a later guarded read is
+# what let a pass remove `stale`, or mint `needs-triage`, and THEN report the
+# issue as skipped — the sweep saying it touched nothing while a write had
+# landed, which is the same false-report class #247 exists to close. Stated
+# per site it would hold until the next composition; stated here it holds for
+# compositions nobody has written yet, because reconcile_issue has no way to
+# mutate directly.
+#
+# Reads are deliberately NOT staged. They may happen anywhere in the pass,
+# because nothing lands until the end.
+STAGING=false
+STAGED_EFFECTS=()
+
+emit() { printf 'issueflow: %s\n' "$*"; }
+apply() { if [ -n "${DRY_RUN:-}" ]; then emit "DRY_RUN: $*"; else "$@"; fi; }
+
+stage() { # $1 = LOG|WRITE, rest = the effect's argv, kept exact by the count
+  STAGED_EFFECTS+=("$#" "$@")
+}
+
+log() { if [ "$STAGING" = true ]; then stage LOG "$@"; else emit "$@"; fi; }
+run() { if [ "$STAGING" = true ]; then stage WRITE "$@"; else apply "$@"; fi; }
+
+commit_staged_effects() {
+  # In staging order, so a completed pass's log and writes read exactly as
+  # they did when each acted at its own call site. The `>/dev/null` is the one
+  # every `run` call site already applies: a redirection cannot travel with
+  # the argv, so it is applied here instead — uniformly, because on this
+  # surface every staged write has it.
+  local i=0 argc
+  STAGING=false
+  while [ "$i" -lt "${#STAGED_EFFECTS[@]}" ]; do
+    argc="${STAGED_EFFECTS[i]}"
+    if [ "${STAGED_EFFECTS[i + 1]}" = LOG ]; then
+      emit "${STAGED_EFFECTS[@]:i + 2:argc - 1}"
+    else
+      apply "${STAGED_EFFECTS[@]:i + 2:argc - 1}" >/dev/null
+    fi
+    i=$((i + 1 + argc))
+  done
+  STAGED_EFFECTS=()
+}
 
 skip_issue() { # $1 = issue, $2 = the whole reason clause — ends this issue's pass
   # Leaves the issue exactly as it is: nothing is derived from a read that
-  # did not answer. Called from wherever the read lives, so no call site can
-  # forget to check — which is why it exits rather than returns. Every caller
-  # runs inside the per-issue subshell, so the exit ends that issue's pass and
-  # nothing else. The reason rides its own `#$n:`-prefixed line (#247 D5).
-  log "#$1: skipped this pass — $2"
+  # did not answer, and nothing this pass staged is ever committed — `exit`
+  # discards the subshell that holds the buffer. So a skip implies zero
+  # `gh issue edit`, zero `gh issue comment`, and no log line claiming an
+  # effect that never landed, wherever in the pass the failed read lives.
+  # Called from the read itself, so no call site can forget to check — which
+  # is why it exits rather than returns. The reason rides its own
+  # `#$n:`-prefixed line (#247 D5), emitted directly: the skip is a fact
+  # about the pass, not one of the effects the pass staged.
+  emit "#$1: skipped this pass — $2"
   exit "$ISSUEFLOW_SKIP"
 }
 
@@ -575,15 +626,26 @@ reconcile_issue_pass() { # $1 = issue — one issue's whole pass, in its own sub
   # is what disables the errexit that would have caught a failed read (#247
   # D2). Removing it would revive errexit and lose #91. Explicit per-read
   # checks are the mechanism instead, and each one exits with ISSUEFLOW_SKIP.
+  #
+  # What the subshell IS, since #247's first round, is the atomicity
+  # boundary: the staged effects live in it, so ending it — by a skip, or by
+  # a crash — discards them, and no partial pass can ever reach the board.
   local n="$1" status=0
   (
+    # Everything below stages rather than acts, and commits at the bottom —
+    # so a skip taken at any read, and a crash at any statement, leaves the
+    # issue exactly as it was (D1). `|| exit $?` keeps a crash's status the
+    # subshell's own, as it was when reconcile_issue was the last command
+    # here: the commit must not overwrite it, and must not run under it.
+    STAGING=true
     guarded_read ISSUE_JSON gh api "repos/$REPO/issues/$n" \
       || skip_issue "$n" "could not read the issue: $(read_failure_reason "$READ_FAILURE_STDERR")"
     issue_payload_valid "$n" <<<"$ISSUE_JSON" \
       || skip_issue "$n" "the issue read answered a payload that is not issue #$n carrying a label array"
     jq -e 'has("pull_request") | not' <<<"$ISSUE_JSON" >/dev/null || exit 0
     ISSUE_LABELS="$(jq -r '.labels[].name' <<<"$ISSUE_JSON")"
-    reconcile_issue "$n"
+    reconcile_issue "$n" || exit $?
+    commit_staged_effects
   ) || status=$?
   if [ "$status" -eq "$ISSUEFLOW_SKIP" ]; then
     SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
