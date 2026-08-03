@@ -264,10 +264,20 @@ check "the marker survives a cross-repo reference's punctuation" 0 \
 check "the slug alone cannot separate a qualified ref from a hyphenated one" 0 "" \
   test "$(printf '%s' '{acme/widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')" \
      = "$(printf '%s' '{acme-widgets#9}' | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
-for collides_with_acme_widgets in '{acme-widgets#9}' '{acme_widgets#9}' '{acme.widgets#9}'; do
-  check "...but the marker does, against $collides_with_acme_widgets" 1 "" test \
-    "$(blocked_parse_marker '{acme/widgets#9}')" \
-    = "$(blocked_parse_marker "$collides_with_acme_widgets")"
+# Pairwise, and deliberately so. Anchoring every pair on the `/` spelling
+# would pass under a fix that only taught the slug about `/` — and that fix
+# leaves `{acme-widgets#9}`, `{acme_widgets#9}` and `{acme.widgets#9}` sharing
+# one marker. The contract is that no two distinct parses collide, so the test
+# is every pair, not every pair through one representative.
+marker_family=(
+  '{acme/widgets#9}' '{acme-widgets#9}' '{acme_widgets#9}' '{acme.widgets#9}'
+)
+for left in "${marker_family[@]}"; do
+  for right in "${marker_family[@]}"; do
+    [ "$left" != "$right" ] || continue
+    check "...but the marker does: $left vs $right" 1 "" test \
+      "$(blocked_parse_marker "$left")" = "$(blocked_parse_marker "$right")"
+  done
 done
 check "the qualifier's punctuation reaches the marker's identity" 1 "" test \
   "$(blocked_parse_marker '{#12, heavy-duty/box#9}')" \
