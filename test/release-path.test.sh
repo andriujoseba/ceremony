@@ -13,13 +13,26 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 library_refs() {
-  awk '
+  local sibling_refs=no
+  case "$1" in
+    */lib/*.sh) sibling_refs=yes ;;
+  esac
+  awk -v sibling_refs="$sibling_refs" '
     /^[[:space:]]*#/ { next }
     {
       line = $0
       while (match(line, /lib\/[[:alnum:]_.-]+\.sh/)) {
         print substr(line, RSTART, RLENGTH)
         line = substr(line, RSTART + RLENGTH)
+      }
+      # Door libraries source siblings through their own BASH_SOURCE dirname,
+      # so the executable line ends in /name.sh without a literal lib/ (#237).
+      if (sibling_refs == "yes" && $0 ~ /^[[:space:]]*(\.|source)[[:space:]]/) {
+        line = $0
+        while (match(line, /\/[[:alnum:]_.-]+\.sh/)) {
+          print "lib" substr(line, RSTART, RLENGTH)
+          line = substr(line, RSTART + RLENGTH)
+        }
       }
     }
   ' "$1"
@@ -93,8 +106,9 @@ fixture() {
     "\$ROOT/lib/changelog.sh" >"$tree/bin/assemble"
   printf '#!/usr/bin/env bash\n' >"$tree/lib/changelog.sh"
   printf '#!/usr/bin/env bash\n' >"$tree/lib/decide.sh"
-  printf '#!/usr/bin/env bash\n. "%s"\n' \
-    "\$ROOT/lib/version.sh" >"$tree/lib/facts.sh"
+  printf '#!/usr/bin/env bash\n# shellcheck source=lib/version.sh\n. "%s"\n' \
+    "\$(cd \"\$(dirname \"\${BASH_SOURCE[0]}\")\" && pwd)/version.sh" \
+    >"$tree/lib/facts.sh"
   printf '#!/usr/bin/env bash\n' >"$tree/lib/version.sh"
   printf '%s\n' "$tree"
 }
@@ -115,6 +129,20 @@ printf 'run: bash "%s"\nrun: bash "%s"\nrun: . "%s"\nrun: . "%s"\nrun: . "%s"\n'
   >"$tree/.github/workflows/release.yml"
 printf '#!/usr/bin/env bash\n' >"$tree/lib/ruling.sh"
 check "a new workflow library fails with its missing path" 1 \
+  "missing dependency: lib/ruling.sh" path_check "$tree"
+
+# A library growing a sibling dependency in the production idiom must also
+# name the missing path; a literal lib/ marker in a comment is not evidence.
+tree="$(fixture missing-transitive)"
+printf 'run: bash "%s"\nrun: bash "%s"\nrun: . "%s"\n' \
+  "\$CEREMONY_DIR/lib/facts.sh" "\$CEREMONY_DIR/lib/decide.sh" \
+  "\$CEREMONY_DIR/lib/changelog.sh" \
+  >"$tree/.github/workflows/release.yml"
+printf '# shellcheck source=lib/ruling.sh\n. "%s"\n' \
+  "\$(cd \"\$(dirname \"\${BASH_SOURCE[0]}\")\" && pwd)/ruling.sh" \
+  >>"$tree/lib/facts.sh"
+printf '#!/usr/bin/env bash\n' >"$tree/lib/ruling.sh"
+check "a new sibling library fails with its missing path" 1 \
   "missing dependency: lib/ruling.sh" path_check "$tree"
 
 # A manifest may not rot into a safe-looking superset.
