@@ -85,12 +85,12 @@ reconcile_attention() { # $1 item, $2 pr|issue, $3 assignees, $4 suppression
 This pull request carries \`attention\`, but that label is issue-only. Put
 the label on the assigned issue that owns the claim. The sweep cannot infer
 which issue that is, so it reports the malformed target without removing or
-retargeting the label (heavy-duty/ceremony#232)." ;;
+retargeting the label." ;;
     MALFORMED_UNASSIGNED)
       body="$marker
 This issue carries \`attention\` but has no assignee to receive the demand.
 Assign the intended builder or remove the flag. The sweep reports the board
-bug without assigning anyone or changing the label (heavy-duty/ceremony#232)." ;;
+bug without assigning anyone or changing the label." ;;
   esac
   run gh issue comment "$n" -R "$REPO" --body "$body" >/dev/null
   log "#$n: malformed attention ($surface) — commented; no label or assignee changed"
