@@ -5,6 +5,9 @@ published verbatim as that release's body (lib/changelog.sh extracts it),
 so entries say what changed, cite the issue, and stop — at most 300
 characters each, guard-enforced on the PR that writes the fragment (#167);
 a genuinely long change ships several short entries, never one long one.
+The citation is guard-enforced too, and it closes the entry: one `(#N)`
+group, then the final `.` and nothing after it (#262). Sections published
+before that rule keep their prose; the guard reads fragments only.
 Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
