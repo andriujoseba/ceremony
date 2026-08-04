@@ -122,8 +122,11 @@ expected.
 
 When an acceptance produces more than one issue, mint an **epic** (`epic`
 label): the approach, the decisions, the constraint list, and a
-dependency-ordered task list of child issues. Children reference the epic;
-the epic's checklist is the progress view. Builders never pick the epic
+dependency-ordered checklist of child issues. Children reference the epic;
+that checklist is the progress view. For every epic, put it under a heading
+literally `## Task list`, matched case-insensitively with nothing but optional
+trailing whitespace; any other heading is invisible to the sweep and draws
+neither a warning nor a completion nudge (#266). Builders never pick the epic
 itself. Keep the checklist current — a stale epic misleads every scan.
 Repositories that adopt version epics follow [RELEASES.md](RELEASES.md).
 
