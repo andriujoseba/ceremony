@@ -85,6 +85,28 @@ table repeats it (#104).
 - Whole-version matching everywhere: `0.7.0` never matches `0.7.0-rc1`.
 - Shellcheck- and actionlint-clean is a CI gate, not a suggestion.
 
+## Doctrine conventions
+
+The vendored role files — `AGENTS.md`, `TRIAGE.md`, `BUILDER.md`,
+`REVIEWER.md`, `LABELS.md`, and `RELEASES.md` — state each normative rule
+completely, keep at most one sentence of why, and cite its record only with a
+bare parenthetical such as `(#N)`, `(#N D3)`, or `(#N, #M)`. Incident
+narrative — timestamps, actors, quoted comments, measured counts, and links to
+specific comments — belongs in that record. If a rule cannot be followed
+without chasing its cite, the rule is under-stated: fix the statement, not the
+citation. (#280)
+
+Normative text in those files does not cite issues from other repositories.
+Consumers read the vendored bytes outside this organization's context, and a
+cited repository may not be public. A repo-boundary deferral remains allowed:
+it names another component as the owner of a fact rather than citing one of
+that component's issues. (#280)
+
+This is distinct from the code-comment convention above: a code comment is
+read by a maintainer inside the organization while standing in the file,
+whereas vendored doctrine is read by any agent in any governed repository on
+every session. (#280)
+
 ## How the other repos use this
 
 Two consumption modes, split by what has a runtime:
