@@ -2341,6 +2341,24 @@ foreign_out="$(board_run)"
 check "another family's marker never silences the collision flag" 0 \
   'issueflow: #284: collision flag — issueflow-reconcile=257' \
   printf '%s\n' "$foreign_out"
+# The direction that is actually load-bearing, and that the case above cannot
+# reach: a foreign family's marker landing AFTER this flag's own must not make
+# the flag speak again. Family-blind, "the last marker on the thread" is the
+# blocked-parse echo's, which is not this state's marker, and the flag
+# re-posts a comment that already stands — the noise D4's dedup exists to
+# stop, on the one thread where three families all have something to say.
+jq -n --arg b "<!-- issueflow:$(state_marker collision 'issueflow-reconcile=257') -->
+this flag's own last word" \
+  --arg c "<!-- issueflow:blockers-parsed-none-abc123def456 -->
+a different family, later on the thread" \
+  '[{"user": {"login": "sweep-bot"}, "body": $b},
+    {"user": {"login": "sweep-bot"}, "body": $c}]' \
+  >"$BOARD/repos_owner_repo_issues_284_comments.json"
+later_foreign_out="$(board_run)"
+check "a foreign family's LATER marker never makes the flag re-post" 1 "" \
+  grep -qF 'issueflow: #284: collision flag' <<<"$later_foreign_out"
+check "...while every other collision on the board still speaks" 0 "2" \
+  flag_count collision "$later_foreign_out"
 
 # -- the post-ruling board draws nothing (D5's must-not-flag leg) -----------
 # The same issues after triage placed them: the TRIAGE.md triple chained
@@ -2418,6 +2436,33 @@ in_flight_out="$(board_run)"
 check "a claimed carrier with an open PR draws the ready issue's flag too" 0 \
   'issueflow: #284: collision flag — issueflow-reconcile=253' \
   printf '%s\n' "$in_flight_out"
+
+# -- D3b's headline case, on the WINDOW side (acceptance criterion) ----------
+# The criterion says a `claimed` non-member is flagged whether or not it has
+# an open PR, and it is the line the 18:11Z ruling turned on — triage had
+# excluded the open-PR case at 18:06Z and corrected it five minutes later.
+# The collision fixtures above cover the PR-liveness question for their flag;
+# this covers it for the other one. #292's charge against the third state is
+# that a non-member competes with gate members for builders, and a non-member
+# holding a builder AND a review round is that competition realized.
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":403,"body":"","closingIssuesReferences":{"nodes":[{"number":402}]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$BOARD/graphql-open.json"
+board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
+  'Blocked by #253.'
+board_issue 253 claimed 'issueflow-reconcile — a member holding the window open' '' 1
+board_issue 402 claimed 'REVIEWER.md — a non-member with a builder and a round' '' 1
+board_assemble 249 253 402
+nonmember_pr_out="$(board_run)"
+check "a claimed non-member with an open PR still draws the window flag" 0 \
+  'issueflow: #402: window flag — an unblocked non-member under #249' \
+  printf '%s\n' "$nonmember_pr_out"
+check "...and the gate member beside it, also claimed with a PR, is not" 1 "" \
+  grep -qF 'issueflow: #253: window flag' <<<"$nonmember_pr_out"
+check "...and the live claim is left exactly as it was" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
+check "...one window flag on the board, and only one" 0 "1" \
+  flag_count window "$nonmember_pr_out"
 
 # -- flagged, resolved, recreated unchanged: silent, and specified ----------
 # D4's boundary, asserted rather than left accidental. Nothing is posted at
