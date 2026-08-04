@@ -163,9 +163,11 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    newest entry by start time — not completion, a cancelled run outliving
    its replacement's start — and never a `CANCELLED` entry while the same
    check has a non-cancelled one there. A check whose entries at the head
-   are all cancelled has not reported at all and is not green, the gate
-   collapsing alike (#139, #276). **Then classify that entry by
-   `conclusion`, never `status`**, which can disagree with it (#259). No
+   are all cancelled has not reported at all and is not green — a collapse,
+   not a new class, and the gate partitions alike, dropping a cancelled
+   entry only where a non-cancelled survivor remains and leaving an
+   all-cancelled context blocking (#139, #276). **Then classify that entry
+   by `conclusion`, never `status`**, which can disagree with it (#259). No
    conclusion is not green: a configured run in progress is waited on, and
    waiting is compliance, not a stall. Cancelled or stale is not green,
    *stale* being a superseded head's check, which a head-scoped rollup never
