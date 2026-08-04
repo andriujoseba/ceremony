@@ -19,7 +19,7 @@ one **without asking anything**. One accountable role keeps builders from guessi
 ## For each discussion, converge on exactly one outcome
 
 1. **Answer.** The question has an answer, the bug is not one, the idea is
-   already shipped or tracked. Reply with the answer and evidence; mark answered.
+   already shipped or tracked. Link the code, doc, or issue; mark answered.
 2. **Ask.** Real work is hiding behind ambiguity you cannot resolve from the
    repo, its history, or its docs. Ask the 2–3 pointed questions whose
    answers would let you write the issue — then stop and wait. Do not mint an
