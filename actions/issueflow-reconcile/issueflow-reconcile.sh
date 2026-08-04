@@ -918,13 +918,26 @@ main() {
         done < <(refs_references <<<"$body")
       done)"
 
-  local n tail_line
+  local n tail_line issue_numbers
   SKIPPED_COUNT=0
   SKIPPED_ISSUES=""
-  for n in $(gh api --paginate "repos/$REPO/issues?state=open&per_page=100" \
-      --jq '.[] | select(has("pull_request") | not) | .number'); do
-    reconcile_issue_pass "$n"
-  done
+  # A command substitution in a for list suppresses errexit. Capture and
+  # check the board read before entering the loop, or a 504 (including one
+  # after partial pagination) reports a full pass over a truncated board
+  # (#257).
+  if ! guarded_read issue_numbers gh api --paginate \
+      "repos/$REPO/issues?state=open&per_page=100" \
+      --jq '.[] | select(has("pull_request") | not) | .number'; then
+    log "could not read the issue board: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    return 1
+  fi
+  if [ -z "$issue_numbers" ]; then
+    log "no open issues."
+  else
+    while IFS= read -r n; do
+      [ -n "$n" ] && reconcile_issue_pass "$n"
+    done <<<"$issue_numbers"
+  fi
   log "reconciled."
   # The job stays green (D7): an hourly sweep over a hundred-issue board meets
   # transient 504s as a matter of course, and reddening the whole run for one
