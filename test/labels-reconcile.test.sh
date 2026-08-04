@@ -13,13 +13,29 @@ export LC_ALL=C
 cd "$(dirname "$0")/.."
 # shellcheck source=actions/labels-reconcile/labels-reconcile.sh
 . actions/labels-reconcile/labels-reconcile.sh
-load_config .github/labels.conf
-set_required_bots codex-bot-andresmgsl
 
+RTMP="$(mktemp -d)"
+trap 'rm -rf "$RTMP"' EXIT
+
+# The fixture roster is the test's own, and deliberately not the shipped one
+# (#304). The state machine is roster-agnostic — it needs three distinct
+# required logins, not THESE three — so binding the fixtures to
+# .github/labels.conf by slot bought nothing and cost the file: when the
+# operator shrank panel= from four members to three, the recused author left
+# two, the third slot came up unbound, and set -u aborted this file before
+# its first assertion. 217 assertions became 0, on main and on every branch cut
+# from it, and no fixture here was about the panel's size. The shape below is
+# test/labels.test.sh's, which has always written its own conf.
+FIXTURE_CONF="$RTMP/fixture-labels.conf"
+FIXTURE_AUTHOR=fixture-builder
 # The DRAFT/HEAD_SHA/REQUESTED/REVIEWS_JSON assignments below are the state
 # machine's inputs, consumed inside the sourced decide_state — not unused.
 # shellcheck disable=SC2034
-BOT1="${REQUIRED_BOTS[0]}" BOT2="${REQUIRED_BOTS[1]}" BOT3="${REQUIRED_BOTS[2]}"
+BOT1=fixture-bot-one BOT2=fixture-bot-two BOT3=fixture-bot-three
+printf 'panel=%s %s %s %s\n' "$BOT1" "$BOT2" "$BOT3" "$FIXTURE_AUTHOR" \
+  >"$FIXTURE_CONF"
+load_config "$FIXTURE_CONF"
+set_required_bots "$FIXTURE_AUTHOR"
 pass=0 fail=0
 
 expect() { # $1 = description, $2 = want, $3 = got
@@ -696,8 +712,6 @@ expect "...and an already-applied stale comes off" \
 # posted comments appended back into the fixture so a second sweep sees the
 # first one's writes, and every label edit recorded.
 # ---------------------------------------------------------------------------
-RTMP="$(mktemp -d)"
-trap 'rm -rf "$RTMP"' EXIT
 iso_at() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 RNOW=2000000000
 
@@ -1139,8 +1153,8 @@ done
 # a PR carrying a standing CHANGES_REQUESTED that its builder converted back
 # to draft read state:building — and the staleness sweep read a dropped fix
 # round as a build in progress.
-load_config .github/labels.conf
-set_required_bots codex-bot-andresmgsl
+load_config "$FIXTURE_CONF"
+set_required_bots "$FIXTURE_AUTHOR"
 MERGEABLE=MERGEABLE CHECKS=SUCCESS LABELS="" HEAD_SHA=head1
 DRAFT=true REQUESTED="" REVIEWS_JSON="$(reviews \
   "$(rev "$BOT1" CHANGES_REQUESTED head1 no t1)" \
@@ -1305,10 +1319,10 @@ mutant_blockers() { # $1 = sed program → blockers() from a copy of the script
     RECONCILE_UNREQUESTED_GRACE="$RECONCILE_UNREQUESTED_GRACE" \
     bash -u -c '
       . "$1"
-      load_config .github/labels.conf
-      set_required_bots codex-bot-andresmgsl
+      load_config "$2"
+      set_required_bots "$3"
       blockers
-    ' bash "$mutated"
+    ' bash "$mutated" "$FIXTURE_CONF" "$FIXTURE_AUTHOR"
 }
 # the harness itself, unmutated: it must reproduce the verdict the sourced
 # functions give, or a "flip" below proves nothing about the guard
@@ -1369,6 +1383,48 @@ expect "without the row the same approvals leave the round incomplete" \
   state:addressing "$(decide_state)"
 expect "...and the owed, unasked verdict is named" \
   blocker:unrequested "$(blockers)"
+
+# -- the shipped roster, as a property rather than a slot (#304 D2) ----------
+# The one case that reads the real .github/labels.conf, and it asserts only
+# what that file can honestly prove here: it parses, and recusal removes the
+# author from whatever it names. No index, no expected size — the panel is the
+# operator's to resize (D3), and the fixtures above no longer care. What this
+# does catch is a shipped conf that stopped parsing, which must never be
+# reported as a green suite.
+#
+# The probe runs in a subshell so a refusal cannot leave this file's globals
+# half-loaded, and it quantifies over every member rather than sampling one:
+# there is no member whose recusal is special. load_config's stderr is dropped
+# because the exit status is the assertion; the broken-conf case below would
+# otherwise print its (correct) complaint into a passing run.
+live_panel_probe() { # $1 = conf → PARSE:<rc> [RECUSED:<yes|no> SHRANK:<yes|no>]
+  bash -u -c '
+    . actions/labels-reconcile/labels-reconcile.sh
+    rc=0
+    load_config "$1" 2>/dev/null || rc=$?
+    printf "PARSE:%s" "$rc"
+    [ "$rc" -eq 0 ] || { printf "\n"; exit 0; }
+    recused=yes shrank=yes
+    for author in "${BOTS[@]}"; do
+      set_required_bots "$author"
+      for bot in ${REQUIRED_BOTS[@]+"${REQUIRED_BOTS[@]}"}; do
+        [ "$bot" != "$author" ] || recused=no
+      done
+      [ "${#REQUIRED_BOTS[@]}" -eq "$((${#BOTS[@]} - 1))" ] || shrank=no
+    done
+    printf " RECUSED:%s SHRANK:%s\n" "$recused" "$shrank"
+  ' bash "$1"
+}
+expect "the shipped labels.conf parses, and recuses each member from its own panel" \
+  "PARSE:0 RECUSED:yes SHRANK:yes" "$(live_panel_probe .github/labels.conf)"
+# ...and the teeth: the same probe on a copy whose panel= line names nobody.
+# A roster edit that empties the line is the shape this catches — the file
+# still looks like a conf, and every panel in the repo would resolve to
+# nothing.
+BROKEN_CONF="$RTMP/broken-labels.conf"
+sed 's/^panel=.*/panel=/' .github/labels.conf >"$BROKEN_CONF"
+expect "...and a malformed panel= line in that same file is refused, not passed" \
+  PARSE:1 "$(live_panel_probe "$BROKEN_CONF")"
 
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
