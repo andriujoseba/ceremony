@@ -12,6 +12,168 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.6.0 — 2026-08-04
+
+### Added
+
+- The fragment guard now requires each entry to end with its issue
+  citation: one `(#N)` group — local, `repo#N` or `owner/repo#N`
+  references separated by `, ` — then the final `.` and nothing after it
+  (#262).
+- The refusal distinguishes an entry carrying no reference at all from one
+  whose reference is present but not terminal, and names the shape to
+  write in both (#262).
+- The 300-character bound still outranks the citation across the whole
+  fragment, and the outranked problem stays out of the message it lost
+  to: one fragment, one diagnosis, wherever in the file it sits (#262).
+- BUILDER.md now describes a fix round that rides a draft: the draft phase
+  stays the builder's, ready-for-review is the builder's own act, and where a
+  draft suppressed the checks green is proven at the flip (#258).
+- REVIEWER.md now reads a draft carrying `state:addressing` as a fix round in
+  progress rather than abandonment (#258).
+- A `post-merge` item with no comment for 7 days now draws one nudge from the
+  issue sweep: the wake evidence is owed. A starving criterion used to be
+  found only when someone happened to run the right read (#254).
+- Label churn does not reset that clock, and neither does an assignment: on
+  `post-merge` an assignee is an invalid composition, not activity, and it
+  must not buy the item another 7 days of silence (#254).
+- The nudge names the triage actor from `triage-actors=`, not the human
+  reviewer: `post-merge` is triage's completion queue, so the starved wake
+  condition is triage's to answer (#254).
+- It links the item and parses nothing from the body — which criterion
+  starved is prose, and the machine never judges prose (#254).
+- Like the ruling nudge it carries no idempotency marker on purpose: the
+  comment is itself activity, so the rule self-rate-limits to one nudge per 7
+  quiet days. Comment-only — no path here writes a label (#254).
+- Release epics now announce release initialization when their declared dependency gates clear (#253).
+- The issue sweep now echoes an issue's parsed `Blocked by` set as a comment
+  whenever that set changes, so a readable-but-wrong declaration is visible in
+  one sweep instead of days later, when a human happens to run the parser by
+  hand (#252).
+- The echo's marker carries the parsed set itself: an unchanged parse never
+  re-posts on a 15-minute cron, and a changed one always speaks. Comment-only
+  — no path here writes a label (#252).
+- CI now refuses a root `*.md` declared in neither `docs/VENDORED.txt` nor the
+  guard's short exemption list, so a new doctrine file can no longer reach a
+  tag undeclared and stay invisible to every consumer's `docs-sync` (#251).
+- The same guard reads the manifest the other way: every entry must resolve to
+  a regular, non-empty, tracked file — no symlink, no directory, no `../`
+  escape (#251).
+- Document the optional, operator-ruled release-epic flow for governed repositories. (#248).
+- Guard documentation availability markers against missing issue citations
+  and release candidates that already ship the cited work (#238).
+- The label and issue-flow sweeps now comment once per episode when
+  `attention` targets a pull request or an unassigned issue, without
+  retargeting the demand or changing labels or assignees (#232).
+- Pull requests that promise `Refs #N` now fail a read-only, body-edit-aware
+  guard if GitHub would close N through a keyword or sidebar link (#218).
+
+### Changed
+
+- TRIAGE.md now requires unconditional collision-edge chains when open issues
+  carry the same deliverable, keeping the ready queue concurrently claimable
+  (#288).
+- TRIAGE.md now states its rules with bare record cites: the label-race and
+  lifted-hold incident narratives leave the normative text while their
+  operational rules remain complete (#282).
+- `BUILDER.md` states its rules and cites their record bare: the incident
+  narratives, the links into issue comments and the cross-repo issue cites
+  leave the normative text, which no rule leaves with them (#281).
+- CONTRIBUTING.md now keeps vendored doctrine self-contained: state the rule,
+  retain at most one sentence of why, cite the local record bare, and leave the
+  incident narrative in that record (#280).
+- BUILDER.md's green ruled term now says which entry to read before it says
+  what an entry means: a check's word at a head is its newest entry by start
+  time, and a cancelled entry is not that word while the same check carries a
+  non-cancelled one at that head (#276).
+- A check whose every entry at the head is cancelled is unchanged — nothing
+  survived to be its word, so it never reported and is not green — and the
+  collapse mirrors `checks_state`'s carve-out rather than adding a class
+  (#276).
+- BUILDER.md's step 1 now rules the checkless head: no checks configured is
+  nothing to wait for, and the request goes out straight away — stated once,
+  in the ruled-term paragraph, with the draft-round restatement removed
+  (#272).
+- `README.md` and `RELEASES.md` derive `scope:docs`, and the
+  `changelog-assembled`, `docs-sync` and `runner-isolated` actions and tests
+  derive `scope:guards`; all five were mapped nowhere. The docs block matched
+  a literal `README`, which this tree does not carry (#267).
+- `lib/read.sh` and `lib/ruling.sh` derive `scope:labels` beside
+  `scope:release-flow`. Both reconcilers share them, and a mixed file wears
+  both labels rather than `lib/**` being re-carved into a row per file (#267).
+- TRIAGE.md now tells every epic author to put its progress checklist under
+  the literal `## Task list` heading, because any other heading is silently
+  invisible to the completion sweep (#266).
+- TRIAGE.md now scopes the no-assignee board bug to flagging an unassigned
+  issue, while still directing triage to repair ownership instead (#264).
+- `BUILDER.md` and `CHANGELOG.md` state the citation as guard-enforced
+  rather than as house style, beside the 300-character bound it now sits
+  next to (#262).
+- Four fragments in flight gained a terminal citation; published sections
+  are untouched, so no shipped prose is re-opened (#262).
+- BUILDER.md's green ruled term now names its field: greenness is read from
+  each check's `conclusion`, never its `status`, and *stale* means a check
+  of a superseded head — not a same-head node whose `status` lags its own
+  conclusion (#260).
+- Consumer guidance: re-vendor tooling reads the pin's `docs/VENDORED.txt`,
+  never a hardcoded list, so a new doctrine file propagates at the next
+  ordinary pin bump with zero list edits (#251).
+- Define the doors-unchanged drill record and an executable release-path list,
+  so a release may reuse live evidence only when its door bytes are unchanged
+  since the last rehearsed tag (#237).
+
+### Fixed
+
+- Claiming a `needs-ruling` issue no longer buys its escalation another 7
+  quiet days: the issue-side ruling clock reads comments alone — an
+  assignment is the claim clock's fact — and LABELS.md now names what each
+  surface's clock reads (#284).
+- `scope:release-flow` no longer rides every pull request: `changelog.d/**`
+  is out of its path map. Doctrine makes every behavior change write a
+  fragment, so the glob labelled 20 of the last 20 PRs while 3 touched a
+  release surface. `CHANGELOG.md` stays, as only the release PR edits it
+  (#267).
+- The issue-flow reconciler and its test now derive `scope:labels`, the scope
+  that already names the taxonomy they reconcile (#267).
+- Abort issue-flow reconciliation when the board read fails instead of reporting a complete pass over an empty or partial result (#257).
+- The issue sweep no longer derives label writes from a read that failed. An
+  HTTP 504 whose body is GitHub's JSON error object passed every guard and
+  emptied the label set, so a healthy epic was written `needs-triage` and the
+  pass reported success (#247).
+- A failed comments read no longer reclaims a live claim. Swallowed, it dated
+  the issue by `created_at` and unassigned the builder under a comment
+  asserting 48 hours of silence about an issue commented on seconds earlier
+  (#247).
+- A failed comments read no longer reads as "no marker", which re-posted the
+  comment the marker exists to suppress (#247).
+- Every read inside the per-issue subshell is checked explicitly, on its
+  status and on its payload shape; the issue is left exactly as it is and the
+  sweep continues. A partial pass names its skipped issues after
+  `reconciled.` (#247).
+- A per-issue pass is now atomic: its writes and its log lines commit only
+  once the pass completes. A skip could previously land after an earlier
+  mutation, reporting an issue as untouched when a label had already been
+  written or removed (#247).
+- The issue-flow sweep now reads an issue's deliverable as the `Refs` PR that
+  merged last, not the one numbered highest — merge order is not number order,
+  and the old rule spent the transition marker on the wrong PR (#242).
+- Preserve active claims when an open local pull request links them with `Refs #N`. (#241).
+- `blocker:unrequested` no longer fires while a head's checks are pending or
+  red: the review round forbids requesting there, so the one blocker that
+  demanded an act flagged builders for complying. Pending is CI's move, red is
+  `blocker:ci-red`'s (#236).
+- `blocker:unrequested` now waits for the round to settle — the head and the
+  newest verdict must have stood for `RECONCILE_UNREQUESTED_GRACE` (default
+  300s) — so a sweep landing between a push and its re-request no longer flags
+  a round in motion (#236).
+- LABELS.md no longer claims nothing in `actions/` clears or reads
+  `attention`: the reconciler has done both since the derived `claimed` →
+  `post-merge` transition shipped. The amended text keeps the hand-set rule
+  and admits the one clear and the diagnostic read (#231).
+- Triage now puts `attention` on the assigned issue that owns a claim, never
+  on its pull request, and treats an unassigned issue as a board bug rather
+  than a demand (#230).
+
 ## 0.5.0 — 2026-08-03
 
 ### Added
