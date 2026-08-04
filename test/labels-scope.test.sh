@@ -148,10 +148,16 @@ EOF
   check "derive: RELEASES.md is scope:docs" 0 "[scope:docs]" derives 'RELEASES.md'
   check "derive: TRIAGE.md is scope:docs" 0 "[scope:docs]" derives 'TRIAGE.md'
 
-  # D3: three guard actions and their tests were in no block at all
+  # D3: three guard actions and their tests were in no block at all. Each of
+  # the six paths is asserted ALONE, never bundled with its sibling: a set
+  # holding both the action and its test derives scope:guards when either row
+  # matches, so one row could be deleted with the case still green — the six
+  # rows have to be six assertions to be six protections (#300 round).
   for guard in changelog-assembled docs-sync runner-isolated; do
     check "derive: actions/$guard is scope:guards" 0 "[scope:guards]" \
-      derives "$(files "actions/$guard/$guard.sh" "test/$guard.test.sh")"
+      derives "actions/$guard/$guard.sh"
+    check "derive: $guard's test is scope:guards" 0 "[scope:guards]" \
+      derives "test/$guard.test.sh"
   done
 
   # D4: lib/ is genuinely mixed, so the shared files wear both labels rather
