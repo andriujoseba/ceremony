@@ -53,7 +53,7 @@ triage bug, and the move is to say so on the issue, not to guess.
 ## Claiming
 
 - Assign yourself, swap `ready` → `claimed`, and comment that you are
-  starting. The claim promises a draft PR soon: one with no PR and no
+  starting. The claim promises a draft PR soon: a claim with no PR and no
   activity is what the staleness sweep reclaims, unless `offsite` records
   that its PR lives in another repo.
 - **A park is declared, never inferred.** Comment naming what the claim
