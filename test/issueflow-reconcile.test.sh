@@ -479,6 +479,7 @@ check "a release epic with every declared blocker closed announces init" 0 "" \
   grep -qF '<!-- issueflow:release-init-due -->' "$TMP/posted-53"
 check "the init announce names all five steps" 0 "5" \
   grep -cE '^[1-5]\. ' "$TMP/posted-53"
+# shellcheck disable=SC2016 # backticks are the literal portable doctrine citation
 check "the init announce cites the portable vendored doctrine path" 0 "" \
   grep -qF 'See `.ceremony/RELEASES.md`.' "$TMP/posted-53"
 check "the init announce names the never-automated operator blessing" 0 "" \
