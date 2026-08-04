@@ -275,7 +275,7 @@ fragment_tree fragments-dev-flat 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- Added fragment mode." >"$TMP/fragments-dev-flat/changelog.d/115.md"
+printf '%s\n' "- Added fragment mode (#115)." >"$TMP/fragments-dev-flat/changelog.d/115.md"
 check "fragment -dev + well-formed flat fragment passes" 0 "fragment mode" \
   in_tree fragments-dev-flat
 
@@ -310,7 +310,7 @@ EOF
 cat >"$TMP/fragments-dev-grouped/changelog.d/115.md" <<'EOF'
 ### Changed
 
-- Added fragment mode.
+- Added fragment mode (#115).
 EOF
 check "fragment -dev + well-formed grouped fragment passes" 0 "fragment mode" \
   in_tree fragments-dev-grouped
@@ -322,11 +322,11 @@ fragment_tree fragments-dev-mixed 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- Flat fragment." >"$TMP/fragments-dev-mixed/changelog.d/114.md"
+printf '%s\n' "- Flat fragment (#115)." >"$TMP/fragments-dev-mixed/changelog.d/114.md"
 cat >"$TMP/fragments-dev-mixed/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode refuses mixed shapes with the shared assembler diagnosis" 1 \
   "fragment 'changelog.d/115.md' is grouped but fragment 'changelog.d/114.md' is not" \
@@ -342,7 +342,7 @@ EOF
 cat >"$TMP/fragments-dev-all-grouped-over-flat/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode refuses an all-grouped set over a flat published section" 1 \
   "changelog.d/115.md' is grouped but newest published section '1.2.3'" \
@@ -357,7 +357,7 @@ fragment_tree fragments-dev-flat-over-grouped 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- Flat fragment." >"$TMP/fragments-dev-flat-over-grouped/changelog.d/115.md"
+printf '%s\n' "- Flat fragment (#115)." >"$TMP/fragments-dev-flat-over-grouped/changelog.d/115.md"
 check "fragment mode refuses a flat set over a grouped published section" 1 \
   "changelog.d/115.md' is flat but newest published section '1.2.3'" \
   in_tree fragments-dev-flat-over-grouped
@@ -376,14 +376,14 @@ printf '%s\n' "grouped" >"$TMP/fragments-dev-flip/changelog.d/shape"
 cat >"$TMP/fragments-dev-flip/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode: 'grouped' sentinel admits the flip tree over a flat published section" 0 \
   "fragment mode" in_tree fragments-dev-flip
 
 # Post-flip drift is refused on its own PR: a flat probe fragment atop the
 # flip tree goes red — beside grouped fragments the mix rule names it first.
-printf '%s\n' "- Flat probe." >"$TMP/fragments-dev-flip/changelog.d/116.md"
+printf '%s\n' "- Flat probe (#116)." >"$TMP/fragments-dev-flip/changelog.d/116.md"
 check "fragment mode: a flat probe atop the flip tree is refused" 1 \
   "changelog.d/115.md' is grouped but fragment 'changelog.d/116.md' is not" \
   in_tree fragments-dev-flip
@@ -393,7 +393,7 @@ rm "$TMP/fragments-dev-flip/changelog.d/116.md"
 # holds the shape: an all-flat set under 'grouped' is refused, sentinel
 # named — the published-section inference never gets a say.
 rm "$TMP/fragments-dev-flip/changelog.d/115.md"
-printf '%s\n' "- Flat probe." >"$TMP/fragments-dev-flip/changelog.d/116.md"
+printf '%s\n' "- Flat probe (#116)." >"$TMP/fragments-dev-flip/changelog.d/116.md"
 check "fragment mode: a flat set under the 'grouped' sentinel refused, sentinel named" 1 \
   "changelog.d/116.md' is flat but 'changelog.d/shape' declares grouped" \
   in_tree fragments-dev-flip
@@ -417,7 +417,7 @@ EOF
 cat >"$TMP/fragments-dev-no-published/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode accepts a consistent set with no published section" 0 \
   "fragment mode" in_tree fragments-dev-no-published
@@ -452,7 +452,7 @@ fragment_tree fragments-bad-name 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- An entry." >"$TMP/fragments-bad-name/changelog.d/notes.md"
+printf '%s\n' "- An entry (#1)." >"$TMP/fragments-bad-name/changelog.d/notes.md"
 check "fragment mode quotes malformed-fragment diagnosis and file" 1 \
   "fragment 'changelog.d/notes.md' is not named for its issue" \
   in_tree fragments-bad-name
@@ -531,7 +531,7 @@ check "same changelog fails in legacy mode" 1 "development tree" \
 
 mkdir -p "$TMP/env-tree"
 printf '1.2.4-dev\n' >"$TMP/env-tree/VERSION"
-printf '# Changelog\n\n## Unreleased\n\n- Pending.\n' >"$TMP/env-tree/NOTES.md"
+printf '# Changelog\n\n## Unreleased\n\n- Pending (#1).\n' >"$TMP/env-tree/NOTES.md"
 # A non-default changelog name proves the env var is honored, not the default.
 env_tree() {
   (cd "$TMP/env-tree" && CHANGELOG=NOTES.md VERSION_SOURCE=file bash "$SCRIPT")

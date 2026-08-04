@@ -55,13 +55,13 @@ tree flat-one <<EOF
 $BASE_CHANGELOG
 EOF
 frag flat-one 12.md <<'EOF'
-- Twelve landed.
+- Twelve landed (#12).
 EOF
 check "flat: one fragment assembles and stamps" 0 "consumed 1 fragment" \
   in_tree flat-one 0.2.0 2026-07-24
 check "flat: preamble and shipped section stay byte-identical around the insert" 0 "" \
   assert_file "$TMP/flat-one/CHANGELOG.md" \
-  $'# Changelog\n\nPreamble prose belongs to no section.\n\n## 0.2.0 — 2026-07-24\n\n- Twelve landed.\n\n## 0.1.0 — 2026-07-01\n\n- The shipped entry.'
+  $'# Changelog\n\nPreamble prose belongs to no section.\n\n## 0.2.0 — 2026-07-24\n\n- Twelve landed (#12).\n\n## 0.1.0 — 2026-07-01\n\n- The shipped entry.'
 check "flat: the consumed fragment is deleted" 1 "" \
   test -e "$TMP/flat-one/changelog.d/12.md"
 check "flat: README.md survives consumption" 0 "" \
@@ -73,17 +73,17 @@ tree flat-many <<EOF
 $BASE_CHANGELOG
 EOF
 frag flat-many 2.md <<'EOF'
-- Two.
+- Two (#2).
 EOF
 frag flat-many 9.md <<'EOF'
-- Nine.
+- Nine (#9).
 EOF
 frag flat-many 10.md <<'EOF'
-- Ten.
+- Ten (#10).
 EOF
 frag flat-many ceremony-14.md <<'EOF'
 - Fourteen crossed over — naïve reflows would mangle this café's
-  continuation line, so it must survive verbatim.
+  continuation line, so it must survive verbatim (#14).
 EOF
 
 assert_check() {
@@ -95,7 +95,7 @@ assert_check() {
   }
 }
 check "flat: numeric-descending order (10.md before 9.md), cross-repo name beside local" 0 "" \
-  assert_check flat-many $'- Fourteen crossed over — naïve reflows would mangle this café'"'"$'s\n  continuation line, so it must survive verbatim.\n- Ten.\n- Nine.\n- Two.'
+  assert_check flat-many $'- Fourteen crossed over — naïve reflows would mangle this café'"'"$'s\n  continuation line, so it must survive verbatim (#14).\n- Ten (#10).\n- Nine (#9).\n- Two (#2).'
 
 # --- grouped write: canonical order, unnamed group appended ------------------
 
@@ -113,28 +113,28 @@ EOF
 frag grouped 21.md <<'EOF'
 ### Fixed
 
-- Fixed twenty-one.
+- Fixed twenty-one (#21).
 EOF
 frag grouped 20.md <<'EOF'
 ### Added
 
-- Added twenty.
-- Added twenty, second bullet.
+- Added twenty (#20).
+- Added twenty, second bullet (#20).
 
 ### Docs
 
-- Docs twenty.
+- Docs twenty (#20).
 EOF
 frag grouped 19.md <<'EOF'
 ### Security
 
-- Security nineteen.
+- Security nineteen (#19).
 
 ### Added
 
-- Added nineteen.
+- Added nineteen (#19).
 EOF
-GROUPED_BODY=$'### Added\n\n- Added twenty.\n- Added twenty, second bullet.\n- Added nineteen.\n\n### Fixed\n\n- Fixed twenty-one.\n\n### Security\n\n- Security nineteen.\n\n### Docs\n\n- Docs twenty.'
+GROUPED_BODY=$'### Added\n\n- Added twenty (#20).\n- Added twenty, second bullet (#20).\n- Added nineteen (#19).\n\n### Fixed\n\n- Fixed twenty-one (#21).\n\n### Security\n\n- Security nineteen (#19).\n\n### Docs\n\n- Docs twenty (#20).'
 check "grouped: --check shows canonical order, multi-bullet group, unnamed group last" 0 "" \
   assert_check grouped "$GROUPED_BODY"
 check "grouped: write mode assembles the same section" 0 "consumed 3 fragment" \
@@ -156,13 +156,13 @@ printf 'grouped\n' >"$TMP/flip/changelog.d/shape"
 frag flip 40.md <<'EOF'
 ### Added
 
-- Forty landed.
+- Forty landed (#40).
 EOF
 check "sentinel: the flip release assembles grouped over a flat published section" 0 \
   "consumed 1 fragment" in_tree flip 0.2.0 2026-07-24
 check "sentinel: the written flip section is exact" 0 "" \
   assert_file "$TMP/flip/CHANGELOG.md" \
-  $'# Changelog\n\nPreamble prose belongs to no section.\n\n## 0.2.0 — 2026-07-24\n\n### Added\n\n- Forty landed.\n\n## 0.1.0 — 2026-07-01\n\n- The shipped entry.'
+  $'# Changelog\n\nPreamble prose belongs to no section.\n\n## 0.2.0 — 2026-07-24\n\n### Added\n\n- Forty landed (#40).\n\n## 0.1.0 — 2026-07-01\n\n- The shipped entry.'
 check "sentinel: changelog.d/shape survives consumption" 0 "" \
   test -e "$TMP/flip/changelog.d/shape"
 
@@ -171,7 +171,7 @@ $BASE_CHANGELOG
 EOF
 printf 'grouped\n' >"$TMP/flip-flat-frag/changelog.d/shape"
 frag flip-flat-frag 41.md <<'EOF'
-- Flat forty-one.
+- Flat forty-one (#41).
 EOF
 check "sentinel: a flat fragment under 'grouped' refuses, sentinel named" 1 \
   "changelog.d/shape' declares grouped" in_tree flip-flat-frag 0.2.0 2026-07-24
@@ -183,7 +183,7 @@ printf 'Grouped\n' >"$TMP/flip-malformed/changelog.d/shape"
 frag flip-malformed 42.md <<'EOF'
 ### Added
 
-- Forty-two.
+- Forty-two (#42).
 EOF
 check "sentinel: a malformed sentinel refuses, file named" 1 \
   "changelog.d/shape' declares neither shape" in_tree flip-malformed 0.2.0 2026-07-24
@@ -196,13 +196,13 @@ tree preamble-only <<'EOF'
 Only preamble so far.
 EOF
 frag preamble-only 1.md <<'EOF'
-- The first entry ever.
+- The first entry ever (#1).
 EOF
 check "a changelog with no section yet gets the section after the preamble" 0 "" \
   in_tree preamble-only 0.1.0 2026-07-24
 check "preamble-only write is exact" 0 "" \
   assert_file "$TMP/preamble-only/CHANGELOG.md" \
-  $'# Changelog\n\nOnly preamble so far.\n\n## 0.1.0 — 2026-07-24\n\n- The first entry ever.'
+  $'# Changelog\n\nOnly preamble so far.\n\n## 0.1.0 — 2026-07-24\n\n- The first entry ever (#1).'
 
 # --- --check is provably read-only -------------------------------------------
 
@@ -210,7 +210,7 @@ tree check-readonly <<EOF
 $BASE_CHANGELOG
 EOF
 frag check-readonly 5.md <<'EOF'
-- Five.
+- Five (#5).
 EOF
 cp -R "$TMP/check-readonly" "$TMP/check-readonly.before"
 check "--check prints the assembled body" 0 "Five." \
@@ -228,12 +228,12 @@ check "the defaulted stamp is a UTC date" 0 "" \
 # --- --changelog and --dir override the defaults -----------------------------
 
 mkdir -p "$TMP/flagged/frags"
-printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped.\n' >"$TMP/flagged/NOTES.md"
-printf -- '- Flagged entry.\n' >"$TMP/flagged/frags/2.md"
+printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped (#1).\n' >"$TMP/flagged/NOTES.md"
+printf -- '- Flagged entry (#2).\n' >"$TMP/flagged/frags/2.md"
 check "--changelog and --dir override the defaults" 0 "" \
   "$TOOL" 0.2.0 2026-07-24 --changelog "$TMP/flagged/NOTES.md" --dir "$TMP/flagged/frags"
 check "the flag-driven write landed in the named changelog" 0 "" \
-  grep -qF -- "- Flagged entry." "$TMP/flagged/NOTES.md"
+  grep -qF -- "- Flagged entry (#2)." "$TMP/flagged/NOTES.md"
 
 # --- refusals: each names the file responsible -------------------------------
 
@@ -270,7 +270,7 @@ frag dangling 4.md <<'EOF'
 
 ### Fixed
 
-- Fixed entry.
+- Fixed entry (#4).
 EOF
 check "a dangling grouped heading refuses, file and heading named" 1 \
   "fragment 'changelog.d/4.md' has an empty heading: '### Added'" \
@@ -282,7 +282,7 @@ EOF
 frag smuggled 6.md <<'EOF'
 ## 0.2.0 — 2026-07-24
 
-- An entry under a smuggled heading.
+- An entry under a smuggled heading (#6).
 EOF
 check "a fragment carrying a '## ' line refuses, file named" 1 \
   "fragment 'changelog.d/6.md' carries a '## ' heading" \
@@ -292,7 +292,7 @@ tree stray-txt <<EOF
 $BASE_CHANGELOG
 EOF
 frag stray-txt 7.md <<'EOF'
-- Seven.
+- Seven (#7).
 EOF
 frag stray-txt notes.txt <<'EOF'
 A stray scratchpad.
@@ -313,7 +313,7 @@ tree stray-case <<EOF
 $BASE_CHANGELOG
 EOF
 frag stray-case Fix-12.md <<'EOF'
-- Uppercase prefix.
+- Uppercase prefix (#12).
 EOF
 check "Fix-12.md refuses on the name pattern" 1 "Fix-12.md" \
   in_tree stray-case 0.2.0
@@ -322,12 +322,12 @@ tree mixed <<EOF
 $BASE_CHANGELOG
 EOF
 frag mixed 5.md <<'EOF'
-- Flat five.
+- Flat five (#5).
 EOF
 frag mixed 6.md <<'EOF'
 ### Added
 
-- Grouped six.
+- Grouped six (#6).
 EOF
 check "grouped + flat mixed refuses, both files named" 1 "6.md" \
   in_tree mixed 0.2.0
@@ -340,7 +340,7 @@ EOF
 frag grouped-over-flat 6.md <<'EOF'
 ### Added
 
-- Grouped six.
+- Grouped six (#6).
 EOF
 check "an all-grouped set over a flat published section refuses before assembly" 1 \
   "fragment 'changelog.d/6.md' is grouped but newest published section '0.1.0'" \
@@ -354,7 +354,7 @@ tree already <<'EOF'
 - Already shipped.
 EOF
 frag already 4.md <<'EOF'
-- A late fragment.
+- A late fragment (#4).
 EOF
 check "an already-present section refuses — the ceremony was already run" 1 \
   "already has a section for '0.2.0'" \
@@ -370,13 +370,13 @@ tree rc-present <<'EOF'
 - The candidate's entry.
 EOF
 frag rc-present 8.md <<'EOF'
-- The real release entry.
+- The real release entry (#8).
 EOF
 check "an rc section does not block assembling the bare version" 0 "" \
   in_tree rc-present 0.2.0 2026-07-24
 
 mkdir -p "$TMP/no-changelog/changelog.d"
-printf -- '- Entry.\n' >"$TMP/no-changelog/changelog.d/2.md"
+printf -- '- Entry (#2).\n' >"$TMP/no-changelog/changelog.d/2.md"
 check "a missing changelog refuses" 1 "no such file" \
   in_tree no-changelog 0.2.0
 
@@ -404,12 +404,12 @@ frag round-trip 30.md <<'EOF'
 ### Added
 
 - Thirty — wraps onto a
-  continuation line with a naïve café.
+  continuation line with a naïve café (#30).
 EOF
 frag round-trip 29.md <<'EOF'
 ### Fixed
 
-- Fixed twenty-nine.
+- Fixed twenty-nine (#29).
 EOF
 CHECKED="$(in_tree round-trip 0.2.0 2026-07-24 --check)"
 check "round trip: write mode succeeds after --check" 0 "" \

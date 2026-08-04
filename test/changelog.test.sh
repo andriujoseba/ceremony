@@ -87,7 +87,7 @@ cat >"$PROBLEM_FIXTURE" <<'EOF'
 
 ### Fixed
 
-- Fixed entry.
+- Fixed entry (#22).
 
 ## 1.3.0
 
@@ -101,7 +101,7 @@ cat >"$PROBLEM_FIXTURE" <<'EOF'
 
 ### Fixed
 
-- Fixed entry.
+- Fixed entry (#22).
 
 ## 1.4.0
 
@@ -115,7 +115,7 @@ cat >"$PROBLEM_FIXTURE" <<'EOF'
 
 ### Fixed
 
-- Fixed entry.
+- Fixed entry (#22).
 EOF
 
 assert_problem Unreleased 0 ""
@@ -182,11 +182,11 @@ printf 'marker\n' >"$FRAG/README.md"
 check "fragments: README.md is the directory marker, never a fragment" 0 "" \
   changelog_fragments "$FRAG"
 
-printf -- '- Two.\n' >"$FRAG/2.md"
-printf -- '- Nine.\n' >"$FRAG/9.md"
-printf -- '- Ten.\n' >"$FRAG/10.md"
-printf -- '- Cross.\n' >"$FRAG/ceremony-14.md"
-printf -- '- Local fourteen.\n' >"$FRAG/14.md"
+printf -- '- Two (#2).\n' >"$FRAG/2.md"
+printf -- '- Nine (#9).\n' >"$FRAG/9.md"
+printf -- '- Ten (#10).\n' >"$FRAG/10.md"
+printf -- '- Cross (#14).\n' >"$FRAG/ceremony-14.md"
+printf -- '- Local fourteen (#14).\n' >"$FRAG/14.md"
 
 assert_fragments_order() {
   local expected="$1" actual
@@ -205,39 +205,39 @@ check "fragments: issue number descending (numeric, 10 before 9), filename tie-b
 PF="$TMP/frag-problems"
 mkdir -p "$PF"
 
-printf -- '- Fine.\n' >"$PF/7.md"
+printf -- '- Fine (#7).\n' >"$PF/7.md"
 check "fragment predicate: a flat fragment passes" 0 "" \
   changelog_fragment_problem "$PF/7.md"
 
 cat >"$PF/8.md" <<'EOF'
 ### Added
 
-- Grouped fine.
+- Grouped fine (#8).
 EOF
 check "fragment predicate: a grouped fragment passes" 0 "" \
   changelog_fragment_problem "$PF/8.md"
 
-printf -- '- Cross-repo.\n' >"$PF/ceremony-14.md"
+printf -- '- Cross-repo (#14).\n' >"$PF/ceremony-14.md"
 check "fragment predicate: a cross-repo name passes" 0 "" \
   changelog_fragment_problem "$PF/ceremony-14.md"
 
-printf -- '- Bad name.\n' >"$PF/Fix-12.md"
+printf -- '- Bad name (#12).\n' >"$PF/Fix-12.md"
 check "fragment predicate: an uppercase prefix is refused, file named" 1 "Fix-12.md" \
   changelog_fragment_problem "$PF/Fix-12.md"
-printf -- '- Bad name.\n' >"$PF/notes.txt"
+printf -- '- Bad name (#12).\n' >"$PF/notes.txt"
 check "fragment predicate: a non-.md file is refused, file named" 1 "notes.txt" \
   changelog_fragment_problem "$PF/notes.txt"
-printf -- '- Bad name.\n' >"$PF/12.markdown"
+printf -- '- Bad name (#12).\n' >"$PF/12.markdown"
 check "fragment predicate: .markdown is refused, file named" 1 "12.markdown" \
   changelog_fragment_problem "$PF/12.markdown"
-printf -- '- No number.\n' >"$PF/notes.md"
+printf -- '- No number (#1).\n' >"$PF/notes.md"
 check "fragment predicate: a name with no trailing issue number is refused" 1 "notes.md" \
   changelog_fragment_problem "$PF/notes.md"
 
 cat >"$PF/20.md" <<'EOF'
 ## 1.0.0 — 2026-07-24
 
-- Smuggled heading.
+- Smuggled heading (#20).
 EOF
 check "fragment predicate: a '## ' line is refused — the heading is the assembler's" 1 \
   "the section heading is the assembler's to write" \
@@ -253,7 +253,7 @@ cat >"$PF/22.md" <<'EOF'
 
 ### Fixed
 
-- Fixed entry.
+- Fixed entry (#22).
 EOF
 check "fragment predicate: a dangling grouped heading is refused, heading named" 1 \
   "has an empty heading: '### Added'" \
@@ -347,11 +347,11 @@ mkdir -p "$AF"
 printf 'marker\n' >"$AF/README.md"
 cat >"$AF/3.md" <<'EOF'
 - Three — an em dash, and prose that
-  wraps onto a continuation line.
+  wraps onto a continuation line (#3).
 EOF
-printf -- '- Ten.\n- Ten again.\n' >"$AF/10.md"
+printf -- '- Ten (#10).\n- Ten again (#10).\n' >"$AF/10.md"
 check "assemble: flat fragments, newest issue first, prose verbatim" 0 "" \
-  assert_assemble "$AF" $'- Ten.\n- Ten again.\n- Three — an em dash, and prose that\n  wraps onto a continuation line.'
+  assert_assemble "$AF" $'- Ten (#10).\n- Ten again (#10).\n- Three — an em dash, and prose that\n  wraps onto a continuation line (#3).'
 
 check "assemble: an empty directory is empty output — refusing is the caller's stance" 0 "" \
   changelog_assemble "$TMP/no-such-dir"
@@ -361,36 +361,36 @@ mkdir -p "$AG"
 cat >"$AG/21.md" <<'EOF'
 ### Fixed
 
-- Fixed twenty-one.
+- Fixed twenty-one (#21).
 EOF
 cat >"$AG/20.md" <<'EOF'
 ### Added
 
-- Added twenty.
+- Added twenty (#20).
 
 ### Docs
 
-- Docs twenty.
+- Docs twenty (#20).
 EOF
 cat >"$AG/19.md" <<'EOF'
 ### Security
 
-- Security nineteen.
+- Security nineteen (#19).
 
 ### Added
 
-- Added nineteen.
+- Added nineteen (#19).
 EOF
 check "assemble: canonical group order, unnamed group appended, fragment order inside a group" 0 "" \
-  assert_assemble "$AG" $'### Added\n\n- Added twenty.\n- Added nineteen.\n\n### Fixed\n\n- Fixed twenty-one.\n\n### Security\n\n- Security nineteen.\n\n### Docs\n\n- Docs twenty.'
+  assert_assemble "$AG" $'### Added\n\n- Added twenty (#20).\n- Added nineteen (#19).\n\n### Fixed\n\n- Fixed twenty-one (#21).\n\n### Security\n\n- Security nineteen (#19).\n\n### Docs\n\n- Docs twenty (#20).'
 
 AM="$TMP/assemble-mixed"
 mkdir -p "$AM"
-printf -- '- Flat five.\n' >"$AM/5.md"
+printf -- '- Flat five (#5).\n' >"$AM/5.md"
 cat >"$AM/6.md" <<'EOF'
 ### Added
 
-- Grouped six.
+- Grouped six (#6).
 EOF
 check "assemble: mixed shapes refused, grouped side named" 1 "6.md" \
   changelog_assemble "$AM"
@@ -400,11 +400,11 @@ check "assemble: mixed shapes refused, flat side named too" 1 "5.md" \
 AX="$TMP/assemble-selfmixed"
 mkdir -p "$AX"
 cat >"$AX/7.md" <<'EOF'
-- Ungrouped lead.
+- Ungrouped lead (#7).
 
 ### Added
 
-- Grouped follow.
+- Grouped follow (#7).
 EOF
 check "assemble: one fragment mixing both shapes is refused, file named" 1 \
   "'$AX/7.md' mixes grouped headings and ungrouped bullets" \
@@ -429,14 +429,14 @@ cat >"$SHAPE_CHANGELOG" <<'EOF'
 
 - Older section is grouped.
 EOF
-printf -- '- Flat fragment.\n' >"$SHAPE_DIR/1.md"
+printf -- '- Flat fragment (#1).\n' >"$SHAPE_DIR/1.md"
 check "shape: flat set matches newest flat published section" 0 "" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
 
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 check "shape: grouped set names its conflict with newest flat published section" 1 \
   "fragment '$SHAPE_DIR/1.md' is grouped but newest published section '2.0.0' in '$SHAPE_CHANGELOG' is flat" \
@@ -451,7 +451,7 @@ cat >"$SHAPE_CHANGELOG" <<'EOF'
 
 - Newest section is grouped.
 EOF
-printf -- '- Flat fragment.\n' >"$SHAPE_DIR/1.md"
+printf -- '- Flat fragment (#1).\n' >"$SHAPE_DIR/1.md"
 check "shape: flat set names its conflict with newest grouped published section" 1 \
   "fragment '$SHAPE_DIR/1.md' is flat but newest published section '2.0.0' in '$SHAPE_CHANGELOG' is grouped" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -459,7 +459,7 @@ check "shape: flat set names its conflict with newest grouped published section"
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 check "shape: grouped set matches newest grouped published section" 0 "" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -484,7 +484,7 @@ EOF
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 printf 'grouped\n' >"$SHAPE_DIR/shape"
 check "shape: 'grouped' sentinel admits a grouped set over a flat published section" 0 "" \
@@ -492,7 +492,7 @@ check "shape: 'grouped' sentinel admits a grouped set over a flat published sect
 check "shape: the sentinel binds with no changelog at all — the assembler's call" 0 "" \
   changelog_shape_problem "" "$SHAPE_DIR"
 
-printf -- '- Flat fragment.\n' >"$SHAPE_DIR/1.md"
+printf -- '- Flat fragment (#1).\n' >"$SHAPE_DIR/1.md"
 check "shape: flat fragment under a 'grouped' sentinel refused, fragment and sentinel named" 1 \
   "fragment '$SHAPE_DIR/1.md' is flat but '$SHAPE_DIR/shape' declares grouped" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -512,14 +512,14 @@ check "shape: 'flat' sentinel admits a flat set over a grouped published section
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 check "shape: grouped fragment under a 'flat' sentinel refused, fragment and sentinel named" 1 \
   "fragment '$SHAPE_DIR/1.md' is grouped but '$SHAPE_DIR/shape' declares flat" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
 
 printf 'grouped\n' >"$SHAPE_DIR/shape"
-printf -- '- Flat two.\n' >"$SHAPE_DIR/2.md"
+printf -- '- Flat two (#2).\n' >"$SHAPE_DIR/2.md"
 check "shape: a mixed set is refused regardless of the sentinel" 1 \
   "fragment '$SHAPE_DIR/1.md' is grouped but fragment '$SHAPE_DIR/2.md' is not" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -558,7 +558,7 @@ printf 'grouped\n' >"$SHAPE_DIR/shape"
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 assert_fragments_exclude_sentinel() {
   local out
@@ -579,17 +579,17 @@ printf 'grouped\n' >"$AS/shape"
 cat >"$AS/30.md" <<'EOF'
 ### Fixed
 
-- Fixed thirty.
+- Fixed thirty (#30).
 EOF
 cat >"$AS/31.md" <<'EOF'
 ### Added
 
-- Added thirty-one.
+- Added thirty-one (#31).
 EOF
 check "assemble: the sentinel never assembles, and canonical order holds under it" 0 "" \
-  assert_assemble "$AS" $'### Added\n\n- Added thirty-one.\n\n### Fixed\n\n- Fixed thirty.'
+  assert_assemble "$AS" $'### Added\n\n- Added thirty-one (#31).\n\n### Fixed\n\n- Fixed thirty (#30).'
 rm "$AS/30.md" "$AS/31.md"
-printf -- '- Flat probe.\n' >"$AS/29.md"
+printf -- '- Flat probe (#29).\n' >"$AS/29.md"
 check "assemble: a flat set under a 'grouped' sentinel refuses to assemble" 1 \
   "declares grouped" \
   changelog_assemble "$AS"

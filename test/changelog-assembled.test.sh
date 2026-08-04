@@ -58,8 +58,8 @@ Preamble prose belongs to no section.
 - The shipped entry.
 EOF
   printf '0.1.1-dev\n' >"$dir/VERSION"
-  printf -- '- Twelve landed.\n' >"$dir/changelog.d/12.md"
-  printf -- '- Nine landed, and its prose wraps onto a\n  continuation line.\n' >"$dir/changelog.d/9.md"
+  printf -- '- Twelve landed (#12).\n' >"$dir/changelog.d/12.md"
+  printf -- '- Nine landed, and its prose wraps onto a\n  continuation line (#9).\n' >"$dir/changelog.d/9.md"
   commit_base "$name"
 }
 
@@ -86,8 +86,8 @@ check "faithful flat ceremony: the section is byte-for-byte the assembly" 0 \
 
 seed_flat faithful-grouped
 sed -i '/^- The shipped entry/i ### Fixed\\\n' "$TMP/faithful-grouped/CHANGELOG.md"
-printf -- '### Fixed\n\n- Fixed twenty-one.\n' >"$TMP/faithful-grouped/changelog.d/21.md"
-printf -- '### Added\n\n- Added twenty.\n\n### Docs\n\n- Docs twenty.\n' >"$TMP/faithful-grouped/changelog.d/20.md"
+printf -- '### Fixed\n\n- Fixed twenty-one (#21).\n' >"$TMP/faithful-grouped/changelog.d/21.md"
+printf -- '### Added\n\n- Added twenty (#20).\n\n### Docs\n\n- Docs twenty (#20).\n' >"$TMP/faithful-grouped/changelog.d/20.md"
 rm "$TMP/faithful-grouped/changelog.d/12.md" "$TMP/faithful-grouped/changelog.d/9.md"
 git -C "$TMP/faithful-grouped" add -A
 git -C "$TMP/faithful-grouped" commit -qm regroup
@@ -108,7 +108,7 @@ check "the stamp's date never enters the comparison" 0 "byte-for-byte" \
 # --- inapplicable trees: green NOTICE, never a silent skip -------------------
 
 seed_flat ordinary-add
-printf -- '- Thirteen incoming.\n' >"$TMP/ordinary-add/changelog.d/13.md"
+printf -- '- Thirteen incoming (#13).\n' >"$TMP/ordinary-add/changelog.d/13.md"
 commit_head ordinary-add
 check "-dev PR adding a fragment: green NOTICE" 0 "NOTICE" run ordinary-add base
 
@@ -195,8 +195,8 @@ Preamble prose belongs to no section.
 ## 0.2.0 — 2026-07-24
 
 - Nine landed, and its prose wraps onto a
-  continuation line.
-- Twelve landed.
+  continuation line (#9).
+- Twelve landed (#12).
 
 ## 0.1.0 — 2026-07-01
 
@@ -210,7 +210,7 @@ check "re-ordered entries fail" 1 "NOT what the fragments" run reordered base
 # directory is not — only the survivor refusal fires.
 seed_flat survivor
 ceremony survivor 0.2.0 2026-07-24
-printf -- '- Nine landed, and its prose wraps onto a\n  continuation line.\n' >"$TMP/survivor/changelog.d/9.md"
+printf -- '- Nine landed, and its prose wraps onto a\n  continuation line (#9).\n' >"$TMP/survivor/changelog.d/9.md"
 commit_head survivor
 check "a surviving fragment with its entry present fails" 1 "STILL PRESENT" \
   run survivor base
@@ -316,9 +316,9 @@ check "merge base IS HEAD: vacuous, named honestly" 0 "vacuous" run vacuous HEAD
 # the env vars are honored the way the composite sets them.
 init_repo env-tree
 mkdir -p "$TMP/env-tree/frags"
-printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped.\n' >"$TMP/env-tree/NOTES.md"
+printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped (#1).\n' >"$TMP/env-tree/NOTES.md"
 printf '0.1.1-dev\n' >"$TMP/env-tree/VERSION"
-printf -- '- Flagged entry.\n' >"$TMP/env-tree/frags/2.md"
+printf -- '- Flagged entry (#2).\n' >"$TMP/env-tree/frags/2.md"
 git -C "$TMP/env-tree" add -A
 git -C "$TMP/env-tree" commit -qm base
 git -C "$TMP/env-tree" branch fixture-base
