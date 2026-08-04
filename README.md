@@ -160,7 +160,7 @@ block *is* the spec, and the table is contract-tested offline by
 | 3 | version bare, unchanged, already released | green `NOTICE`, no-op | The post-release window: the ceremony landed, the `-dev` bump hasn't. Nothing to do. |
 | 4 | version bare, unchanged, **never released** | **red, nothing created** | The label says ship but this PR did not mint the version. Mislabeled → drop the label. Meant to release → it forgot the bump; re-do the ceremony PR. A repo whose first version never carried `-dev` ships its first release by the **tag door** — the known first-release edge (cast#111; [lib/decide.sh](lib/decide.sh#L70-L74)). |
 | 5 | version transitioned to bare, **no merged `release`-labeled PR** behind the commit | **red, nothing created** | A transition nobody declared — a release is a labeled ceremony PR, not a bare push. Label a proper ceremony PR and re-do it, or publish by the tag door if the tree is genuinely right. |
-| 6 | version transitioned to bare, merged `release`-labeled PR behind the commit | **the ceremony** | Tag → notes → publish → `-dev` re-arm. Your move afterwards: verify the release exists and main reads `X.Y.(Z+1)-dev`. |
+| 6 | version transitioned to bare, merged `release`-labeled PR behind the commit | **the ceremony** | Tag → notes → publish → `-dev` re-arm. Your move afterwards: verify the release exists and main reads `X.Y.(Z+1)-dev`. **Read *bare* as decide reads it** — anything not `-dev` ([lib/decide.sh](lib/decide.sh#L108-L110)) — so an rc transition is a shippable ceremony here too, and the release lands but the re-arm stops for you to pick the next version ([The re-arm refused](#the-re-arm-refused-releaseyml)). |
 
 The green rows are the point as much as the red ones: the machinery must be
 safe to work on, so every legitimate non-ceremony is a green `NOTICE` no-op,
@@ -503,22 +503,37 @@ delete and re-push the tag.
 The bump belongs to the merge door alone — the tag door deliberately does not
 rewrite main ([L303–L307](.github/workflows/release.yml#L303-L307)) — and it
 runs *after* the tag, the notes and the publish. So a refusal here leaves a
-real release behind an unarmed main: the release exists and main still reads
-the version it just shipped. That is the one failure in this catalog whose
-remedy is a manual bump, not a re-run.
+real release standing behind a main that never re-armed — the release exists,
+and main is left *armed to impersonate* it, still reading the version it just
+shipped ([L266](.github/workflows/release.yml#L266)). That is the one failure
+in this catalog whose remedy is a manual bump, not a re-run.
 
 > version_next_dev: refusing '$ver' — expected bare X.Y.Z
 
-[L86](lib/version.sh#L86): the version reaching the bump is not bare —
-`-dev`, `-rc1`, or garbage. Not reachable through either door as they stand:
-the step runs only on `ceremony=yes`, which rows 5–6 reach only on a
-transition *to* bare, and the tag door never bumps. Treat it as the guard it
-is — it fires if a decide change ever lets a non-bare version through.
+[L86](lib/version.sh#L86): the version reaching the bump is not bare `X.Y.Z`.
+Two senses of *bare* meet here, and the gap between them is the **rc release
+path** — the one door an operator actually walks through. decide calls a
+version bare when it is not `-dev`
+([version_is_dev](lib/version.sh#L69-L76) matches that suffix and nothing
+else), so row 6 admits a transition to `1.2.3-rc1`, and a labeled rc ceremony
+is designed to ship ([lib/decide.sh](lib/decide.sh#L108-L110)).
+`version_next_dev` means `^[0-9]+\.[0-9]+\.[0-9]+$`. An rc sits between the
+two, and nothing filters it out on the way: the step's only gate is
+`ceremony == 'yes'` and its `VER` is the tree's version verbatim. So an rc
+ceremony tags, writes the notes, publishes — and *then* the re-arm refuses.
+That is the machine correctly declining to guess rather than a bug: an rc's
+next version "is a human decision, not arithmetic"
+([L78–L82](lib/version.sh#L78-L82)), so make the decision and bump main by
+hand to it. A `-dev` or garbage version reaching this line is the same
+refusal's other half, and that half really is unreachable as the doors stand —
+rows 1–2 send `-dev` to a no-op, and the tag door never bumps.
 
 > version_write: npm is required for version-source: package-json
 
-[L106](lib/version.sh#L106): `version_write` shells out to `npm version` on
-the package-json backend, and the runner has no npm. The read path fails the
+[L106](lib/version.sh#L106): the package-json backend needs npm to write —
+`npm pkg set version=` plus a lockfile-only `npm install`
+([L102–L112](lib/version.sh#L102-L112)), never `npm version`, which would tag
+— and the runner has none. The read path fails the
 same way one step earlier (`node is required…`, above), so a run reaching
 *this* message got past the read — set up node/npm in the caller.
 
@@ -528,9 +543,10 @@ same way one step earlier (`node is required…`, above), so a run reaching
 backend`, and unreachable for the same reason — `VERSION_SOURCE` was validated
 before either was called. Fix the caller.
 
-In every case main is left armed to impersonate the release it just shipped:
-bump `VERSION` (or the `package.json` version field) to `X.Y.(Z+1)-dev` by
-hand and push. Note that a *push* refusal is not one of these — branch
+In every case the remedy has the same shape — bump `VERSION` (or the
+`package.json` version field) by hand and push: `X.Y.(Z+1)-dev` where the
+shipped version was bare, and where it was an rc, whatever you have decided
+comes next. Note that a *push* refusal is not one of these — branch
 protection is expected, and the step opens the bump PR itself rather than
 failing ([L293–L301](.github/workflows/release.yml#L293-L301)).
 
