@@ -503,6 +503,7 @@ issue_probe 55 $'epic\nrelease' 0 false "" \
   $'Blocked by #201.\n\n## Task list\n- [x] #202 complete' >/dev/null
 check "release-init and epic-complete can coexist" 0 "2" \
   grep -c -- '^----$' "$TMP/posted-55"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
 check "the coexisting comments keep distinct markers" 0 "" \
   bash -c 'grep -qF "<!-- issueflow:release-init-due -->" "$1" && grep -qF "<!-- issueflow:epic-complete -->" "$1"' \
   _ "$TMP/posted-55"
@@ -526,6 +527,7 @@ printf '[]\n' >"$(cfix 60)"
 issue_probe 60 $'ready\nrelease' 0 false "" 'Blocked by #201.' >/dev/null
 check "a non-epic release issue does not announce init" 1 "" \
   test -f "$TMP/posted-60"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
 check "every release-init probe is comment-only" 0 "$release_init_edits_before" \
   bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
