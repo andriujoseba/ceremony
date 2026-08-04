@@ -545,10 +545,9 @@ half, and *that* half is unreachable as the doors stand — rows 1–2 send `-de
 to a no-op, and the tag door never bumps. A malformed version is not: nothing
 upstream checks the shape ([version_read](lib/version.sh#L22-L33) checks only
 that a version is present and non-empty), so `banana` rides row 6 exactly as
-an rc does, and the same manual bump is the remedy. The rc half has a shelf
-life: the 0.7.0 window makes rc cuts native and their re-arm deterministic
-(#317), after which no rc reaches this refusal — the malformed half still
-does.
+an rc does, and the same manual bump is the remedy. One note on work that has
+not landed: #317 would make rc cuts native and their re-arm deterministic, and
+if it lands only the malformed half still reaches this refusal.
 
 > version_write: npm is required for version-source: package-json
 
