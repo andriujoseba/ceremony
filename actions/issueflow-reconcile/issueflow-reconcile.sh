@@ -469,28 +469,56 @@ deliverable_keys() { # title on stdin -> its deliverable keys, one per line
   # segment: `TRIAGE.md + RELEASES.md` carries both keys.
   local segments=()
   IFS='+' read -r -a segments <<<"$prefix"
-  for segment in "${segments[@]}"; do
-    key="$(deliverable_key "$segment")"
-    [ -z "$key" ] || printf '%s\n' "$key"
-  done
+  # An issue answers a SET of keys, never a multiset. Normalization is
+  # many-to-one by design — `issueflow-reconcile.sh + issueflow-reconcile.test.sh`
+  # is one deliverable spelled twice, which is exactly the `+` shape D2 wrote
+  # the segment rule for — and a repeated key makes `collision_flags`' scan
+  # find the issue adjacent to itself, chaining it to its own number: the
+  # comment would ask #402 to declare `Blocked by #402`. It corrupts the chain
+  # between two such issues too, since each contributes two rows to one key.
+  # Deduping here rather than in the index keeps the set property with the
+  # function whose contract it is.
+  { for segment in "${segments[@]}"; do
+      key="$(deliverable_key "$segment")"
+      [ -z "$key" ] || printf '%s\n' "$key"
+    done
+  } | awk '!seen[$0]++'
 }
 
-collision_in_scope() { # $1 = comma-joined labels -> 0 in the collision set
+unblocked_claimable() { # $1 = comma-joined labels -> 0 when the issue is unblocked
+  # THE one definition of `unblocked`, because #293 gives both flags one word
+  # and one gloss on it: D2 as corrected reads "`unblocked` means open and not
+  # `blocked` — carrying `ready` or `claimed`, with or without an open PR",
+  # and D3b's first line says D3 uses D2's corrected `unblocked` and names the
+  # domain as the claimable set. Two spellings of one spec word is how the
+  # flags came to disagree about `needs-triage`, so there is one predicate and
+  # both flags call it.
+  #
   # `blocked` is out: a chained issue is the GOAL state of #288's rule, and
-  # flagging it would report the fix as the defect. `epic` and `post-merge`
-  # are out by #288 D6 — neither is picked by a builder — and they carry no
-  # queue label to admit them here anyway.
+  # flagging it would report the fix as the defect. Anything else without
+  # `ready` or `claimed` is out because it is not claimable — `needs-triage`
+  # and a label-less issue are not states a builder can pick up, and an
+  # unlabeled one is getting `needs-triage` from this very pass. `epic` and
+  # `post-merge` are out by #288 D6 and #292 D1 alike — neither is picked by a
+  # builder — and they carry no queue label to admit them here anyway.
   case ",$1," in *,blocked,*) return 1 ;; esac
   case ",$1," in *,ready,*|*,claimed,*) return 0 ;; esac
   return 1
 }
 
+collision_in_scope() { # $1 = comma-joined labels -> 0 in the collision set
+  unblocked_claimable "$1"
+}
+
 window_in_scope() { # $1 = comma-joined labels -> 0 subject to the window rule
-  # `epic` and `post-merge` are outside the claimable set and exempt by name
-  # (#292 D1); `blocked` is already placed behind something and is what the
-  # non-member leg of the mint-time call writes.
-  case ",$1," in *,blocked,*|*,epic,*|*,post-merge,*) return 1 ;; esac
-  return 0
+  # The same `unblocked`, not a second reading of it. Excluding only
+  # `blocked`/`epic`/`post-merge` here admitted `needs-triage` and a
+  # label-less issue, which left the sweep adding `needs-triage` to an
+  # unlabeled issue and then, in the same pass, telling it about a membership
+  # call made at mint time. Neither is claimable; #292's invariant is stated
+  # over the claimable set (D3b), and its exemptions say why — `epic` and
+  # `post-merge` are exempt *because neither is claimable*.
+  unblocked_claimable "$1"
 }
 
 collision_key_index() { # board records on stdin -> "key<TAB>number" in scope
@@ -760,7 +788,11 @@ same parse every \`blocked\` issue is gated on, echoed on that issue.
 
 *Comment only: nothing on this path writes a label or changes a state. The
 marker carries the window itself, so an unchanged one never re-posts.*" >/dev/null
-      log "#$n: window flag — a ready non-member under $state"
+      # "unblocked", not "ready": the flag fires on `claimed` too, PR in
+      # flight or not, which is the one wording #293 D3b went out of its way
+      # to correct. The log line is read by a human deciding whether the
+      # sweep understood the board, so it says what the predicate says.
+      log "#$n: window flag — an unblocked non-member under $state"
     fi
   fi
 }

@@ -2218,8 +2218,8 @@ check "the morning board draws exactly three collision flags" 0 "3" \
   flag_count collision "$morning_out"
 # D3's corpus: the six `ready` non-members that raced the emptying gate.
 for nonmember in 257 264 266 276 281 284; do
-  check "#$nonmember is flagged as a ready non-member under #249" 0 \
-    "issueflow: #$nonmember: window flag — a ready non-member under #249" \
+  check "#$nonmember is flagged as an unblocked non-member under #249" 0 \
+    "issueflow: #$nonmember: window flag — an unblocked non-member under #249" \
     printf '%s\n' "$morning_out"
 done
 check "the morning board draws exactly six window flags" 0 "6" \
