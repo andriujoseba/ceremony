@@ -500,17 +500,20 @@ delete and re-push the tag.
 
 ### The re-arm refused ([release.yml](.github/workflows/release.yml#L267-L301))
 
-The bump runs *after* the tag, the notes and the publish, so a refusal here
-leaves a real release behind an unarmed main — the release exists and main
-still reads the version it just shipped. That is the one failure in this
-catalog where the remedy is a manual bump, not a re-run.
+The bump belongs to the merge door alone — the tag door deliberately does not
+rewrite main ([L303–L307](.github/workflows/release.yml#L303-L307)) — and it
+runs *after* the tag, the notes and the publish. So a refusal here leaves a
+real release behind an unarmed main: the release exists and main still reads
+the version it just shipped. That is the one failure in this catalog whose
+remedy is a manual bump, not a re-run.
 
 > version_next_dev: refusing '$ver' — expected bare X.Y.Z
 
 [L86](lib/version.sh#L86): the version reaching the bump is not bare —
-`-dev`, `-rc1`, or garbage. Unreachable by the merge door, whose row 6 fires
-only on a transition *to* bare; it is the tag door's edge, where the tag names
-the tree's version and nothing re-checks its shape.
+`-dev`, `-rc1`, or garbage. Not reachable through either door as they stand:
+the step runs only on `ceremony=yes`, which rows 5–6 reach only on a
+transition *to* bare, and the tag door never bumps. Treat it as the guard it
+is — it fires if a decide change ever lets a non-bare version through.
 
 > version_write: npm is required for version-source: package-json
 
