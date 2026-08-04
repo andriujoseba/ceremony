@@ -154,8 +154,11 @@ label never removed — and a ruling with no real activity for 7 days draws a
 comment-only nudge addressed to the decider, linking the escalation. The
 nudge carries no marker on purpose: the comment is itself activity, so it
 resets its own window and never repeats within a quiet week. Label churn is
-not activity — the clock reads comments, reviews and commits, or the sweep
-would reset itself.
+never activity, or the sweep would reset itself — and each surface's clock
+reads what exists on it: on a pull request, comments, reviews and commits;
+on an issue, comments alone. An assignment is the claim clock's fact, not
+the ruling's — claiming a flagged issue does not answer it, and buys the
+escalation no quiet (#284).
 
 `offsite` is issue-only and records that a claimed issue's deliverable lives
 in another repository, where a closing reference cannot make a local open PR

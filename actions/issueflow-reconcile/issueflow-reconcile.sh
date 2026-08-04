@@ -515,19 +515,26 @@ issue_activity_at() { # $1 issue, $2 created_at, $3 with-assignment|comments-onl
 }
 
 last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read failed
-  # The claim clock, and the ruling clock with it. Assignment is the claim
+  # The claim clock, and only the claim clock (#284). Assignment is the claim
   # itself. Ignoring it would let an old issue be reclaimed in the seconds
-  # between assignment and its required draft PR.
+  # between assignment and its required draft PR. The ruling clock no longer
+  # rides here: an assignment says nothing about whether the decider
+  # answered, and counting it let claiming a flagged issue buy its
+  # escalation another 7 quiet days.
   issue_activity_at "$1" "$2" with-assignment
 }
 
 last_issue_comment_activity() { # $1 issue, $2 created_at → epoch; non-zero on a failed read
-  # The evidence nudge's clock (#254). Same computation, one input fewer, and
-  # the input it drops is the one that would starve the criterion: on
+  # The evidence nudge's clock (#254), and the issue-side ruling clock with
+  # it (#284): on an issue, a comment is the only substantive activity
+  # toward a ruling. Same computation as the claim clock, one input fewer,
+  # and the input it drops is the one that would starve each criterion: on
   # `post-merge` there is no claim for an assignment to protect, and an
   # assignee there is the invalid composition the `post-merge-assigned` flag
-  # reports. Counting it would let a broken board buy the item another 7 days
-  # of silence — the failure direction of #254 taken backwards.
+  # reports; under `needs-ruling` the assignment is the *claim's* fact, and
+  # counting it silenced the escalation at exactly the moment somebody
+  # started working through it. Either way, a wider clock would let board
+  # state buy the wait another 7 days of silence.
   #
   # A comment the sweep itself wrote is still activity here, deliberately:
   # the nudge carries no marker, so its own comment is what rate-limits it,
@@ -538,7 +545,7 @@ last_issue_comment_activity() { # $1 issue, $2 created_at → epoch; non-zero on
 }
 
 reconcile_issue() {
-  local n="$1" decision refs cross_refs states age evidence_age created assignees open_pr=false label owners
+  local n="$1" decision refs cross_refs states age evidence_age ruling_age created assignees open_pr=false label owners
   local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set="" parse_marker=""
   local unchecked="" remove_claimed=claimed
   local attention_active=true attention_suppression=""
@@ -557,6 +564,19 @@ reconcile_issue() {
   if has_issue_label claimed; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
     grep -qxF "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
+    # Under a pending ruling, the ruling clock is read at the top of the
+    # branch, before anything either arm below can post — the derived
+    # transition comment, the reclaim notice and the claimed-unassigned flag
+    # are all comments, and a read taken after one would date the issue by
+    # this sweep's own writing (#284; the hazard #274 met from the other
+    # side). Two clocks on purpose: `age` below counts the assignment
+    # because the assignment IS the claim; the ruling waits on a human, and
+    # an assignment says nothing about whether the decider answered.
+    if has_issue_label needs-ruling; then
+      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+      guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
+        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    fi
     merged_ref_pr="$(post_merge_pr_for_issue "$n")"
     if [ -n "$merged_ref_pr" ]; then
       transition_marker="$(post_merge_transition_marker "$merged_ref_pr")"
@@ -636,28 +656,18 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     # The evidence nudge's clock is read BEFORE any comment this branch
     # posts. `ensure_comment` below is itself activity, so reading after it
     # would let the assigned-flag comment silence the nudge for another 7
-    # days — the same self-silencing the ruling nudge avoids by reading its
-    # facts once, at the top of the pass.
-    #
-    # Its own variable, not `age`: the ruling block below reuses `age` when
-    # it is already set, and the evidence clock is deliberately narrower than
-    # the ruling clock. Leaking it there would silently change what a ruling
-    # nudge means depending on which queue label the issue sits under.
+    # days — the same self-silencing the ruling nudge avoids by taking its
+    # clock from this same read, below.
     created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
     guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
       || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
-    # The ruling clock is read HERE, not in the ruling block, for the same
-    # reason the evidence clock is: that block reads only when `age` is
-    # unset, and by the time it runs this branch may have posted the
-    # evidence nudge — so its read would date the issue by this sweep's own
-    # comment and silence the ruling nudge. Both waits are answered from
-    # facts that predate anything this pass writes. The cost is one extra
-    # comments read on `post-merge` + `needs-ruling`, and only there: an
-    # ordinary `post-merge` issue reads once.
-    if has_issue_label needs-ruling; then
-      guarded_read age last_issue_activity "$n" "$created" \
-        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
-    fi
+    # On this surface the ruling clock IS this read (#284 D6): both nudges
+    # wait on comments and nothing else, so the evidence clock is handed to
+    # the ruling block rather than read again — and handed HERE, before the
+    # assigned-flag comment and the evidence nudge below, so neither wait is
+    # ever answered by anything this pass writes. `post-merge` +
+    # `needs-ruling` now costs one comments read where it cost three.
+    ruling_age="$evidence_age"
     if [ "$assignees" -gt 0 ] || has_issue_label attention; then
       ensure_comment "$n" post-merge-assigned \
         'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
@@ -796,12 +806,19 @@ See \`$release_doctrine_path\`. The operator blessing the order is the one step 
       run gh issue edit "$n" -R "$REPO" --remove-label stale >/dev/null
       log "#$n: unstale (a ruling is pending)"
     fi
-    if [ -z "${age:-}" ]; then
+    # The ruling clock reads comments only (#284 D1): an `assigned` event is
+    # the claim clock's fact, and counting it here let claiming a flagged
+    # issue buy its escalation another 7 quiet days. The reclaim clock
+    # (`age`) must never reach this call — the branches that write comments
+    # before this block (`claimed`, `post-merge`) arrive holding
+    # `ruling_age` already, read before anything they post; the fresh read
+    # serves the paths that arrive empty-handed.
+    if [ -z "${ruling_age:-}" ]; then
       created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-      guarded_read age last_issue_activity "$n" "$created" \
+      guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
         || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
     fi
-    reconcile_ruling "$n" "$age" "$NOW"
+    reconcile_ruling "$n" "$ruling_age" "$NOW"
   fi
 }
 
