@@ -175,8 +175,11 @@ ruling_default_decision() { # escalation body on stdin → DEADLINE <ts> | HARDB
 }
 
 ruling_nudge_decision() { # $1 now, $2 last real-activity epoch → NUDGE | KEEP
-  # Real activity only — comments, reviews, commits, never label churn, or
-  # the sweep would reset its own clock. The nudge needs NO marker: the
+  # Real activity only, as the caller's surface defines it: the PR sweep
+  # supplies comments, reviews and commits; the issue sweeps supply comments
+  # alone — an `assigned` event is the claim clock's fact, and counting it
+  # let a claim silence a pending ruling (#284). Never label churn, or the
+  # sweep would reset its own clock. The nudge needs NO marker: the
   # nudge comment is itself activity, so posting it resets this window and
   # the rule self-rate-limits to at most one nudge per 7 quiet days. That is
   # deliberate — a later refactor that "fixes" it by adding a marker breaks

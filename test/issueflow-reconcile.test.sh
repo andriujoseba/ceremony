@@ -900,6 +900,167 @@ check "...it is reused from lib/ruling.sh" 0 "" \
 check "the evidence-nudge probes perform no issue edits" 0 "$nudge_edits_before" \
   bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
+# -- the issue-side ruling clock is comments-only (#284) ---------------------
+# #52 D10's "reuse the activity computation" made the issue-side ruling nudge
+# ride the claim-reclamation clock, `assigned` events included — so claiming
+# a flagged issue dated it, and the escalation the flag exists to keep
+# visible went quiet for another 7 days at exactly the moment somebody
+# started working through it. The ruling clock is now the comments-only one
+# (D1); the reclaim clock keeps the assignment (D2), because there the
+# assignment IS the claim. Every must-nudge probe below was run against the
+# pre-#284 sweep and went red — the #274 round-1 discipline: the fixture
+# proves the defect, not merely the fix.
+ruling_clock_edits_before="$(wc -l <"$TMP/issue-edits")"
+ruling_quiet() { # $1 issue — conforming escalation, both rungs fired, ~9d of comment quiet
+  jq -n --arg l "$(iso_at $((INOW - 10 * 86400)))" \
+    '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
+    >"$(tfix "$1")"
+  jq -n --arg at "$(iso_at $((INOW - 10 * 86400 - 60)))" \
+    --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z\nDefault:  none — hard block' \
+    --arg r12 "$(iso_at $((INOW - 10 * 86400 + 13 * 3600)))" \
+    --arg r24 "$(iso_at $((INOW - 10 * 86400 + 25 * 3600)))" \
+    '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc","body":$b},
+      {"user":{"login":"sweep-bot"},"created_at":$r12,"html_url":"https://x/r12","body":"<!-- ceremony:needs-ruling-rung12 -->\nrung"},
+      {"user":{"login":"sweep-bot"},"created_at":$r24,"html_url":"https://x/r24","body":"<!-- ceremony:needs-ruling-rung24 -->\nrung"}]' \
+    >"$(cfix "$1")"
+}
+timeline_add() { # $1 issue, $2 event, $3 seconds ago
+  jq --arg e "$2" --arg at "$(iso_at $((INOW - $3)))" \
+    '. + [{"event":$e,"created_at":$at}]' \
+    "$(tfix "$1")" >"$(tfix "$1").tmp" && mv "$(tfix "$1").tmp" "$(tfix "$1")"
+}
+comment_add() { # $1 issue, $2 seconds ago
+  jq --arg at "$(iso_at $((INOW - $2)))" \
+    '. + [{"user":{"login":"decider"},"created_at":$at,"html_url":"https://x/d","body":"still thinking"}]' \
+    "$(cfix "$1")" >"$(cfix "$1").tmp" && mv "$(cfix "$1").tmp" "$(cfix "$1")"
+}
+
+# The live shape, and the defect: a builder claims the flagged issue, the
+# assignment is an hour old, the decider has been silent ~9 days.
+ruling_quiet 101
+timeline_add 101 assigned 3600
+claimed_fresh="$(issue_probe 101 $'claimed\nneeds-ruling' 1 true)"
+check "an hour-old claim does not silence a ruling 9 days quiet" 0 "" \
+  grep -q 'ruling nudge' <<<"$claimed_fresh"
+check "...and the fresh assignment is not reclaim bait either" 1 "" \
+  grep -q 'reclaimed' <<<"$claimed_fresh"
+
+# The clock rule alone, no assignee in the way: an assigned/unassigned pair
+# in the timeline is the claim's history, not activity toward the ruling.
+ruling_quiet 102
+timeline_add 102 assigned 3600
+timeline_add 102 unassigned 3500
+ready_pair="$(issue_probe 102 $'ready\nneeds-ruling' 0)"
+check "a ready issue nudges through an hour-old assignment pair" 0 "" \
+  grep -q 'ruling nudge' <<<"$ready_pair"
+
+# post-merge + needs-ruling fires BOTH nudges in one sweep, from one read
+# taken before either write. This probe is also the read-order pin: the
+# evidence nudge posts first and the stub stamps it as fresh activity, so
+# restoring a ruling-clock read below `ensure_comment` turns the second
+# check red — the hazard #274 met and killed inside one round.
+ruling_quiet 103
+timeline_add 103 assigned 3600
+timeline_add 103 unassigned 3500
+both_fresh="$(issue_probe 103 $'post-merge\nneeds-ruling' 0)"
+check "a fresh assignment starves neither post-merge wait" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$both_fresh"
+check "...the ruling nudge fires beside it, not behind it" 0 "" \
+  grep -q 'ruling nudge' <<<"$both_fresh"
+
+# blocked composes the same way. The #252 parse echo is pre-seeded old so
+# the probe isolates the clock rule — steady state, where the echo for this
+# parse set already exists and the branch posts nothing before the tail.
+ruling_quiet 104
+timeline_add 104 assigned 3600
+refs_104="$(blocked_references <<<'Blocked by #999.')"
+cross_104="$(blocked_cross_references <<<'Blocked by #999.')"
+marker_104="$(blocked_parse_marker "$(blocked_parse_set "$refs_104" "$cross_104")")"
+jq --arg m "$marker_104" --arg at "$(iso_at $((INOW - 9 * 86400)))" \
+  '. + [{"user":{"login":"sweep-bot"},"created_at":$at,"html_url":"https://x/echo","body":("<!-- issueflow:" + $m + " -->\necho")}]' \
+  "$(cfix 104)" >"$(cfix 104).tmp" && mv "$(cfix 104).tmp" "$(cfix 104)"
+blocked_fresh="$(issue_probe 104 $'blocked\nneeds-ruling' 0 false "" 'Blocked by #999.')"
+check "a blocked issue nudges through an hour-old assignment" 0 "" \
+  grep -q 'ruling nudge' <<<"$blocked_fresh"
+
+# 6 days of comment quiet is 6, with or without an assignment inside it.
+ruling_quiet 105
+timeline_add 105 assigned 3600
+comment_add 105 $((6 * 86400))
+six_days="$(issue_probe 105 $'claimed\nneeds-ruling' 1 true)"
+check "6 days of comment quiet draws no nudge" 1 "" \
+  grep -q 'ruling nudge' <<<"$six_days"
+
+# Label churn is not activity on this clock either — it reads no timeline
+# at all, which closes the class rather than the spelling.
+ruling_quiet 106
+timeline_add 106 labeled 1800
+timeline_add 106 unlabeled 1700
+churn="$(issue_probe 106 $'ready\nneeds-ruling' 0)"
+check "hour-old label churn does not hold the nudge back" 0 "" \
+  grep -q 'ruling nudge' <<<"$churn"
+
+# Self-rate-limiting, asserted as the property (#254's discipline): sweep
+# again a day after probe 101's nudge and the nudge it posted is the
+# activity that keeps it silent — no marker involved.
+day_after="$(PROBE_NOW=$((INOW + 86400)) issue_probe 101 $'claimed\nneeds-ruling' 1 true)"
+check "the sweep a day after its nudge holds its silence" 1 "" \
+  grep -q 'ruling nudge' <<<"$day_after"
+
+# No flag, no nudge, whatever the clock says.
+quiet_comment 107 $((60 * 86400))
+noflag="$(issue_probe 107 ready 0)"
+check "an unflagged issue draws no ruling nudge at any age" 1 "" \
+  grep -q 'ruling nudge' <<<"$noflag"
+
+# D2's input doing its job — the one thing a "the clocks are the same now,
+# merge them" refactor would break. Red the instant `last_issue_activity`
+# loses `assigned`.
+printf '[]\n' >"$(cfix 108)"
+jq -n --arg at "$(iso_at $((INOW - 600)))" \
+  '[{"event":"assigned","created_at":$at}]' >"$(tfix 108)"
+not_reclaimed="$(issue_probe 108 claimed 1 false)"
+check "a 10-minute-old claim on a silent issue is not reclaimed" 1 "" \
+  grep -q 'reclaimed' <<<"$not_reclaimed"
+
+# One fixture, two clocks, asserted directly and not by inspection: the
+# newest event is the assignment; the reclaim clock returns it and the
+# ruling clock returns the older comment.
+jq -n --arg at "$(iso_at $((INOW - 8 * 86400)))" \
+  '[{"user":{"login":"decider"},"created_at":$at,"html_url":"https://x/c9","body":"x"}]' >"$(cfix 109)"
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"assigned","created_at":$at}]' >"$(tfix 109)"
+clock_read() { # $1 clock fn — both against fixture 109
+  ( REPO=owner/repo
+    # shellcheck disable=SC2317 # reached indirectly, through the clock under test
+    gh() { issue_stub_gh "$@"; }
+    "$1" 109 "$(iso_at $((INOW - 10 * 86400)))" )
+}
+check "one fixture, two clocks: the reclaim clock returns the assignment" \
+  0 "$((INOW - 3600))" clock_read last_issue_activity
+check "...and the ruling clock returns the older comment" \
+  0 "$((INOW - 8 * 86400))" clock_read last_issue_comment_activity
+
+# The mechanical call-site pins: the reclaim clock can never reach
+# reconcile_ruling, on any path, asserted against the source and not the
+# diff. Beside them, the one-spelling pins this issue inherits stay green.
+# shellcheck disable=SC2016 # the call sites are asserted as literals
+check "reconcile_ruling is never handed the reclaim clock" 1 "" \
+  grep -E '^[^#]*reconcile_ruling.*\$age' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+# shellcheck disable=SC2016 # the call site is asserted as a literal
+check "...its one call site is fed the comments-only clock" 0 "1" \
+  grep -cF 'reconcile_ruling "$n" "$ruling_age" "$NOW"' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+# shellcheck disable=SC2016 # the guarded_read is asserted as a literal
+check "...and ruling_age is never fed by the reclaim clock" 1 "" \
+  grep -E 'ruling_age.*last_issue_activity ' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the #284 probes perform no issue edits" 0 "$ruling_clock_edits_before" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+
 # -- non-triggers stay byte-for-byte outside the transition ------------------
 recent_timeline() {
   jq -n --arg at "$(iso_at $((INOW - 60)))" \
@@ -1800,52 +1961,78 @@ check "...and crew#329's label is not written on the way out" 1 "" \
 check "...and nothing claims it was" 1 "" \
   grep -qF '#81: needs-triage (no queue state)' <<<"$broken_mint"
 
-# -- 3. the blockers->ready flip, then a failed TIMELINE read ----------------
-# The wider class: the failing read is the second one inside
-# last_issue_activity, so the comments read answers and the marker check and
-# the flip both complete first. A comment AND a label edit are staged.
+# -- 3. the blockers->ready flip, then a failed COMMENTS read ----------------
+# The read that guards this branch is the marker check ahead of the parse
+# echo: a broken comments endpoint skips there, before the echo or the flip
+# is staged. The timeline is no longer an input on this path at all (#284
+# D1 — the ruling clock reads comments alone), so the unreadable-timeline
+# case moved from "skips everything" to its own pin below.
 printf '%s\n' '{"number":82,"state":"closed"}' \
   >"$ORDER/repos_owner_repo_issues_82.json"
 order_fixture 83 '[{"name":"blocked"},{"name":"needs-ruling"}]' 'Blocked by #82.'
 order_board '[{"number":83}]'
+order_heals 83 comments
 order_heals 83 timeline
 healthy_flip="$(order_run)"
 check "the control: a healthy pass really does flip cleared blockers to ready" 0 \
   "issueflow: #83: blockers closed -> ready" printf '%s\n' "$healthy_flip"
 check "...writing the label edit" 0 "" order_wrote 83 edit
 check "...and posting the blockers-cleared comment" 0 "" order_wrote 83 comment
-order_breaks 83 timeline
+order_breaks 83 comments
 broken_flip="$(order_run)"
-check "a failed timeline read skips the blockers->ready composition" 0 \
-  "issueflow: #83: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+check "a failed comments read skips the blockers->ready composition" 0 \
+  "issueflow: #83: skipped this pass — could not read its comments: $GH_STUB_STDERR" \
   printf '%s\n' "$broken_flip"
 check "...leaving the issue blocked" 1 "" order_wrote 83 edit
 check "...with no comment posted about it" 1 "" order_wrote 83 comment
 check "...and nothing claiming the flip happened" 1 "" \
   grep -qF 'blockers closed -> ready' <<<"$broken_flip"
+# The read this path no longer takes cannot skip it (#284): with comments
+# healthy and the timeline broken, the flip commits, and only the ruling
+# ladder's own soft-failing read goes without — no verdict is invented, and
+# no unrelated write is held hostage by an input the clocks stopped reading.
+order_heals 83 comments
+order_breaks 83 timeline
+narrowed_flip="$(order_run)"
+check "a failed timeline read no longer skips the flip" 1 "" \
+  grep -qF 'skipped this pass' <<<"$narrowed_flip"
+check "...the flip commits" 0 "" order_wrote 83 edit
+check "...and the ruling ladder says what it could not read" 0 \
+  "issueflow: #83: ruling timeline unreadable — no verdict invented this pass" \
+  printf '%s\n' "$narrowed_flip"
 
-# -- 4. a posted nudge, then a failed TIMELINE read -------------------------
-# The comment-only half of the class: an epic nudge is staged, and the
-# ruling tail's activity read fails after it. A comment is as much a
-# mutation as a label — it is the thing markers exist to make idempotent.
+# -- 4. a posted nudge, then a failed COMMENTS read -------------------------
+# The comment-only half of the class: the epic nudge's own marker check is
+# the read that fails, so the nudge is never staged and the skip reports the
+# truth. A comment is as much a mutation as a label — it is the thing
+# markers exist to make idempotent.
 order_fixture 84 '[{"name":"epic"},{"name":"needs-ruling"}]' \
   '## Task list
 
 - [x] #82'
 order_board '[{"number":84}]'
+order_heals 84 comments
 order_heals 84 timeline
 healthy_nudge="$(order_run)"
 check "the control: a healthy pass really does nudge a completed epic" 0 \
   "issueflow: #84: completed epic nudged" printf '%s\n' "$healthy_nudge"
 check "...by posting a comment" 0 "" order_wrote 84 comment
-order_breaks 84 timeline
+order_breaks 84 comments
 broken_nudge="$(order_run)"
-check "a failed timeline read skips the epic-nudge composition" 0 \
-  "issueflow: #84: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+check "a failed comments read skips the epic-nudge composition" 0 \
+  "issueflow: #84: skipped this pass — could not read its comments: $GH_STUB_STDERR" \
   printf '%s\n' "$broken_nudge"
 check "...and the nudge comment is never posted" 1 "" order_wrote 84 comment
 check "...and nothing claims it was" 1 "" \
   grep -qF 'completed epic nudged' <<<"$broken_nudge"
+# The narrowed surface again (#284): a broken timeline neither skips nor
+# suppresses the nudge; the ruling ladder alone goes without a verdict.
+order_heals 84 comments
+order_breaks 84 timeline
+narrowed_nudge="$(order_run)"
+check "a failed timeline read no longer skips the epic nudge" 1 "" \
+  grep -qF 'skipped this pass' <<<"$narrowed_nudge"
+check "...the nudge commits" 0 "" order_wrote 84 comment
 
 # -- the skip is still just a skip: counted, tailed, and green (D4, D6, D7) --
 check "a mutation-bearing composition that skips is still not a crash" 1 "" \
