@@ -199,6 +199,21 @@ git -C "$TMP/untracked" add docs/VENDORED.txt AGENTS.md
 check "a git tree with an untracked manifest entry reds" 1 "names 'RULES.md', which is not TRACKED" \
   run_check untracked
 
+# ...and where it cannot bind, the skip ANNOUNCES ITSELF rather than being
+# inferred from the absence of a refusal (#251 round 1). A guard that quietly
+# stops asserting one of its four properties is the silent miss this whole
+# script argues against, so the degradation is visible on both output paths.
+check "a non-git tree says tracked-ness was not asserted" 0 "tracked-ness NOT asserted" \
+  run_check ok
+check "...and says it on the red path too, beside the refusals" 1 "tracked-ness NOT asserted" \
+  run_check newdoc
+
+# The converse, so the note is not simply always printed: where the tree IS a
+# git work tree root the assertion bound, and nothing is announced.
+no_skip_note() { ! run_check tracked 2>&1 | grep -qF "tracked-ness NOT asserted"; }
+check "a git work tree root announces no skip — the assertion bound" 0 "" \
+  no_skip_note
+
 # --- the real tree -----------------------------------------------------------
 
 check "this tree, unmodified, is green" 0 "manifest entries resolve" bash "$CHECK" "$ROOT"

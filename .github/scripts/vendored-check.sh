@@ -85,11 +85,22 @@ mapfile -t manifest < <(grep -v '^[[:space:]]*$' "$manifest_file" || true)
 # work tree root. Fixture trees are plain directories, and asserting
 # tracked-ness against an enclosing repository would be asserting about the
 # wrong tree.
+#
+# When it cannot bind, SAY SO. This guard's whole argument is that a silent
+# miss is worse than a loud one, and a guard that quietly stops asserting one
+# of its four properties is exactly that shape — so the skip is announced on
+# every run, green or red, rather than inferred from the absence of a
+# refusal (#251 round 1).
 tracked_check=no
+tracked_note="tracked-ness NOT asserted: $tree is not a git work tree root, so
+  'is this file in the tag's tree' cannot be answered about THIS tree. The
+  other three manifest assertions (regular file, non-empty, no
+  symlink/dir/escape) still bind."
 if command -v git >/dev/null 2>&1; then
   toplevel="$(git -C "$tree" rev-parse --show-toplevel 2>/dev/null || true)"
   if [ -n "$toplevel" ] && [ "$toplevel" = "$(cd "$tree" && pwd -P)" ]; then
     tracked_check=yes
+    tracked_note=""
   fi
 fi
 
@@ -211,11 +222,13 @@ if [ "${#problems[@]}" -gt 0 ]; then
     printf 'vendored-check: %d problem(s) — docs/VENDORED.txt and the tree disagree.\n\n' \
       "${#problems[@]}"
     printf '%s\n\n' "${problems[@]}"
+    [ -z "$tracked_note" ] || printf 'vendored-check: %s\n' "$tracked_note"
   } >&2
   exit 1
 fi
 
 printf 'vendored-check: %d manifest entries resolve; %d root docs vendored, %d exempt.\n' \
   "${#manifest[@]}" "${#vendored[@]}" "${#exempted[@]}"
+[ -z "$tracked_note" ] || printf 'vendored-check: %s\n' "$tracked_note"
 [ "${#vendored[@]}" -eq 0 ] || printf '  vendored: %s\n' "${vendored[@]}"
 [ "${#exempted[@]}" -eq 0 ] || printf '  exempt:   %s\n' "${exempted[@]}"
