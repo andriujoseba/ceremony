@@ -60,6 +60,7 @@ EOF
 check "unrelated inline code cannot hide an uncited marker on the same line" 1 \
   "docs/CONSUMERS.md:1" run_check inline-neighbor
 
+# This release comparison would have caught all five of #221's stale markers.
 fixture shipped 0.6.0
 printf 'The new guard remains **unreleased** (#224).\n' \
   >"$TMP/shipped/docs/CONSUMERS.md"
@@ -117,6 +118,7 @@ EOF
 check "a self-qualified citation is ignored; local markers must use bare #N" 0 \
   "agree with the tree" run_check self-qualified
 
+# CHANGELOG.md:38 on main is the live bold-token entry prose this exclusion models.
 fixture exclusions 0.6.0-dev
 cat >"$TMP/exclusions/NOTES.md" <<'EOF'
 # Notes
