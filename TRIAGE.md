@@ -70,8 +70,8 @@ is the failure this whole flow exists to prevent.
    when that ruling or any directive or answered builder question delivers
    the assignee's next move in prose, set `attention` in the same comment on
    the assigned issue that owns the claim — never on the pull request, even
-   when the comment lives there. An unassigned issue is a board bug, not a
-   demand; repair the board rather than setting `attention`.
+   when the comment lives there. Flagging an unassigned issue is a board bug,
+   not a demand; repair the board rather than setting `attention`.
    This is not a substitute for minting work or for `needs-ruling`.
 4. **Decline.** Real idea, wrong repo or wrong time. Say why plainly, link
    where it belongs if anywhere, close. A refusal with reasons is a good
