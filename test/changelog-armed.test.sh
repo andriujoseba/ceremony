@@ -298,6 +298,38 @@ check "fragment mode over-bound refusal names the bound and the split fix" 1 \
   "the bound is 300: split it into multiple '- ' entries in this same fragment" \
   in_tree fragments-dev-over-bound
 
+# The terminal cite (#262) reds the PR that writes the fragment, through the
+# same shared predicate — which is the whole point of the rule living there
+# rather than in prose a reviewer has to remember.
+fragment_tree fragments-dev-uncited 1.2.4-dev <<'EOF'
+# Changelog
+
+## 1.2.3 — 2026-07-20
+
+- The shipped entry.
+EOF
+printf '%s\n' "- An entry that never learned to cite its issue." \
+  >"$TMP/fragments-dev-uncited/changelog.d/115.md"
+check "fragment mode refuses an uncited entry, fragment named" 1 \
+  "115.md' has an entry with no issue citation" \
+  in_tree fragments-dev-uncited
+check "fragment mode uncited refusal names the shape to write" 1 \
+  "end it with the issue it comes from: '(#N).'" \
+  in_tree fragments-dev-uncited
+
+fragment_tree fragments-dev-misplaced-cite 1.2.4-dev <<'EOF'
+# Changelog
+
+## 1.2.3 — 2026-07-20
+
+- The shipped entry.
+EOF
+printf '%s\n' "- The citation trails the period. (#115)" \
+  >"$TMP/fragments-dev-misplaced-cite/changelog.d/115.md"
+check "fragment mode refuses a non-terminal citation, fragment named" 1 \
+  "115.md' has an entry whose issue citation is not terminal" \
+  in_tree fragments-dev-misplaced-cite
+
 fragment_tree fragments-dev-grouped 1.2.4-dev <<'EOF'
 # Changelog
 

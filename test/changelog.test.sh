@@ -331,6 +331,111 @@ check "length bound: published sections stay unvalidated — 0.3.0's over-bound 
 check "length bound: published sections stay unvalidated — 0.2.0 reds nothing either" 0 "" \
   changelog_section_problem "$ROOT/CHANGELOG.md" 0.2.0
 
+# --- the terminal issue cite (#262) ------------------------------------------
+
+# cite_case <number> <entry-line...> — a fragment holding exactly the given
+# lines, so a case reads as the entry it is about.
+cite_case() {
+  local num="$1"
+  shift
+  printf '%s\n' "$@" >"$PF/$num.md"
+}
+
+cite_case 40 '- Local (#262).'
+check "cite: the canonical '(#N).' passes" 0 "" \
+  changelog_fragment_problem "$PF/40.md"
+cite_case 41 '- Sibling repo (crew#309).'
+check "cite: a sibling-repo reference passes" 0 "" \
+  changelog_fragment_problem "$PF/41.md"
+cite_case 42 '- Fully qualified (heavy-duty/crew#309).'
+check "cite: an owner/repo reference passes" 0 "" \
+  changelog_fragment_problem "$PF/42.md"
+cite_case 43 '- Two issues, one entry (#236, #250).'
+check "cite: one group carrying two references passes" 0 "" \
+  changelog_fragment_problem "$PF/43.md"
+
+# The cite is measured on the normalized entry, so a citation that lands on
+# a continuation line still closes the entry — the #167 lesson, repeated:
+# wrapping alone must never red a compliant entry.
+cite_case 44 '- An entry whose prose wraps onto a' '  continuation line, cite and all (#262).'
+check "cite: a citation on a continuation line passes — the entry is normalized first" 0 "" \
+  changelog_fragment_problem "$PF/44.md"
+
+cite_case 45 '### Added' '' '- Added one (#101).' '- Added two (#102).' '' \
+  '### Changed' '' '- Changed one (#103).' '' '### Fixed' '' '- Fixed one (#104).'
+check "cite: a grouped fragment, three headings, every entry compliant, passes" 0 "" \
+  changelog_fragment_problem "$PF/45.md"
+
+# The two diagnoses are distinct by construction (D5): a builder who reads
+# one must not be told the other's fix.
+cite_case 50 '- No cite here.'
+check "cite: an entry with no reference at all is refused" 1 \
+  "50.md' has an entry with no issue citation" \
+  changelog_fragment_problem "$PF/50.md"
+check "cite: the uncited refusal names the shape to write" 1 \
+  "end it with the issue it comes from: '(#N).'" \
+  changelog_fragment_problem "$PF/50.md"
+
+cite_case 51 '- Cite before the period. (#262)'
+check "cite: a citation trailing the period is refused — the 248.md shape" 1 \
+  "51.md' has an entry whose issue citation is not terminal" \
+  changelog_fragment_problem "$PF/51.md"
+check "cite: the misplaced refusal names the shape to write" 1 \
+  "exactly one '(#N)' group ends the entry, the final '.' after it" \
+  changelog_fragment_problem "$PF/51.md"
+
+cite_case 52 '- Trailing prose (#262) and then more.'
+check "cite: a citation with prose after it is refused" 1 \
+  "has an entry whose issue citation is not terminal" \
+  changelog_fragment_problem "$PF/52.md"
+
+cite_case 53 '- Two groups (#236) and (#250).'
+check "cite: two citation groups are refused — one terminal group, or none (D2)" 1 \
+  "has an entry whose issue citation is not terminal" \
+  changelog_fragment_problem "$PF/53.md"
+
+cite_case 54 '- Bad token (#abc).'
+check "cite: a reference with no digits is no reference" 1 \
+  "has an entry with no issue citation" \
+  changelog_fragment_problem "$PF/54.md"
+cite_case 55 '- Bad token (#).'
+check "cite: an empty reference is no reference" 1 \
+  "has an entry with no issue citation" \
+  changelog_fragment_problem "$PF/55.md"
+
+# The citation need not name the file's own issue (D3): the filename already
+# carries the authorizing one, so an entry may cite the incident beside it.
+cite_case 56 '- Cites another issue entirely (#101).'
+check "cite: the reference need not match the filename" 0 "" \
+  changelog_fragment_problem "$PF/56.md"
+
+# Ordering: the bound outranks the cite, so a fragment that reds today draws
+# the diagnosis it drew before this rule existed.
+{
+  printf -- '- %s\n' "$(mkchars 301)"
+  printf -- '- Uncited too.\n'
+} >"$PF/57.md"
+check "cite: an over-bound entry still reports the bound, not the cite" 1 \
+  "57.md' has a 301-character entry" \
+  changelog_fragment_problem "$PF/57.md"
+
+# Published sections keep their pre-rule prose (D4): reddening history is a
+# wall, not a guard. Every shipped section predates the cite.
+check "cite: a published section with uncited entries still reds nothing" 0 "" \
+  changelog_section_problem "$ROOT/CHANGELOG.md" 0.3.0
+
+# The fragments this repo carries right now are the rule's own first
+# constituency — the guard is worth nothing if the tree it ships in fails it.
+assert_tree_fragments() {
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    changelog_fragment_problem "$f" || return 1
+  done <<<"$(changelog_fragments "$ROOT/changelog.d")"
+}
+check "cite: every fragment in this tree passes the rule it ships" 0 "" \
+  assert_tree_fragments
+
 # --- the assembler (#114) ----------------------------------------------------
 
 assert_assemble() {

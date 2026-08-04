@@ -204,6 +204,38 @@ check "preamble-only write is exact" 0 "" \
   assert_file "$TMP/preamble-only/CHANGELOG.md" \
   $'# Changelog\n\nOnly preamble so far.\n\n## 0.1.0 — 2026-07-24\n\n- The first entry ever (#1).'
 
+# --- the fragment predicate at release time (#262) ---------------------------
+
+# The cite rule joins changelog_fragment_problem, so it binds both callers:
+# the arming guard at PR time and this assembler at release time. Asserted
+# rather than assumed — a release that publishes an uncited entry is the
+# failure the PR-time guard exists to have already caught.
+
+tree uncited-release <<EOF
+$BASE_CHANGELOG
+EOF
+frag uncited-release 60.md <<'EOF'
+- An entry that never learned to cite its issue.
+EOF
+check "release time: an uncited fragment refuses the release, fragment named" 1 \
+  "changelog.d/60.md' has an entry with no issue citation" \
+  in_tree uncited-release 0.2.0 2026-07-24
+check "release time: the uncited refusal survives --check too" 1 \
+  "has an entry with no issue citation" \
+  in_tree uncited-release 0.2.0 2026-07-24 --check
+check "release time: the refused release wrote nothing" 0 "" \
+  test -e "$TMP/uncited-release/changelog.d/60.md"
+
+tree misplaced-release <<EOF
+$BASE_CHANGELOG
+EOF
+frag misplaced-release 61.md <<'EOF'
+- The citation trails the period. (#61)
+EOF
+check "release time: a non-terminal citation refuses the release" 1 \
+  "changelog.d/61.md' has an entry whose issue citation is not terminal" \
+  in_tree misplaced-release 0.2.0 2026-07-24
+
 # --- --check is provably read-only -------------------------------------------
 
 tree check-readonly <<EOF
