@@ -316,7 +316,7 @@ check "merge base IS HEAD: vacuous, named honestly" 0 "vacuous" run vacuous HEAD
 # the env vars are honored the way the composite sets them.
 init_repo env-tree
 mkdir -p "$TMP/env-tree/frags"
-printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped (#1).\n' >"$TMP/env-tree/NOTES.md"
+printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped.\n' >"$TMP/env-tree/NOTES.md"
 printf '0.1.1-dev\n' >"$TMP/env-tree/VERSION"
 printf -- '- Flagged entry (#2).\n' >"$TMP/env-tree/frags/2.md"
 git -C "$TMP/env-tree" add -A

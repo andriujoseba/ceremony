@@ -452,7 +452,7 @@ fragment_tree fragments-bad-name 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- An entry (#1)." >"$TMP/fragments-bad-name/changelog.d/notes.md"
+printf '%s\n' "- An entry." >"$TMP/fragments-bad-name/changelog.d/notes.md"
 check "fragment mode quotes malformed-fragment diagnosis and file" 1 \
   "fragment 'changelog.d/notes.md' is not named for its issue" \
   in_tree fragments-bad-name
@@ -484,7 +484,7 @@ check "fragment bare + stamped section + consumed directory passes" 0 \
   "fragment mode" in_tree fragments-bare-stamped
 
 cp -R "$TMP/fragments-bare-stamped" "$TMP/fragments-bare-survivor"
-printf '%s\n' "- This entry was not consumed." \
+printf '%s\n' "- This entry was not consumed (#115)." \
   >"$TMP/fragments-bare-survivor/changelog.d/115.md"
 check "fragment bare refuses and lists surviving fragments" 1 \
   "these fragments were not consumed: changelog.d/115.md" \
@@ -531,7 +531,7 @@ check "same changelog fails in legacy mode" 1 "development tree" \
 
 mkdir -p "$TMP/env-tree"
 printf '1.2.4-dev\n' >"$TMP/env-tree/VERSION"
-printf '# Changelog\n\n## Unreleased\n\n- Pending (#1).\n' >"$TMP/env-tree/NOTES.md"
+printf '# Changelog\n\n## Unreleased\n\n- Pending.\n' >"$TMP/env-tree/NOTES.md"
 # A non-default changelog name proves the env var is honored, not the default.
 env_tree() {
   (cd "$TMP/env-tree" && CHANGELOG=NOTES.md VERSION_SOURCE=file bash "$SCRIPT")

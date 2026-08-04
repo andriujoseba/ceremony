@@ -87,7 +87,7 @@ cat >"$PROBLEM_FIXTURE" <<'EOF'
 
 ### Fixed
 
-- Fixed entry (#22).
+- Fixed entry.
 
 ## 1.3.0
 
@@ -101,7 +101,7 @@ cat >"$PROBLEM_FIXTURE" <<'EOF'
 
 ### Fixed
 
-- Fixed entry (#22).
+- Fixed entry.
 
 ## 1.4.0
 
@@ -115,7 +115,7 @@ cat >"$PROBLEM_FIXTURE" <<'EOF'
 
 ### Fixed
 
-- Fixed entry (#22).
+- Fixed entry.
 EOF
 
 assert_problem Unreleased 0 ""
@@ -221,23 +221,23 @@ printf -- '- Cross-repo (#14).\n' >"$PF/ceremony-14.md"
 check "fragment predicate: a cross-repo name passes" 0 "" \
   changelog_fragment_problem "$PF/ceremony-14.md"
 
-printf -- '- Bad name (#12).\n' >"$PF/Fix-12.md"
+printf -- '- Bad name.\n' >"$PF/Fix-12.md"
 check "fragment predicate: an uppercase prefix is refused, file named" 1 "Fix-12.md" \
   changelog_fragment_problem "$PF/Fix-12.md"
-printf -- '- Bad name (#12).\n' >"$PF/notes.txt"
+printf -- '- Bad name.\n' >"$PF/notes.txt"
 check "fragment predicate: a non-.md file is refused, file named" 1 "notes.txt" \
   changelog_fragment_problem "$PF/notes.txt"
-printf -- '- Bad name (#12).\n' >"$PF/12.markdown"
+printf -- '- Bad name.\n' >"$PF/12.markdown"
 check "fragment predicate: .markdown is refused, file named" 1 "12.markdown" \
   changelog_fragment_problem "$PF/12.markdown"
-printf -- '- No number (#1).\n' >"$PF/notes.md"
+printf -- '- No number.\n' >"$PF/notes.md"
 check "fragment predicate: a name with no trailing issue number is refused" 1 "notes.md" \
   changelog_fragment_problem "$PF/notes.md"
 
 cat >"$PF/20.md" <<'EOF'
 ## 1.0.0 — 2026-07-24
 
-- Smuggled heading (#20).
+- Smuggled heading.
 EOF
 check "fragment predicate: a '## ' line is refused — the heading is the assembler's" 1 \
   "the section heading is the assembler's to write" \
@@ -253,7 +253,7 @@ cat >"$PF/22.md" <<'EOF'
 
 ### Fixed
 
-- Fixed entry (#22).
+- Fixed entry.
 EOF
 check "fragment predicate: a dangling grouped heading is refused, heading named" 1 \
   "has an empty heading: '### Added'" \
@@ -274,14 +274,14 @@ check "length bound: the refusal names the bound and the split fix" 1 \
   "the bound is 300: split it into multiple '- ' entries in this same fragment" \
   changelog_fragment_problem "$PF/30.md"
 
-printf -- '- %s\n' "$(mkchars 300)" >"$PF/31.md"
+printf -- '- %s (#31).\n' "$(mkchars 293)" >"$PF/31.md"
 check "length bound: an entry of exactly 300 passes" 0 "" \
   changelog_fragment_problem "$PF/31.md"
 
 {
-  printf -- '- %s\n' "$(mkchars 150)"
-  printf -- '- %s\n' "$(mkchars 150)"
-  printf -- '- %s\n' "$(mkchars 150)"
+  printf -- '- %s (#32).\n' "$(mkchars 143)"
+  printf -- '- %s (#32).\n' "$(mkchars 143)"
+  printf -- '- %s (#32).\n' "$(mkchars 143)"
 } >"$PF/32.md"
 check "length bound: several within-bound entries pass though the file totals over 300" 0 "" \
   changelog_fragment_problem "$PF/32.md"
@@ -291,14 +291,14 @@ check "length bound: several within-bound entries pass though the file totals ov
   printf '  %s\n' "$(mkchars 50)"
   printf '  %s\n' "$(mkchars 50)"
   printf '  %s\n' "$(mkchars 50)"
-  printf '  %s\n' "$(mkchars 50)"
+  printf '  %s (#33).\n' "$(mkchars 50)"
 } >"$PF/33.md"
 check "length bound: a ~250-character entry wrapped over four continuation lines passes" 0 "" \
   changelog_fragment_problem "$PF/33.md"
 
 {
   printf '### Added\n\n'
-  printf -- '- %s\n' "$(mkchars 300)"
+  printf -- '- %s (#34).\n' "$(mkchars 293)"
 } >"$PF/34.md"
 check "length bound: a '### ' heading counts toward no entry — 300 under it still passes" 0 "" \
   changelog_fragment_problem "$PF/34.md"

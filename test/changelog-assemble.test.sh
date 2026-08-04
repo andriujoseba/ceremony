@@ -213,7 +213,7 @@ frag check-readonly 5.md <<'EOF'
 - Five (#5).
 EOF
 cp -R "$TMP/check-readonly" "$TMP/check-readonly.before"
-check "--check prints the assembled body" 0 "Five." \
+check "--check prints the assembled body" 0 "Five (#5)." \
   in_tree check-readonly 0.2.0 2026-07-24 --check
 check "--check is read-only: the tree is byte-identical before and after" 0 "" \
   diff -r "$TMP/check-readonly.before" "$TMP/check-readonly"
@@ -228,7 +228,7 @@ check "the defaulted stamp is a UTC date" 0 "" \
 # --- --changelog and --dir override the defaults -----------------------------
 
 mkdir -p "$TMP/flagged/frags"
-printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped (#1).\n' >"$TMP/flagged/NOTES.md"
+printf '# Changelog\n\n## 0.1.0 — 2026-07-01\n\n- Shipped.\n' >"$TMP/flagged/NOTES.md"
 printf -- '- Flagged entry (#2).\n' >"$TMP/flagged/frags/2.md"
 check "--changelog and --dir override the defaults" 0 "" \
   "$TOOL" 0.2.0 2026-07-24 --changelog "$TMP/flagged/NOTES.md" --dir "$TMP/flagged/frags"
@@ -270,7 +270,7 @@ frag dangling 4.md <<'EOF'
 
 ### Fixed
 
-- Fixed entry (#4).
+- Fixed entry.
 EOF
 check "a dangling grouped heading refuses, file and heading named" 1 \
   "fragment 'changelog.d/4.md' has an empty heading: '### Added'" \
@@ -282,7 +282,7 @@ EOF
 frag smuggled 6.md <<'EOF'
 ## 0.2.0 — 2026-07-24
 
-- An entry under a smuggled heading (#6).
+- An entry under a smuggled heading.
 EOF
 check "a fragment carrying a '## ' line refuses, file named" 1 \
   "fragment 'changelog.d/6.md' carries a '## ' heading" \
@@ -313,7 +313,7 @@ tree stray-case <<EOF
 $BASE_CHANGELOG
 EOF
 frag stray-case Fix-12.md <<'EOF'
-- Uppercase prefix (#12).
+- Uppercase prefix.
 EOF
 check "Fix-12.md refuses on the name pattern" 1 "Fix-12.md" \
   in_tree stray-case 0.2.0
