@@ -68,7 +68,16 @@ assignee, and comments with the remaining criteria verbatim. The comment says
 that the claim is released and that triage owes a follow-up naming the owner
 and wake condition for completion. Triage writes that full transition comment
 in the same tick when it or the operator makes the move by hand. The sweep
-never reclaims `post-merge`: weeks of quiet can be the state working.
+never reclaims `post-merge`: weeks of quiet can be the state working. It does
+make the quiet visible — after 7 days with no comment on the issue, the sweep
+posts one nudge naming the triage actor, saying the wake evidence is owed and
+linking the item. Only a comment resets that clock: label churn does not, and
+neither does an assignment, which is the claim clock's fact and on this queue
+state is the invalid composition flagged below. Which criterion starved is
+prose the machine never judges; the link is the payload. Like the ruling nudge
+it carries no idempotency marker on purpose — the comment is itself activity,
+so the rule self-rate-limits to one nudge per 7 quiet days — and it writes no
+label.
 
 `post-merge` never composes with `blocked`; the transition comment carries the
 wait. It never composes with `attention`, because releasing the claim clears

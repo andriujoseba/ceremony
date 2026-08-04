@@ -491,7 +491,11 @@ offsite_timeline() { # unreadable timelines are deliberately silent
   gh api --paginate "repos/$REPO/issues/$1/timeline" 2>/dev/null || return 1
 }
 
-last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read failed
+issue_activity_at() { # $1 issue, $2 created_at, $3 with-assignment|comments-only
+  # One body, two clocks over it — a second activity computation is the drift
+  # the reuse exists to prevent, and the two callers below are the whole
+  # difference between them.
+  #
   # Both reads are checked, and a failure reports rather than answering an age
   # (#247 D1). Swallowed, the comments read falls back to `created_at`, and a
   # `claimed` issue created months ago but commented on seconds earlier is
@@ -499,19 +503,42 @@ last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read 
   # hours of silence. `needs-triage` is cheap to remove; that is not.
   # gh's stderr is left to flow to this function's own, where the caller's
   # guarded_read captures it for the reason line.
-  local n="$1" created="$2" comments timeline latest
+  local n="$1" created="$2" mode="$3" comments timeline="" latest
   comments="$(gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].created_at')" \
     || return 1
-  # Assignment is the claim itself. Ignoring it would let an old issue be
-  # reclaimed in the seconds between assignment and its required draft PR.
-  timeline="$(gh api --paginate "repos/$REPO/issues/$n/timeline" \
-    --jq '.[] | select(.event == "assigned") | .created_at')" || return 1
+  if [ "$mode" = with-assignment ]; then
+    timeline="$(gh api --paginate "repos/$REPO/issues/$n/timeline" \
+      --jq '.[] | select(.event == "assigned") | .created_at')" || return 1
+  fi
   latest="$(printf '%s\n%s\n%s\n' "$created" "$comments" "$timeline" | sort | tail -n1)"
   date -d "$latest" +%s
 }
 
+last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read failed
+  # The claim clock, and the ruling clock with it. Assignment is the claim
+  # itself. Ignoring it would let an old issue be reclaimed in the seconds
+  # between assignment and its required draft PR.
+  issue_activity_at "$1" "$2" with-assignment
+}
+
+last_issue_comment_activity() { # $1 issue, $2 created_at → epoch; non-zero on a failed read
+  # The evidence nudge's clock (#254). Same computation, one input fewer, and
+  # the input it drops is the one that would starve the criterion: on
+  # `post-merge` there is no claim for an assignment to protect, and an
+  # assignee there is the invalid composition the `post-merge-assigned` flag
+  # reports. Counting it would let a broken board buy the item another 7 days
+  # of silence — the failure direction of #254 taken backwards.
+  #
+  # A comment the sweep itself wrote is still activity here, deliberately:
+  # the nudge carries no marker, so its own comment is what rate-limits it,
+  # and no machine comment can be exempted without exempting that one too.
+  # Reading authorship back into the clock would mean a body read this issue
+  # forbids.
+  issue_activity_at "$1" "$2" comments-only
+}
+
 reconcile_issue() {
-  local n="$1" decision refs cross_refs states age created assignees open_pr=false label owners
+  local n="$1" decision refs cross_refs states age evidence_age created assignees open_pr=false label owners
   local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set="" parse_marker=""
   local unchecked="" remove_claimed=claimed
   local attention_active=true attention_suppression=""
@@ -606,12 +633,66 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     fi
   elif has_issue_label post-merge; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
+    # The evidence nudge's clock is read BEFORE any comment this branch
+    # posts. `ensure_comment` below is itself activity, so reading after it
+    # would let the assigned-flag comment silence the nudge for another 7
+    # days — the same self-silencing the ruling nudge avoids by reading its
+    # facts once, at the top of the pass.
+    #
+    # Its own variable, not `age`: the ruling block below reuses `age` when
+    # it is already set, and the evidence clock is deliberately narrower than
+    # the ruling clock. Leaking it there would silently change what a ruling
+    # nudge means depending on which queue label the issue sits under.
+    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+    guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
+      || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    # The ruling clock is read HERE, not in the ruling block, for the same
+    # reason the evidence clock is: that block reads only when `age` is
+    # unset, and by the time it runs this branch may have posted the
+    # evidence nudge — so its read would date the issue by this sweep's own
+    # comment and silence the ruling nudge. Both waits are answered from
+    # facts that predate anything this pass writes. The cost is one extra
+    # comments read on `post-merge` + `needs-ruling`, and only there: an
+    # ordinary `post-merge` issue reads once.
+    if has_issue_label needs-ruling; then
+      guarded_read age last_issue_activity "$n" "$created" \
+        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    fi
     if [ "$assignees" -gt 0 ] || has_issue_label attention; then
       ensure_comment "$n" post-merge-assigned \
         'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
       log "#$n: assigned or attention-bearing post-merge issue flagged"
     fi
     attention_suppression=post-merge-assigned
+    # ---- the post-merge evidence nudge (#254), the ruling nudge's twin ----
+    # A `post-merge` item waits on named evidence with a named owner, and
+    # nothing nudged when the wait went quiet: crew#181's real-host criterion
+    # starved four separate times across two releases, crew#240/#264 sat
+    # until an operator happened to run the right read. Same 7-day rule, same
+    # constant, same no-marker property — `ruling_nudge_decision` is the one
+    # spelling of all three (lib/ruling.sh), and a second `7 * 24 * 3600`
+    # here is the drift that file exists to prevent.
+    #
+    # The addressee is the triage actor, not `HUMAN_REVIEWER`: `post-merge`
+    # is triage's completion queue by contract (TRIAGE.md), so a starving
+    # wake condition is triage's to answer, and routing it to the operator
+    # asks the wrong party for a move it does not owe. `triage-actors=` is
+    # mandatory config — `load_issueflow_config` refuses to run without it —
+    # so there is nothing to fall back to, and a silent fallback is exactly
+    # how the wrong addressee comes back.
+    if [ "$(ruling_nudge_decision "$NOW" "$evidence_age")" = NUDGE ]; then
+      local quiet_days=$(((NOW - evidence_age) / 86400))
+      run gh issue comment "$n" -R "$REPO" --body "@${TRIAGE_ACTORS[0]} — this \`post-merge\` item has had no comment for ${quiet_days} days: https://github.com/$REPO/issues/$n
+
+Its wake evidence is still owed. \`post-merge\` means the merge landed and
+triage owns completion — judge the remaining criteria against the evidence
+and close the issue, or say what is still outstanding and who owes it. The
+sweep names no criterion: which one starved is prose, and the machine never
+judges prose (the link is the payload).
+
+*This nudge is comment-only and carries no idempotency marker on purpose: the comment itself is activity, so posting it resets the 7-day window and the rule self-rate-limits to one nudge per 7 quiet days. Do not add a marker.*" >/dev/null
+      log "#$n: post-merge evidence nudge (${quiet_days}d quiet — triage owes the wake evidence)"
+    fi
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
     cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"

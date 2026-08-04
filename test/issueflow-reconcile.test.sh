@@ -431,7 +431,11 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
     local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_prs="${5:-}"
     local body="${6:-}" assignee_json='[]' open_pr_records="" spec pr merged_at
     [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
-    REPO=owner/repo NOW="$INOW"
+    # `PROBE_NOW` moves the sweep's clock without moving the fixtures — the
+    # only way to prove a rule that self-rate-limits on its own comment's
+    # timestamp (#254): sweep, then sweep again a day later and watch the
+    # nudge stay silent because the comment it posted is now the activity.
+    REPO=owner/repo NOW="${PROBE_NOW:-$INOW}"
     ISSUE_LABELS="$2"
     ISSUE_JSON="$(jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
       --argjson assignees "$assignee_json" --arg body "$body" \
@@ -517,6 +521,13 @@ check "...drawing the #252 parse echo and nothing else" 0 "1" \
   grep -c -- '^----$' "$TMP/posted-66"
 
 attention_episode 67 "$(iso_at $((INOW - 60)))"
+# Recent activity keeps the evidence nudge (#254) off this probe: it is a
+# precedence case, and "exactly one comment" is the assertion doing the work.
+# The nudge's own coexistence with the post-merge diagnostic is pinned in its
+# section below, on a probe that is quiet on purpose.
+jq -n --arg at "$(iso_at $((INOW - 60)))" \
+  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c67","body":"still waiting on the tag"}]' \
+  >"$(cfix 67)"
 post_merge_attention="$(issue_probe 67 $'post-merge\nattention' 0)"
 check "post-merge precedence leaves exactly its existing comment" 0 "1" \
   grep -c -- '^----$' "$TMP/posted-67"
@@ -617,14 +628,196 @@ printf '[]\n' >"$(cfix 36)"
 post_merge_quiet="$(issue_probe 36 post-merge 0)"
 check "quiet unassigned post-merge work is not reclaimed" 1 "" \
   grep -q 'reclaimed' <<<"$post_merge_quiet"
-check "...and causes no comment or edit" 1 "" test -f "$TMP/posted-36"
+# The quiet itself is now visible (#254) — this probe is 10 days old with no
+# activity, so it draws the evidence nudge and nothing else. It used to
+# assert no comment at all; that assertion described the starvation this
+# issue exists to end, and the edit half of it is what still matters.
+check "...and causes no edit" 1 "" grep -qF -- 'issue edit 36' "$TMP/issue-edits"
+check "...only the evidence nudge speaks" 0 "1" \
+  grep -c -- '^----$' "$TMP/posted-36"
 
 printf '[]\n' >"$(cfix 37)"
+# The live shape of an assigned `post-merge` issue: the assignee in the issue
+# payload AND the `assigned` event that put it there in the timeline. With an
+# empty timeline this fixture could not see the defect it exists to guard —
+# the evidence clock counting that hour-old assignment as activity and
+# silencing the nudge for another 7 days, on the one board state where an
+# assignee is itself the bug being reported.
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"assigned","created_at":$at}]' >"$(tfix 37)"
 issue_probe 37 post-merge 1 >/dev/null
 check "assigned post-merge is flagged" 0 "" \
   grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-37"
 check "...and the hand-assignment is not repaired" 1 "" \
   grep -qF -- 'issue edit 37' "$TMP/issue-edits"
+# The flag and the nudge answer different questions — a board bug and a
+# starved wake condition — so neither suppresses the other (#254).
+check "...and the evidence nudge rides beside it, neither suppressed" 0 "2" \
+  grep -c -- '^----$' "$TMP/posted-37"
+
+# -- the post-merge evidence nudge (#254), the ruling nudge's twin ----------
+# The ruling nudge solved "a wait goes quiet and nobody is told" for
+# `needs-ruling`; `post-merge` had no equivalent, and crew#181's real-host
+# criterion starved four times across two releases for want of one. Same
+# 7-day constant (`ruling_nudge_decision`, reused not mirrored), same
+# deliberate absence of an idempotency marker, and — unlike the ruling
+# nudge — addressed to the triage actor, because `post-merge` is triage's
+# completion queue and the operator owes nothing here (#254 D1).
+nudge_edits_before="$(wc -l <"$TMP/issue-edits")"
+
+quiet_comment() { # $1 issue, $2 seconds of quiet — one ordinary comment, then silence
+  jq -n --arg at "$(iso_at $((INOW - $2)))" \
+    '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c","body":"evidence pending"}]' \
+    >"$(cfix "$1")"
+  printf '[]\n' >"$(tfix "$1")"
+}
+
+quiet_comment 80 $((8 * 86400))
+nudged="$(issue_probe 80 post-merge 0)"
+check "8 quiet days on a post-merge item draws the evidence nudge" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$nudged"
+# shellcheck disable=SC2016 # expansions belong to the isolated bash -c process
+check "...addressed to the triage actor, never the human reviewer" 0 "" \
+  bash -c 'grep -qF "@triage-one" "$1" && ! grep -qF "@danmt" "$1"' _ "$TMP/posted-80"
+check "...with the issue link as the payload" 0 "" \
+  grep -qF 'https://github.com/owner/repo/issues/80' "$TMP/posted-80"
+check "...carrying the do-not-add-a-marker warning in the comment" 0 "" \
+  grep -qF 'Do not add a marker.' "$TMP/posted-80"
+# Asserted directly, not merely omitted: a marker would turn "once per 7
+# quiet days" into "once per issue, forever" — the exact "fix" lib/ruling.sh's
+# header records as the thing that breaks this rule.
+check "...and no idempotency marker on the path" 1 "" \
+  grep -qF '<!-- issueflow:' "$TMP/posted-80"
+
+# Self-rate-limiting, proven by the property and not by the mechanism: sweep
+# again a day later, against fixtures the first sweep's own comment mutated.
+nudged_again="$(PROBE_NOW=$((INOW + 86400)) issue_probe 80 post-merge 0)"
+check "a sweep one day after the nudge holds its silence" 1 "" \
+  grep -q 'post-merge evidence nudge' <<<"$nudged_again"
+check "...so exactly one nudge exists across both sweeps" 0 "1" \
+  grep -c -- '^----$' "$TMP/posted-80"
+
+quiet_comment 81 $((6 * 86400))
+six_days="$(issue_probe 81 post-merge 0)"
+check "6 quiet days is inside the window and draws nothing" 1 "" \
+  grep -q 'post-merge evidence nudge' <<<"$six_days"
+check "...and posts no comment at all" 1 "" test -f "$TMP/posted-81"
+
+# Label churn is not activity, or the sweep resets its own clock. The rule is
+# `last_issue_activity`'s, shared with the reclaim and ruling clocks rather
+# than restated here — this probe pins that the nudge inherits it.
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"labeled","label":{"name":"scope:docs"},"created_at":$at},
+    {"event":"unlabeled","label":{"name":"scope:docs"},"created_at":$at}]' >"$(tfix 82)"
+printf '[]\n' >"$(cfix 82)"
+churn="$(issue_probe 82 post-merge 0)"
+check "an hour-old label churn does not reset the 7-day clock" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$churn"
+
+quiet_comment 83 3600
+fresh="$(issue_probe 83 post-merge 0)"
+check "an hour-old comment does reset it" 1 "" \
+  grep -q 'post-merge evidence nudge' <<<"$fresh"
+
+# Neither is an assignment. That event is the *claim* clock's activity fact —
+# 48 hours of silence must not include the seconds between a claim and its
+# required draft PR — and `post-merge` has no claim for it to protect: an
+# assignee here is the invalid composition the flag above reports. Counting
+# it would let a broken board buy the item another 7 days of quiet, which is
+# this issue's failure direction taken backwards. No current assignee on this
+# probe, so nothing stands between the clock rule and the nudge.
+quiet_comment 93 $((8 * 86400))
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"assigned","created_at":$at},{"event":"unassigned","created_at":$at}]' >"$(tfix 93)"
+assigned_clock="$(issue_probe 93 post-merge 0)"
+check "an hour-old assignment does not reset the evidence clock either" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$assigned_clock"
+
+# The two clocks over the one computation, asserted directly rather than
+# through a probe: same fixture, one input's difference, and the reclaim
+# clock is pinned unmoved by the split.
+jq -n --arg at "$(iso_at $((INOW - 5 * 86400)))" \
+  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c95","body":"evidence pending"}]' \
+  >"$(cfix 95)"
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"assigned","created_at":$at}]' >"$(tfix 95)"
+two_clocks="$( (REPO=owner/repo; gh() { issue_stub_gh "$@"; }
+  printf '%s %s\n' \
+    "$(last_issue_activity 95 "$(iso_at $((INOW - 10 * 86400)))")" \
+    "$(last_issue_comment_activity 95 "$(iso_at $((INOW - 10 * 86400)))")") )"
+check "the claim clock counts the assignment, the evidence clock the comment" 0 \
+  "$((INOW - 3600)) $((INOW - 5 * 86400))" printf '%s\n' "$two_clocks"
+# One body, two callers: a second activity computation is the drift the
+# reuse exists to prevent, so the timeline read has exactly one spelling.
+# shellcheck disable=SC2016 # the read is asserted as a literal, unexpanded
+check "the timeline read is not respelled for the evidence clock" 0 "1" \
+  grep -c 'issues/\$n/timeline' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
+# Both waits are quiet, both are owed, and to different parties: suppressing
+# one because the other spoke is a starved criterion, which is the failure
+# this nudge exists to remove.
+jq -n --arg l "$(iso_at $((INOW - 9 * 86400)))" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
+  >"$(tfix 84)"
+jq -n --arg at "$(iso_at $((INOW - 9 * 86400 - 60)))" \
+  --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z\nDefault:  none — hard block' \
+  --arg r12 "$(iso_at $((INOW - 9 * 86400 + 13 * 3600)))" \
+  --arg r24 "$(iso_at $((INOW - 9 * 86400 + 25 * 3600)))" \
+  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc84","body":$b},
+    {"user":{"login":"sweep-bot"},"created_at":$r12,"html_url":"https://x/r12","body":"<!-- ceremony:needs-ruling-rung12 -->\nrung"},
+    {"user":{"login":"sweep-bot"},"created_at":$r24,"html_url":"https://x/r24","body":"<!-- ceremony:needs-ruling-rung24 -->\nrung"}]' \
+  >"$(cfix 84)"
+both="$(issue_probe 84 $'post-merge\nneeds-ruling' 0)"
+check "a quiet post-merge item under a pending ruling nudges both waits" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$both"
+check "...and the ruling nudge is not suppressed by it" 0 "" \
+  grep -q 'ruling nudge' <<<"$both"
+# shellcheck disable=SC2016 # expansions belong to the isolated bash -c process
+check "...each addressing its own party" 0 "" \
+  bash -c 'grep -qF "@triage-one" "$1" && grep -qF "@danmt" "$1"' _ "$TMP/posted-84"
+
+# Every other queue state: the nudge is `post-merge`'s alone. Each is equally
+# quiet, and `claimed` carries an open PR so its own reclaim clock — the one
+# other 10-day rule on this path — stays out of the way.
+non_post_merge=(85:ready:0:false 86:claimed:1:true 87:blocked:0:false 88:epic:0:false 89:needs-triage:0:false)
+for spec in "${non_post_merge[@]}"; do
+  IFS=: read -r n state probe_assignees probe_pr <<<"$spec"
+  printf '[]\n' >"$(cfix "$n")"
+  printf '[]\n' >"$(tfix "$n")"
+  check "a 10-day-quiet $state issue draws no evidence nudge" 1 "" \
+    grep -q 'post-merge evidence nudge' \
+    <<<"$(issue_probe "$n" "$state" "$probe_assignees" "$probe_pr")"
+done
+
+# The machine never judges prose: which criterion starved is not a fact the
+# sweep reads, so a body it could not parse if it tried still nudges.
+quiet_comment 90 $((8 * 86400))
+unparseable_body="$(issue_probe 90 post-merge 0 false "" '¯\_(ツ)_/¯ wake: ask danmt sometime')"
+check "an unparseable body still nudges — the link is the payload" 0 "" \
+  grep -q 'post-merge evidence nudge' <<<"$unparseable_body"
+check "...and the nudge quotes none of it" 1 "" \
+  grep -qF 'ask danmt sometime' "$TMP/posted-90"
+
+# One spelling of the 7-day rule. `lib/ruling.sh` exists because this family
+# already paid for two copies of a constant; a second one here is the drift,
+# and it is cheap to pin at the grep level.
+# Code lines only: the branch's comment names the constant it must not
+# respell, which is the sentence a future reader needs and not a second copy.
+check "the 7-day rule is not respelled in the sweep" 1 "" \
+  grep -nE '^[^#]*(7 \* 24 \* 3600|604800)' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+# shellcheck disable=SC2016 # the call site is asserted as a literal
+check "...it is reused from lib/ruling.sh" 0 "" \
+  grep -qF 'ruling_nudge_decision "$NOW" "$evidence_age"' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
+# `post-merge` is the one queue state whose whole meaning is that the machine
+# owes nothing (LABELS.md: the sweep never reclaims it). This issue makes the
+# quiet visible; it must never make it actionable.
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the evidence-nudge probes perform no issue edits" 0 "$nudge_edits_before" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
 # -- non-triggers stay byte-for-byte outside the transition ------------------
 recent_timeline() {
@@ -1037,6 +1230,28 @@ check "...so the live claim is not reclaimed" 1 "" \
 check "...no unassign, no label swap, and no reclaim comment" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
   "$claim_edits_before" "$TMP/issue-edits" "$TMP/posted-50"
+
+# -- the quiet diagnostic: a 504 on a post-merge activity read (#254) --------
+# The guarded read is unconditional at the top of the branch, so a
+# `post-merge` issue can be skipped where before this change it never could —
+# and the assigned flag, which needed no read at all, goes quiet with it.
+# That is #247 D1's direction (a whole pass or none of it, never a verdict
+# derived from a read that did not answer) and the trade `claimed`, `blocked`
+# and `needs-ruling` already make. It is still a new way for that diagnostic
+# to fall silent, so it is pinned here rather than left to inspection.
+jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c94","body":"evidence pending"}]' \
+  >"$(cfix 94)"
+printf '%s\n' "$GH_STUB_ERROR_BODY" >"$(cfix 94).http-error"
+post_merge_skip_edits="$(wc -l <"$TMP/issue-edits")"
+check "a 504 on a post-merge activity read skips the issue" \
+  3 "#94: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
+  issue_probe 94 post-merge 1
+check "...so neither the nudge nor the assigned flag speaks" 1 "" test -f "$TMP/posted-94"
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and the skipped pass edits nothing" 0 "" \
+  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ \
+  "$post_merge_skip_edits" "$TMP/issue-edits"
 
 # -- the suppressed comment: a 504 on the marker read -----------------------
 # The marker is on the issue. Read as "no marker", a failed read re-posts the
