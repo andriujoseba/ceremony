@@ -49,7 +49,7 @@ on:
 env:
   # A called workflow arrives without its repository. Keep this literal pin
   # aligned with the ceremony release consumed by callers (issue #9 D3).
-  CEREMONY_SELF_REF: "0.6.0"
+  CEREMONY_SELF_REF: "b10c6211e6f7d01514ac24585c2bdfab32f7a546"
 
 jobs:
   reconcile:
