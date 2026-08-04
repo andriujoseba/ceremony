@@ -14,15 +14,14 @@ triage bug, and the move is to say so on the issue, not to guess.
   release-window members.
 - **Your own red head outranks a new claim**: repair a failing check at the
   head of a PR you authored before claiming another issue, or it strands
-  mergeable and unattended (#163). Record the failing check and its failure
-  class; rerun a clearly retryable infrastructure failure without changing
-  code; treat a failure belonging to the branch as an ordinary fix round,
-  worklog and all; leave visible evidence where a rerun cannot be started or
-  the cause is uncertain; never rerun a deterministic branch failure without
-  a corrective commit; hand off once the check is green and current-head
-  approvals stand. Such a PR is **not parked**, whatever the round's verdict
-  state says. Red and green are the review round's ruled terms below; how
-  the engine detects a red head is crew's to describe, not this file's.
+  mergeable and unattended (#163). Record the check and its failure class;
+  rerun a clearly retryable infrastructure failure unchanged; treat a branch
+  failure as an ordinary fix round, worklog and all; leave visible evidence
+  where a rerun cannot be started or the cause is uncertain; never rerun a
+  deterministic branch failure without a corrective commit; hand off once
+  the check is green and current-head approvals stand. Such a PR is **not
+  parked**, whatever the round's verdict state says. How the engine detects
+  a red head is crew's to describe, not this file's.
 - **One build at a time**: at most one issue on which you are writing or
   revising a deliverable, finished or released before you start new work.
   The rule counts build work in flight, not claims — a **parked** claim,
@@ -44,18 +43,19 @@ triage bug, and the move is to say so on the issue, not to guess.
      work, the direction names what the hold waits on, and only they end it.
      A hold ends the way it started, **on the labels**: where labels and
      prose disagree, the most recent queue-label event by the hold's owner
-     governs, an operator being free to lift by label alone (#149, #151). So
-     read the label events (`gh api /repos/{owner}/{repo}/issues/{n}/timeline`),
-     not only the comments, before standing down *or* standing up, and where
-     you act against stale prose say so in the claim, naming the events,
-     their timestamps and their actor. Refusing to claim through the
-     contradiction is no resting place: where the events do not resolve it,
-     say so on the issue and take the next `ready` issue.
+     governs, an operator being free to lift by label alone (#149, #151).
+     Read the label events (`gh api
+     /repos/{owner}/{repo}/issues/{n}/timeline`), not only the comments,
+     before standing down *or* standing up, and where you act against stale
+     prose say so in the claim, naming the events, their timestamps and
+     their actor. Refusing to claim through the contradiction is no resting
+     place: where the events do not resolve it, say so on the issue and take
+     the next `ready` issue.
   Not parked: waiting on yourself, on CI (a red head is your own work; a
   pending one resolves without you), or for a good moment. An issue you have
-  simply stopped working on is abandoned — unassign and restore `ready`. The
-  rule counts work because parked claims are legitimately held beside the
-  one active build (#15, #16, #73).
+  simply stopped working on is abandoned — unassign and restore `ready`.
+  Parked claims are legitimately held beside the one active build (#15, #16,
+  #73).
 
 ## Claiming
 
@@ -71,11 +71,10 @@ triage bug, and the move is to say so on the issue, not to guess.
   name the wait (the merge) and its owner (the human).
 - **A declaration stands until the park's facts change**, so a resumption
   that finds nothing changed posts nothing (#177). One new comment is owed
-  each time the facts change — the named wait resolves or changes hands, the
+  each time they do change — the named wait resolves or changes hands, the
   parked shape changes, or the claim unparks. A parked claim with **no open
   PR** still feeds the 48-hour reclaim clock, so refresh the declaration
-  before that window closes; that refresh is the only repeat a park owes, at
-  the reclaim window's cadence.
+  before that window closes; that refresh is the only repeat a park owes.
 - **Pick up `attention` before anything else.** Post a short pickup comment
   and remove `attention`; the removal is the ack. A demand on a parked claim
   is usually its unpark, so take the slot back — unless the demand *is* the
@@ -84,13 +83,13 @@ triage bug, and the move is to say so on the issue, not to guess.
 - **A directed hold keeps its bookkeeping visible.** The PR carries
   `blocked` with a comment naming what it waits on; the issue stays
   `claimed` and carries `attention` until the builder acknowledges it.
-  Nobody unassigns the issue, and the 48-hour reclaim does not fire because
+  Nobody unassigns the issue, and the 48-hour reclaim does not fire while
   the claim has an open PR.
 - **Unparking is a claim like any other** and takes the slot: if you are
   active elsewhere, finish or release that work first and say which you did
-  on both issues. Nothing counts claims per builder and no reconciler path
-  enforces this — the discipline is the declaration, not a counter, and no
-  such machinery should be built expecting it to have been specified here.
+  on both issues. No machinery counts claims per builder, and none should be
+  built expecting this section to have specified one — the discipline is the
+  declaration, not a counter.
 - **Abandoning is fine; ghosting is not.** Say where you got to, push the
   branch if it holds anything useful, unassign, and restore `ready`.
 
@@ -133,10 +132,10 @@ triage bug, and the move is to say so on the issue, not to guess.
   the fragment, a rarer kind only where a change genuinely is one. An entry
   is at most 300 characters, so a long change ships several short entries;
   wrapping one over continuation lines never counts against it. It **ends
-  with its issue citation**: one `(` group of `#N`, `repo#N` or
-  `owner/repo#N` separated by `, `, then `)`, then the final `.` and nothing
-  after it — `(#262).`, or `(#236, #250).` where an entry honestly lands two
-  — and it need not name the fragment's own issue, which the filename
+  with its issue citation** — one parenthesised group of `#N`, `repo#N` or
+  `owner/repo#N` references separated by `, `, then the final `.` and
+  nothing after it: `(#262).`, or `(#236, #250).` where an entry honestly
+  lands two — and need not name the fragment's own issue, which the filename
   carries. The guard reds a longer entry (#167) and an uncited one (#262)
   alike. Never edit `CHANGELOG.md` for an entry: the release PR assembles
   the section from the fragments (#112), and the monotonic guard refuses
@@ -153,8 +152,7 @@ triage bug, and the move is to say so on the issue, not to guess.
 - **Scope discipline: the PR does the issue — whole, and nothing else.**
   Adjacent problems go to a **discussion**, or a comment on the relevant
   issue, where triage does its job. You do not mint issues — nobody but
-  triage does — and you do not fix drive-by findings in the same PR, because
-  a reviewer cannot converge on a widening target.
+  triage does — and you do not fix drive-by findings in the same PR.
 
 ## The review round
 
@@ -174,26 +172,26 @@ triage bug, and the move is to say so on the issue, not to guess.
    request says so explicitly and names the evidence ("the same job fails
    identically on `origin/main` at `<sha>`"); silence about a red check is
    what is prohibited.
-   *Green* is a ruled term (operator, 2026-07-27), read in two steps,
-   because a head carries more rollup entries than it has checks. **First
-   take the check's word at this head**: its newest entry by start time,
-   never a `CANCELLED` entry while the same check has a non-cancelled one at
-   that head. Date entries by start, not completion — a cancelled run
-   outlives its replacement's start. A check whose every entry at the head
-   is cancelled has not reported at all and stays not-green by the classes
-   below, the gate collapsing the same way (#139, #276).
-   **Then classify that entry from its `conclusion`, never its `status`**,
-   which can still disagree with it (#259). No conclusion at all is neither
-   class: a configured run still in progress is not green, and waiting on it
-   is compliance, not a stall. **Cancelled or stale** is not green — *stale*
-   means a superseded head's check, which a head-scoped rollup never shows,
-   so what survives there is same-head cancellation. **Skipped or neutral**
-   *is* green, those being deliberate "passed / not applicable" conclusions.
-   **No checks configured** is the third ruled case, not an argued
-   exception: nothing is configured, so nothing is waited for and the
-   request goes out at once, no evidence owed — which rules
-   nothing-configured, never nothing-answered-yet, and the machine
-   partitions alike, admitting the ask on `SUCCESS` and on `NONE` (#236).
+   *Green* is a ruled term (operator, 2026-07-27), read in two steps.
+   **First take the check's word at this head**: its newest entry by start
+   time — not by completion, a cancelled run outliving its replacement's
+   start — and never a `CANCELLED` entry while the same check has a
+   non-cancelled one at that head. A check whose every entry at the head is
+   cancelled has not reported at all and is not green, the gate collapsing
+   the same way (#139, #276). **Then classify that entry from its
+   `conclusion`, never its `status`**, which can still disagree with it
+   (#259):
+   - no conclusion at all — not green: a configured run still in progress is
+     waited on, and waiting is compliance, not a stall;
+   - cancelled or stale — not green, *stale* meaning a superseded head's
+     check, which a head-scoped rollup never shows;
+   - skipped or neutral — green, those being deliberate "passed / not
+     applicable" conclusions;
+   - no checks configured at the head — green, the third ruled case and not
+     an argued exception: the request goes out at once, no evidence owed.
+     That never covers nothing-answered-yet, and the machine partitions
+     alike, admitting the ask on `SUCCESS` and on `NONE` (#236).
+
    The costs behind the line are asymmetric: a false green spends a
    three-reviewer round, a false red one author session. What the *machine*
    drops from the rollup before grading is crew's to describe.
@@ -209,12 +207,11 @@ triage bug, and the move is to say so on the issue, not to guess.
    panelist is re-requested, the approvers included**; one left
    un-re-requested can never approve the tree you shipped (#26, #39). Only
    where the head did not move — the round answered with argument or
-   evidence, nothing pushed — do you re-request just the non-approvers, a
-   standing approval already covering this exact head (#94). **The
-   re-request carries the same green-check-at-head precondition**, argued
-   exception included: a fix push whose check comes up red is your next fix,
-   not the panel's. Prefer verification over argument — where a reviewer
-   doubts behavior, add the test that settles it.
+   evidence, nothing pushed — do you re-request just the non-approvers (#94).
+   **The re-request carries the same green-check-at-head precondition**,
+   argued exception included: a fix push whose check comes up red is your
+   next fix, not the panel's. Prefer verification over argument — where a
+   reviewer doubts behavior, add the test that settles it.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
    in the PR; silence and force-forward are not options, and a panel
@@ -233,9 +230,8 @@ may draft a PR but only the builder undrafts it. **Where a draft suppressed
 the checks, green is proven at the flip and the request still follows it** —
 marking ready is what runs the checks the draft held back, so the order is
 flip, let the head answer, then request, which is step 1's precondition and
-not a second one. Waiting there is compliance, not a stall, and
-`blocker:unrequested` does not fire while a head's checks are pending or red
-(#236).
+not a second one. Waiting there is compliance, and `blocker:unrequested`
+does not fire while a head's checks are pending or red (#236).
 
 ## The ruling ask
 
