@@ -420,16 +420,44 @@ check "cite: the reference need not match the filename" 0 "" \
 check "cite: an over-bound entry outranks an earlier uncited one" 1 \
   "57.md' has a 301-character entry" \
   changelog_fragment_problem "$PF/57.md"
-assert_one_diagnosis_57() {
+assert_one_diagnosis() {
   local count
-  count="$(changelog_fragment_problem "$PF/57.md" | wc -l)"
+  count="$(changelog_fragment_problem "$PF/$1.md" | wc -l)"
   [ "$count" = 1 ] || {
     printf 'wanted one diagnosis, got %s\n' "$count"
     return 1
   }
 }
 check "cite: the outranked citation problem is not reported beside it" 0 "" \
-  assert_one_diagnosis_57
+  assert_one_diagnosis 57
+
+# The axis 57.md cannot test: its over-bound entry is LAST, so the only
+# flush that can print is END's, which exits immediately. A flush from a
+# main rule exits too — but awk runs END on the way out, so the citation
+# row a mid-file length row outranks would print after it unless END is
+# guarded. Both ways out of the walk, a bullet and a heading.
+{
+  printf -- '- Uncited, and it comes first.\n'
+  printf -- '- %s\n' "$(mkchars 301)"
+  printf -- '- A later entry the walk never reaches (#57).\n'
+} >"$PF/58.md"
+check "cite: an over-bound entry that is not the last one still reports the bound" 1 \
+  "58.md' has a 301-character entry" \
+  changelog_fragment_problem "$PF/58.md"
+check "cite: and it is still one diagnosis, not the protocol row spliced into it" 0 "" \
+  assert_one_diagnosis 58
+{
+  printf '### Fixed\n'
+  printf -- '- Misplaced, and it comes first. (#59)\n'
+  printf -- '- %s\n' "$(mkchars 301)"
+  printf '### Changed\n'
+  printf -- '- The heading is the other way out of the walk (#59).\n'
+} >"$PF/59.md"
+check "cite: a heading after the over-bound entry is the same one diagnosis" 1 \
+  "59.md' has a 301-character entry" \
+  changelog_fragment_problem "$PF/59.md"
+check "cite: the misplaced row does not ride along with it either" 0 "" \
+  assert_one_diagnosis 59
 
 # Published sections keep their pre-rule prose (D4): reddening history is a
 # wall, not a guard. Every shipped section predates the cite.

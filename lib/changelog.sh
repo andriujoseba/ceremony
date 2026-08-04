@@ -208,6 +208,7 @@ changelog_fragment_problem() {
         sub(/ $/, "", e)
         len = length(e)
         if (len > max) {
+          reported = 1
           printf "long\t%d\t%s\n", len, excerpt(e)
           return 1
         }
@@ -227,9 +228,15 @@ changelog_fragment_problem() {
       }
       /^[[:space:]]*$/ { next }
       entry != "" { entry = entry " " $0 }
+      # An exit from a main rule still runs END, so a length row printed
+      # mid-file would be followed by the citation row it outranks — two
+      # lines spliced into one diagnosis, the internal protocol row landing
+      # inside the human-facing excerpt (#262 round 1). The reported flag is
+      # the same guard the empty-heading walk above uses, for the same
+      # reason: one diagnosis per fragment is the contract.
       END {
         if (flush()) exit
-        if (cite_kind != "") printf "%s\t\t%s\n", cite_kind, cite_excerpt
+        if (!reported && cite_kind != "") printf "%s\t\t%s\n", cite_kind, cite_excerpt
       }
     ' "$file"
   )"
