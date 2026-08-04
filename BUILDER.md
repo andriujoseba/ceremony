@@ -157,13 +157,14 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    runner outage, a flaky dependency, a failure already on the default
    branch — and only where the request says so and names the evidence ("the
    same job fails identically on `origin/main` at `<sha>`"); silence about a
-   red check is what is prohibited. *Green* is a ruled term (operator,
-   2026-07-27), read in two steps. **First take the check's word at this
-   head**: its newest entry by start time — not completion, a cancelled run
-   outliving its replacement's start — and never a `CANCELLED` entry while
-   the same check has a non-cancelled one there. A check whose entries at
-   the head are all cancelled has not reported at all and is not green, the
-   gate collapsing alike (#139, #276). **Then classify that entry by
+   red check is what is prohibited, and an argued exception shifts the
+   burden to the author. *Green* is a ruled term (operator, 2026-07-27),
+   read in two steps. **First take the check's word at this head**: its
+   newest entry by start time — not completion, a cancelled run outliving
+   its replacement's start — and never a `CANCELLED` entry while the same
+   check has a non-cancelled one there. A check whose entries at the head
+   are all cancelled has not reported at all and is not green, the gate
+   collapsing alike (#139, #276). **Then classify that entry by
    `conclusion`, never `status`**, which can disagree with it (#259). No
    conclusion is not green: a configured run in progress is waited on, and
    waiting is compliance, not a stall. Cancelled or stale is not green,
@@ -188,7 +189,8 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    approvers included**; one left un-re-requested can never approve the tree
    you shipped (#26, #39). Only where the head did not move — answered with
    argument or evidence, nothing pushed — do you re-request just the
-   non-approvers (#94). **The re-request carries the same
+   non-approvers, the engine absorbing a re-request at an unchanged head —
+   its mechanism crew's to describe (#94). **The re-request carries the same
    green-check-at-head precondition**, argued exception included: a fix push
    whose check comes up red is your next fix, not the panel's. Prefer
    verification over argument — add the test that settles the doubt.
@@ -248,9 +250,11 @@ event**, not its `Default:` deadline or the last activity (#50 D13–D14):
 - **at 12h:** do not fire a stale default — re-read it against what has
   landed, and where doubt has appeared, make it a hard block.
 - **at 24h:** proceed regardless, **as a PR**: pick an option and say in the
-  body which way you went and what doubt remains. Nothing merges by this.
+  body which way you went and what doubt remains. Nothing merges by this;
+  the human still gates the merge.
 - **past 24h:** hand the choice to triage, which picks the option, records
-  it as a decision, and stays accountable; the operator can overturn it.
+  it as a decision, and stays accountable; the operator can overturn it at
+  merge.
 
 A re-flag starts a fresh ladder, which applies whatever `Default:` says,
 hard block included, and an active back-and-forth still climbs it — unlike
@@ -276,4 +280,5 @@ the Round log, mirrored from each whole-round reply. The label write is
 optimistic — the reconciler validates it and takes it back if the PR is not
 mergeable-right-now. Then stop: the PR is the human's, and the claim parks
 as shape 4 (Picking, above), that comment its declaration and your slot
-free. Address what comes back (`state:addressing`) and re-hand-off alike.
+free. Address what comes back (`state:addressing`) and re-hand-off the same
+way.
