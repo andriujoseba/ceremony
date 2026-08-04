@@ -175,6 +175,57 @@ EOF
   check "derive: an unmapped path is silence, not an error" 0 "[]" \
     derives "$(files FLEET.md .github/workflows/ci.yml)"
 
+  # --- #302: one wrong answer and the surfaces the map never learned ------
+  # Every path asserted ALONE, per #300 round 1: a set holding a script and
+  # its test derives the scope when either row matches, so bundling would
+  # let a row be deleted with the case still green.
+
+  # D1, the reported bug replayed: both reconcilers source lib/attention.sh,
+  # nothing release-side does — [scope:release-flow] alone was a wrong
+  # answer, and the honest set is both, same as its two shelf-mates
+  check "derive: lib/attention.sh is release-flow AND labels" 0 \
+    "[scope:release-flow,scope:labels]" derives 'lib/attention.sh'
+
+  # D2: the sweep half of the automation, detached from the trigger half in
+  # #209 — cadence, permissions and job wiring must locate
+  check "derive: the labels sweep workflow is scope:labels" 0 \
+    "[scope:labels]" derives '.github/workflows/labels-sweep.yml'
+  check "derive: the self sweep workflow is scope:labels" 0 \
+    "[scope:labels]" derives '.github/workflows/self-labels-sweep.yml'
+
+  # D3, the deliberate asymmetry with D1: a test file inherits no lib/**
+  # glob, so its row is the one scope its subject actually locates
+  check "derive: attention's test is scope:labels alone" 0 \
+    "[scope:labels]" derives 'test/attention.test.sh'
+  check "derive: ruling's test is scope:labels alone" 0 \
+    "[scope:labels]" derives 'test/ruling.test.sh'
+
+  # D4: the same read's remaining gaps, one row each
+  check "derive: the trigger-surface pins are scope:labels" 0 \
+    "[scope:labels]" derives 'test/labels-triggers.test.sh'
+  check "derive: the assemble test is scope:release-flow" 0 \
+    "[scope:release-flow]" derives 'test/changelog-assemble.test.sh'
+  check "derive: the release-path manifest is scope:release-flow" 0 \
+    "[scope:release-flow]" derives '.github/scripts/release-path.sh'
+  check "derive: the release-path test is scope:release-flow" 0 \
+    "[scope:release-flow]" derives 'test/release-path.test.sh'
+  check "derive: the marker-check guard is scope:guards" 0 \
+    "[scope:guards]" derives '.github/scripts/marker-check.sh'
+  check "derive: the marker-check test is scope:guards" 0 \
+    "[scope:guards]" derives 'test/marker-check.test.sh'
+  check "derive: the vendored-check guard is scope:guards" 0 \
+    "[scope:guards]" derives '.github/scripts/vendored-check.sh'
+  check "derive: the vendored test is scope:guards" 0 \
+    "[scope:guards]" derives 'test/vendored.test.sh'
+
+  # D7: no test/** or .github/scripts/** catch-all — both directories span
+  # all four scopes, so this pair reds under any catch-all row: each file
+  # would gain the other's scope beside its own
+  check "derive: test/version.test.sh is release-flow alone" 0 \
+    "[scope:release-flow]" derives 'test/version.test.sh'
+  check "derive: this test file is scope:labels alone" 0 \
+    "[scope:labels]" derives 'test/labels-scope.test.sh'
+
   # refusals: unsupported shapes fail loudly, naming the label
   cat >"$TMP/allglobs.yml" <<'EOF'
 scope:x:
