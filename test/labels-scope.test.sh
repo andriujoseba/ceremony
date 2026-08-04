@@ -107,6 +107,68 @@ EOF
   check "derive: the real mapping labels this test file" 0 \
     "scope:labels" derive_labels "$real_rows" 'test/labels-scope.test.sh'
 
+  # --- the real mapping locates: one file set in, the whole label set out ---
+  # #267 measured the old map at 100% recall / 15% precision — 20 of the last
+  # 20 PRs wore scope:release-flow and 3 touched a release surface — so these
+  # cases assert the DERIVED SET WHOLE, brackets and all. A substring check
+  # cannot tell scope:labels from scope:labels plus a wrong second label, and
+  # a wrong second label is the whole defect.
+  derives() { # <newline-separated paths> → "[label,label]" for the real map
+    printf '[%s]\n' "$(derive_labels "$real_rows" "$1" | paste -sd, -)"
+  }
+  files() { printf '%s\n' "$@"; }
+
+  # D1: a fragment is written by every behavior change (BUILDER.md), so it
+  # carries no locating information. Asserted as an empty set on its own, not
+  # as an absence inside a longer list: this is the case that fails first if
+  # the glob is ever restored.
+  check "derive: a fragment-only path derives nothing at all" 0 \
+    "[]" derives 'changelog.d/999.md'
+
+  # D2: the issue-flow sweep is a reconciler of the label taxonomy
+  check "derive: the issueflow reconciler is scope:labels" 0 \
+    "[scope:labels]" derives 'actions/issueflow-reconcile/issueflow-reconcile.sh'
+  check "derive: the issueflow reconciler's test is scope:labels" 0 \
+    "[scope:labels]" derives 'test/issueflow-reconcile.test.sh'
+
+  # the reported bug, replayed: #261's exact file set wore scope:release-flow,
+  # inherited from its fragment, pointing at the one surface it does not touch
+  check "derive: #261's file set is scope:labels alone" 0 "[scope:labels]" \
+    derives "$(files actions/issueflow-reconcile/issueflow-reconcile.sh \
+      changelog.d/252.md test/issueflow-reconcile.test.sh)"
+
+  # D1's cost, checked rather than assumed: dropping the fragment glob must
+  # not cost the release surface its label
+  check "derive: a release PR is still scope:release-flow" 0 \
+    "[scope:release-flow]" \
+    derives "$(files VERSION CHANGELOG.md drills/0.6.0.md changelog.d/236.md)"
+
+  # D3: the docs block matched a literal README this tree does not have
+  check "derive: README.md is scope:docs" 0 "[scope:docs]" derives 'README.md'
+  check "derive: RELEASES.md is scope:docs" 0 "[scope:docs]" derives 'RELEASES.md'
+  check "derive: TRIAGE.md is scope:docs" 0 "[scope:docs]" derives 'TRIAGE.md'
+
+  # D3: three guard actions and their tests were in no block at all
+  for guard in changelog-assembled docs-sync runner-isolated; do
+    check "derive: actions/$guard is scope:guards" 0 "[scope:guards]" \
+      derives "$(files "actions/$guard/$guard.sh" "test/$guard.test.sh")"
+  done
+
+  # D4: lib/ is genuinely mixed, so the shared files wear both labels rather
+  # than lib/** being re-carved into a row per file
+  check "derive: lib/ruling.sh is release-flow AND labels" 0 \
+    "[scope:release-flow,scope:labels]" derives 'lib/ruling.sh'
+  check "derive: lib/read.sh is release-flow AND labels" 0 \
+    "[scope:release-flow,scope:labels]" derives 'lib/read.sh'
+  check "derive: lib/version.sh is release-flow only" 0 \
+    "[scope:release-flow]" derives 'lib/version.sh'
+
+  # D6: the map stays advisory. An unmapped path derives an empty set and
+  # exits 0 — a guard that redded here would fail every PR touching FLEET.md
+  # or ci.yml, neither of which this map claims.
+  check "derive: an unmapped path is silence, not an error" 0 "[]" \
+    derives "$(files FLEET.md .github/workflows/ci.yml)"
+
   # refusals: unsupported shapes fail loudly, naming the label
   cat >"$TMP/allglobs.yml" <<'EOF'
 scope:x:
