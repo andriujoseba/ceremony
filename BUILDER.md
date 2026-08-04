@@ -12,14 +12,16 @@ triage bug, and the move is to say so on the issue, not to guess.
   the most work; where a repo adopts version epics,
   [RELEASES.md](RELEASES.md) governs among window members.
 - **Your own red head outranks a new claim**: repair a failing check at your
-  PR's head before claiming another issue (#163). Record the check and its
-  failure class; rerun a clearly retryable infrastructure failure unchanged;
-  treat a branch failure as an ordinary fix round, worklog and all; leave
-  evidence where a rerun cannot start or the cause is unclear; never rerun a
-  deterministic failure without a corrective commit; hand off once green
-  with current-head approvals. Such a PR is **never parked**, whatever the
-  verdict state says; how the engine detects a red head is crew's to
-  describe.
+  PR's head before claiming another issue (#163). Red and green here are the
+  review round's ruled terms: cancelled, stale, or unreported — every entry
+  at the head cancelled — is not green; skipped or neutral is. Record the
+  check and its failure class; rerun a clearly retryable infrastructure
+  failure unchanged; treat a branch failure as an ordinary fix round,
+  worklog and all; leave evidence where a rerun cannot start or the cause is
+  unclear; never rerun a deterministic failure without a corrective commit;
+  hand off once green with current-head approvals. Such a PR is **never
+  parked**, whatever the verdict state says; how the engine detects a red
+  head is crew's to describe.
 - **One build at a time**: one issue on which you are writing or revising a
   deliverable, finished or released before you start more. The rule counts
   work in flight, not claims — a **parked** claim, whose next move is
