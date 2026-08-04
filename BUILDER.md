@@ -90,16 +90,18 @@ triage bug, and the move is to say so on the issue, not to guess.
   issue says `Part of <owner>/<repo>#N`, sets `offsite`, and comments the
   draft link on that issue in the same step; triage closes that issue by
   hand once its criteria are met, the builder reporting there whether the PR
-  merged or closed and clearing `offsite` in the same comment (#13, #16).
+  merged or closed and clearing `offsite` in the same comment. The
+  cross-repo merge never closes the authorizing issue (#13, #16).
 - **`Closes #N` does not survive a post-merge criterion.** Where the issue
   body says a criterion can only be checked after the merge — a workflow
   trigger proved live, a released artifact, anything whose subject does not
-  exist until the change is on the base branch — the same-repo PR says
-  `Refs #N`; the issue goes `post-merge` at the merge, the builder walks
-  away, triage owns verification and closure on the evidence, and corrective
-  work is a fresh issue any builder claims from current `main`. The issue
-  body says so — you never judge which qualify — and absent it `Closes #N`
-  is the default (#151).
+  exist until the change is on the base branch — the same-repo PR says `Refs
+  #N`; the issue goes `post-merge` at the merge, the builder walks away, and
+  triage owns verification and closure on the evidence, returning the issue
+  to `ready` or minting a fresh one where corrective work is needed —
+  claimable by any builder from current `main`, the original having no
+  special standing. The issue body says so — you never judge which qualify —
+  and absent it `Closes #N` is the default (#151).
 - On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence
@@ -139,6 +141,9 @@ triage bug, and the move is to say so on the issue, not to guess.
 
 ## The review round
 
+(In a governed repo this file is `.ceremony/BUILDER.md`: repo-specific facts
+such as the panel roster live in that repo's own CONTRIBUTING.)
+
 1. Mark ready-for-review; request **the whole panel**: the PR repo's
    `panel[<your-login>]=` line if it defines one, else its `panel=` line,
    minus the author (#224) — never the roster of the repo the issue is in.
@@ -151,39 +156,41 @@ triage bug, and the move is to say so on the issue, not to guess.
    request. The one exception is a failure genuinely outside the PR — a
    runner outage, a flaky dependency, a failure already on the default
    branch — and only where the request says so and names the evidence ("the
-   same job fails identically on `origin/main` at `<sha>`"). *Green* is a
-   ruled term (operator, 2026-07-27), read in two steps. **First take the
-   check's word at this head**: its newest entry by start time — not
-   completion, a cancelled run outliving its replacement's start — and never
-   a `CANCELLED` entry while the same check has a non-cancelled one there. A
-   check whose entries at the head are all cancelled has not reported at all
-   and is not green, the gate collapsing alike (#139, #276). **Then classify
-   that entry by `conclusion`, never `status`**, which can disagree with it
-   (#259). No conclusion is not green: a configured run in progress is
-   waited on, and waiting is compliance, not a stall. Cancelled or stale is
-   not green, *stale* being a superseded head's check, which a head-scoped
-   rollup never shows. Skipped or neutral is green, those being deliberate
-   "passed / not applicable" conclusions. No checks configured is green —
-   the third ruled case, not an argued exception, so the request goes out at
-   once with no evidence owed; that never covers nothing-answered-yet, and
-   the machine partitions alike, admitting the ask on `SUCCESS` and `NONE`
-   (#236). The costs behind the line are asymmetric: a false green spends a
+   same job fails identically on `origin/main` at `<sha>`"); silence about a
+   red check is what is prohibited. *Green* is a ruled term (operator,
+   2026-07-27), read in two steps. **First take the check's word at this
+   head**: its newest entry by start time — not completion, a cancelled run
+   outliving its replacement's start — and never a `CANCELLED` entry while
+   the same check has a non-cancelled one there. A check whose entries at
+   the head are all cancelled has not reported at all and is not green, the
+   gate collapsing alike (#139, #276). **Then classify that entry by
+   `conclusion`, never `status`**, which can disagree with it (#259). No
+   conclusion is not green: a configured run in progress is waited on, and
+   waiting is compliance, not a stall. Cancelled or stale is not green,
+   *stale* being a superseded head's check, which a head-scoped rollup never
+   shows. Skipped or neutral is green, those being deliberate "passed / not
+   applicable" conclusions. No checks configured is green — the third ruled
+   case, not an argued exception, so the request goes out at once with no
+   evidence owed; that never covers nothing-answered-yet, and the machine
+   partitions alike, admitting the ask on `SUCCESS` and `NONE` (#236). The
+   costs behind the line are asymmetric: a false green spends a
    three-reviewer round, a false red one author session. What the machine
    drops from the rollup before grading is crew's to describe.
 2. **Wait for every verdict, then answer the round whole** — one reply
    covering every point, stating what changed and what was verified. That
    reply is the written record: the engine mirrors it under the PR body's
-   **Round log**, newest last, so you owe the reply and no body edit, and a
-   round answered without one is recorded as such and never blocks handoff.
-   Then push the fixes and re-request **by head, not by verdict**. A push
-   makes every approval stale — an approval is of a specific tree, and the
-   handoff predicate counts only approvals at the current head — so **every
-   panelist is re-requested, approvers included**; one left un-re-requested
-   can never approve the tree you shipped (#26, #39). Only where the head
-   did not move — answered with argument or evidence, nothing pushed — do
-   you re-request just the non-approvers (#94). **The re-request carries the
-   same green-check-at-head precondition**, argued exception included: a fix
-   push whose check comes up red is your next fix, not the panel's. Prefer
+   **Round log**, newest last, marked with the round's head so a retry is a
+   no-op, so you owe the reply and no body edit; a round answered without
+   one is recorded as such and never blocks handoff. Then push the fixes and
+   re-request **by head, not by verdict**. A push makes every approval stale
+   — an approval is of a specific tree, and the handoff predicate counts
+   only approvals at the current head — so **every panelist is re-requested,
+   approvers included**; one left un-re-requested can never approve the tree
+   you shipped (#26, #39). Only where the head did not move — answered with
+   argument or evidence, nothing pushed — do you re-request just the
+   non-approvers (#94). **The re-request carries the same
+   green-check-at-head precondition**, argued exception included: a fix push
+   whose check comes up red is your next fix, not the panel's. Prefer
    verification over argument — add the test that settles the doubt.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
