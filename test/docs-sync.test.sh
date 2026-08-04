@@ -18,11 +18,13 @@ SCRIPT="$ROOT/actions/docs-sync/docs-sync.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# RELEASES.md's consumer-availability promise is true only when the real
-# manifest carries it (#248's review round). The fixture cases below prove
-# manifest-driven behavior; this row binds that behavior to the promised file.
-check "real manifest includes the release doctrine" 0 "RELEASES.md" \
-  grep -Fx RELEASES.md "$ROOT/docs/VENDORED.txt"
+# The real manifest is asserted by test/vendored.test.sh, not here (#251 D4).
+# A `grep -Fx RELEASES.md` row lived at this spot from #248's review round,
+# binding the promise to the one file that had nearly been missed. It was the
+# hardcoded list the manifest exists to abolish, one layer down: two spellings
+# of "the manifest is right" is exactly the drift it prevents. Its intent —
+# every root doctrine file is declared, RELEASES.md included — is now a
+# closed-world guard case, which the next file inherits for free.
 
 # --- fixture builders --------------------------------------------------------
 
