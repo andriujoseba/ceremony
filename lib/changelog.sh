@@ -115,8 +115,22 @@ changelog_fragments() {
 #     splits the measured history: every healthy entry passes untouched,
 #     the drift cluster does not. mawk's length() counts bytes; prose here
 #     is ASCII and the fuzz is acceptable.
+#   - every entry ends with its issue citation (#262): one '(' group of
+#     '#N', 'repo#N' or 'owner/repo#N' references separated by ', ', then
+#     ')', then the final '.' and nothing after it. Stated as style and
+#     enforced by nobody, this rule cost #255 a full four-bot round on a
+#     missing '(#248)'; the fragment rules that live in this guard drew no
+#     review comment at all across the same fifteen PRs. Measured on the
+#     same normalized entry as the bound above, so a citation that wraps
+#     onto a continuation line still counts. The repo token is the one the
+#     filename rule already admits, so '<repo>-<issue>.md' and its cite
+#     cannot drift apart; the two halves of one convention. A single group
+#     is what makes 'terminal' checkable — '(#236, #250).' lands two issues
+#     in one entry, '(#236) and (#250).' does not. The citation need not
+#     name the file's own issue: the filename already carries the
+#     authorizing one, so a fragment may cite the incident beside it.
 changelog_fragment_problem() {
-  local file="$1" base problem
+  local file="$1" base problem kind detail rest
   base="${file##*/}"
 
   if ! printf '%s\n' "$base" | grep -qE '^([a-z][a-z0-9-]*-)?[0-9]+\.md$'; then
@@ -157,9 +171,35 @@ changelog_fragment_problem() {
     return 1
   fi
 
+  # One walk of the entries, two rules, and the order between them is
+  # deliberate: an over-long entry anywhere outranks a citation problem
+  # anywhere, so the length diagnosis a fragment already draws is the same
+  # one it drew before the citation rule existed. Both read the entry the
+  # same normalizer produces, which is the whole reason they share a pass.
   problem="$(
     awk -v max=300 '
-      function flush(   len, e) {
+      # cite_problem <entry> — "", "uncited" or "misplaced". Counting the
+      # groups is what distinguishes the two admitted shapes: one group
+      # closing the entry passes however many references it carries, and a
+      # second group anywhere means no single group is terminal.
+      function cite_problem(e,   rest, groups, consumed, group_end) {
+        rest = e
+        groups = 0
+        consumed = 0
+        while (match(rest, /\((([A-Za-z0-9._-]+\/)?[a-z][a-z0-9-]*)?#[0-9]+(, (([A-Za-z0-9._-]+\/)?[a-z][a-z0-9-]*)?#[0-9]+)*\)/)) {
+          groups++
+          group_end = consumed + RSTART + RLENGTH - 1
+          consumed = group_end
+          rest = substr(rest, RSTART + RLENGTH)
+        }
+        if (groups == 0) return e ~ /#[0-9]/ ? "misplaced" : "uncited"
+        if (groups > 1) return "misplaced"
+        return (group_end == length(e) - 1 && substr(e, group_end + 1) == ".") ? "" : "misplaced"
+      }
+      function excerpt(e) {
+        return length(e) > 60 ? substr(e, 1, 60) "…" : e
+      }
+      function flush(   len, e, kind) {
         if (entry == "") return 0
         e = entry
         entry = ""
@@ -168,8 +208,13 @@ changelog_fragment_problem() {
         sub(/ $/, "", e)
         len = length(e)
         if (len > max) {
-          printf "%d\t%s\n", len, substr(e, 1, 60)
+          printf "long\t%d\t%s\n", len, excerpt(e)
           return 1
+        }
+        kind = cite_problem(e)
+        if (kind != "" && cite_kind == "") {
+          cite_kind = kind
+          cite_excerpt = excerpt(e)
         }
         return 0
       }
@@ -182,12 +227,31 @@ changelog_fragment_problem() {
       }
       /^[[:space:]]*$/ { next }
       entry != "" { entry = entry " " $0 }
-      END { flush() }
+      END {
+        if (flush()) exit
+        if (cite_kind != "") printf "%s\t\t%s\n", cite_kind, cite_excerpt
+      }
     ' "$file"
   )"
   if [ -n "$problem" ]; then
-    printf "fragment '%s' has a %s-character entry — '%s…' — the bound is 300: split it into multiple '- ' entries in this same fragment\n" \
-      "$file" "${problem%%$'\t'*}" "${problem#*$'\t'}"
+    kind="${problem%%$'\t'*}"
+    rest="${problem#*$'\t'}"
+    detail="${rest%%$'\t'*}"
+    rest="${rest#*$'\t'}"
+    case "$kind" in
+      long)
+        printf "fragment '%s' has a %s-character entry — '%s' — the bound is 300: split it into multiple '- ' entries in this same fragment\n" \
+          "$file" "$detail" "$rest"
+        ;;
+      uncited)
+        printf "fragment '%s' has an entry with no issue citation — '%s' — end it with the issue it comes from: '(#N).'\n" \
+          "$file" "$rest"
+        ;;
+      *)
+        printf "fragment '%s' has an entry whose issue citation is not terminal — '%s' — exactly one '(#N)' group ends the entry, the final '.' after it\n" \
+          "$file" "$rest"
+        ;;
+    esac
     return 1
   fi
 }
