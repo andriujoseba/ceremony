@@ -355,10 +355,14 @@ record. box asserts the **isolation contract**; rig asserts **convergence**
 reproduces, the diff is idempotent); ceremony's own drill is a **door
 rehearsal** — both doors exercised end-to-end on a disposable repo, written
 out step by step in [drills/README.md](drills/README.md), with the records
-themselves in [drills/](drills/); incubator's is TBD in
-heavy-duty/incubator. Each repo states its meaning in its own
-`drills/README.md`. Three different exercises sharing a substrate is why the
-records are per-repo — they are not phases of one script.
+themselves in [drills/](drills/); incubator asserts the **staging verify** —
+the canonical candidate deployed, its smoke probe run *inside* the staging
+container on the deployed environment's credentials, the record pinning the
+commit SHA and image digest that were exercised
+([heavy-duty/incubator `drills/README.md`](https://github.com/heavy-duty/incubator/blob/main/drills/README.md)).
+Each repo states its meaning in its own `drills/README.md`. Five different
+exercises sharing a substrate is why the records are per-repo — they are not
+phases of one script.
 
 **Drills exercise candidate refs, not released artifacts.** A ref is a
 static identifier that exists as soon as the release branch does, so no repo
@@ -382,10 +386,16 @@ The catalog is generated from the sources, not paraphrased — regenerate it
 with:
 
 ```sh
-grep -n -A2 'refuse \|>&2' lib/decide.sh lib/facts.sh .github/workflows/release.yml
+grep -n -A2 'refuse \|>&2' \
+  lib/decide.sh lib/facts.sh lib/version.sh .github/workflows/release.yml
 ```
 
-`$VER`-style variables appear as the run interpolates them.
+`$VER`-style variables appear as the run interpolates them. One refusal is
+outside that command by construction: `version_read: $path: no version field`
+is a `console.error` inside the node one-liner at
+[lib/version.sh#L55](lib/version.sh#L55) — no `>&2`, no `refuse `, so the grep
+cannot see it. It is quoted below as it reaches the log at run time, which is
+the convention this catalog is written to.
 
 ### The decision refused ([lib/decide.sh](lib/decide.sh))
 
@@ -430,6 +440,15 @@ mistake — read the run's `facts:` stderr line and file what you find.
 missing, empty, or unreadable. A wrong release is worse than a missing one,
 so an unreadable state is never an empty print — restore the `VERSION` file
 (or `package.json` version field) on main.
+
+> version_read: unknown backend: $backend
+
+[L62](lib/version.sh#L62): not an operator mistake and not reachable through
+the release flow — [lib/facts.sh](lib/facts.sh#L33-L40) rejects a bad
+`VERSION_SOURCE` with the message above before `version_read` is ever called,
+so this line can only appear when some *other* caller invokes `version_read`
+directly with a backend that is neither `file` nor `package-json`. Fix that
+caller.
 
 ### The merge door refused ([release.yml](.github/workflows/release.yml#L136-L301))
 
@@ -478,6 +497,39 @@ remedy.
 never stamped. Assemble the section
 ([docs/CONSUMERS.md](docs/CONSUMERS.md#assembling-a-release-section)), then
 delete and re-push the tag.
+
+### The re-arm refused ([release.yml](.github/workflows/release.yml#L267-L301))
+
+The bump runs *after* the tag, the notes and the publish, so a refusal here
+leaves a real release behind an unarmed main — the release exists and main
+still reads the version it just shipped. That is the one failure in this
+catalog where the remedy is a manual bump, not a re-run.
+
+> version_next_dev: refusing '$ver' — expected bare X.Y.Z
+
+[L86](lib/version.sh#L86): the version reaching the bump is not bare —
+`-dev`, `-rc1`, or garbage. Unreachable by the merge door, whose row 6 fires
+only on a transition *to* bare; it is the tag door's edge, where the tag names
+the tree's version and nothing re-checks its shape.
+
+> version_write: npm is required for version-source: package-json
+
+[L106](lib/version.sh#L106): `version_write` shells out to `npm version` on
+the package-json backend, and the runner has no npm. The read path fails the
+same way one step earlier (`node is required…`, above), so a run reaching
+*this* message got past the read — set up node/npm in the caller.
+
+> version_write: unknown backend: $backend
+
+[L118](lib/version.sh#L118): the write-side twin of `version_read: unknown
+backend`, and unreachable for the same reason — `VERSION_SOURCE` was validated
+before either was called. Fix the caller.
+
+In every case main is left armed to impersonate the release it just shipped:
+bump `VERSION` (or the `package.json` version field) to `X.Y.(Z+1)-dev` by
+hand and push. Note that a *push* refusal is not one of these — branch
+protection is expected, and the step opens the bump PR itself rather than
+failing ([L293–L301](.github/workflows/release.yml#L293-L301)).
 
 ### Red main that is not the release workflow
 
