@@ -1624,6 +1624,51 @@ sweep_run() {
     bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
 }
 
+# The board read is a precondition for the whole pass (#257). A failed read
+# cannot be inferred from an empty result: its status is the only fact that
+# separates an unreadable board from a clean one. Drive both through main(),
+# including gh's partial-pagination shape where stdout is non-empty on error.
+board_fixture="$SWEEP/repos_owner_repo_issues_state_open_per_page_100.json"
+printf '%s\n' "$GH_STUB_ERROR_BODY" >"$board_fixture.http-error"
+board_504_out="$(sweep_run)"
+board_504_rc=$?
+check "an issue-list 504 aborts the whole pass" 0 "" test "$board_504_rc" -eq 1
+check "...names the board read's stderr" 0 \
+  "issueflow: could not read the issue board: $GH_STUB_STDERR" \
+  printf '%s\n' "$board_504_out"
+check "...writes no issue edit or comment" 1 "" test -s "$SWEEP/edits"
+check "...never reports the pass reconciled" 1 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$board_504_out"
+
+board_silent_out="$(GH_STUB_STDERR="" sweep_run)"
+board_silent_rc=$?
+check "a silent issue-list failure still aborts" 0 "" test "$board_silent_rc" -eq 1
+check "...renders the empty stderr as a fact" 0 \
+  'issueflow: could not read the issue board: no error output' \
+  printf '%s\n' "$board_silent_out"
+check "...also writes nothing" 1 "" test -s "$SWEEP/edits"
+
+printf '[{"number":71}]\n' >"$board_fixture.http-error"
+partial_board_out="$(sweep_run)"
+partial_board_rc=$?
+check "partial pagination aborts the whole pass" 0 "" \
+  test "$partial_board_rc" -eq 1
+check "...does not reconcile the returned first page" 1 "" \
+  grep -qF 'issue edit 71' "$SWEEP/edits"
+check "...does not report the truncated pass reconciled" 1 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$partial_board_out"
+
+rm -f "$board_fixture.http-error"
+sweep_board '[]'
+empty_board_out="$(sweep_run)"
+empty_board_rc=$?
+check "a successful empty board stays green" 0 "" test "$empty_board_rc" -eq 0
+check "...writes nothing" 1 "" test -s "$SWEEP/edits"
+check "...names the empty-board outcome" 0 'issueflow: no open issues.' \
+  printf '%s\n' "$empty_board_out"
+check "...still ends with byte-identical reconciled." 0 \
+  'issueflow: reconciled.' printf '%s\n' "$(tail -n1 <<<"$empty_board_out")"
+
 sweep_board '[{"number":70},{"number":71}]'
 sweep_out="$(sweep_run)"
 sweep_rc=$?
