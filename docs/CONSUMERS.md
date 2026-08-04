@@ -598,6 +598,38 @@ It is **unreleased** (#248) until that tag exists: consumers add
 `.ceremony/RELEASES.md` only with the ordinary pin bump and re-sync, never by
 copying it ahead of their pinned doctrine set.
 
+### Read the manifest, never a copy of it
+
+Anything on the consumer's side that needs to know *which* documents are
+vendored — a re-vendor script, a `docs-sync` equivalent, the task list of a
+conversion issue — reads **the pin's `docs/VENDORED.txt`** and never names
+the files itself. The manifest is available at the pinned ref from `0.1.0`
+and later — it shipped with `actions/docs-sync` itself (ceremony#19), in the
+same commit, and that tool has read it rather than a list since — and it is
+one path per line, relative to ceremony's root, blank lines ignored:
+
+```sh
+# the vendored doc set at the ref this repo is pinned to
+curl -fsSL "https://raw.githubusercontent.com/heavy-duty/ceremony/<pinned-tag>/docs/VENDORED.txt"
+```
+
+That is the whole benefit: a doctrine file added in ceremony — `RELEASES.md`
+was the last, ceremony#248 — reaches every consumer at its next **ordinary
+pin bump**, with **zero list edits** anywhere. A hardcoded list propagates
+nothing, and its staleness is silent rather than red: `docs-sync --check`
+asserts byte-identity for the files the list names and says nothing at all
+about one it omits, so a consumer keeps a green guard while governing
+itself with doctrine it no longer has.
+
+What makes reading the manifest *sufficient* — rather than merely better
+than a copy — is that ceremony's CI now refuses a root doctrine file that is
+declared in neither the manifest nor a short in-script exemption list
+(`.github/scripts/vendored-check.sh`), so the manifest at a tag is the
+complete set as of that tag. That guarantee is **unreleased** (#251) until
+the first tag carrying it exists; the manifest is worth reading at every
+earlier pin regardless, since it is what `actions/docs-sync` has always
+mirrored.
+
 The consumer's ci.yml gains the guard alongside the others:
 
 ```yaml

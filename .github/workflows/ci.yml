@@ -35,6 +35,11 @@ jobs:
         # Five stale markers survived the tags that shipped their machinery
         # (#221); #238 makes the release candidate reject that drift.
         run: bash .github/scripts/marker-check.sh
+      - name: Vendored manifest
+        # The manifest rules (issue #251; #248's near-miss): a doctrine file
+        # at the root that nobody added to docs/VENDORED.txt is invisible to
+        # every consumer's docs-sync, so it fails CI here instead.
+        run: bash .github/scripts/vendored-check.sh
       - name: Tests
         env:
           # The npm-backed version_write case may skip locally when npm is
