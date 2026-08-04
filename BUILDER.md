@@ -259,30 +259,20 @@ CONTRIBUTING; the shared flow lives here and is not restated there.)
    by start time, and a `CANCELLED` entry is not that word while the
    same check carries a non-cancelled entry at the same head.** The
    survivor is the verdict about these bytes; the entry it displaced
-   reported nothing about them. That shape is routine rather than
-   exotic: a job in a `cancel-in-progress` concurrency group displaces
-   *itself* whenever two events land inside one of its runs, so one job
-   appears twice on one sha — #275's head at `806e99e1` carried
-   `labels / scope` `CANCELLED` started at 23:45:19Z beside
-   `labels / scope` `SUCCESS` started at 23:45:31Z, and that head is
-   green, with no argued exception owed. Say **start** time and mean it:
-   a cancelled run does not stop the moment its replacement begins, so
-   the dead run's completion routinely postdates the live run's start,
-   and a reader who dates entries by completion picks the corpse. When
-   *every* entry a check has at the head is cancelled, nothing survives
-   to be its word: that check has not reported at all, and it stays
-   not-green by the classes below — the all-cancelled context is the
-   case this leaves exactly where it was. Nor is any of this a new
-   class. The 2026-07-27 gloss that what survives at a head is same-head
-   cancellation was written against supersession by a newer push, not
-   against a job displacing itself inside its own concurrency group, and
-   `checks_state`'s #139 carve-out has read it that way in the machine's
-   voice ever since — cancelled entries dropped only where the context
-   keeps a non-cancelled survivor, an all-cancelled context left intact
-   and still blocking — so doctrine and gate partition alike on a mixed
-   context. What the *machine* drops from the rollup before it grades
-   anything is a different question, and crew's to describe rather than
-   this file's.
+   reported nothing about them. Say **start** time and mean it: a
+   cancelled run does not stop the moment its replacement begins, so the
+   dead run's completion routinely postdates the live run's start, and a
+   reader who dates entries by completion picks the corpse. When *every*
+   entry a check has at the head is cancelled, nothing survives to be
+   its word: that check has not reported at all, and it stays not-green
+   by the classes below — the all-cancelled context is the case this
+   leaves exactly where it was. This states a collapse and not a new
+   class: `checks_state`'s carve-out drops a cancelled entry only where
+   its context keeps a non-cancelled survivor, and leaves an
+   all-cancelled context intact and still blocking, so doctrine and gate
+   partition alike on a mixed context (#139, #276). What the *machine*
+   drops from the rollup before it grades anything is a different
+   question, and crew's to describe rather than this file's.
    Then classify that entry, and classify it from its **`conclusion`**,
    never its `status`: a check carrying a terminal conclusion is green or
    not-green by that conclusion whatever its `status` field still
