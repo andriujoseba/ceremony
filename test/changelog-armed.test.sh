@@ -275,7 +275,7 @@ fragment_tree fragments-dev-flat 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- Added fragment mode." >"$TMP/fragments-dev-flat/changelog.d/115.md"
+printf '%s\n' "- Added fragment mode (#115)." >"$TMP/fragments-dev-flat/changelog.d/115.md"
 check "fragment -dev + well-formed flat fragment passes" 0 "fragment mode" \
   in_tree fragments-dev-flat
 
@@ -298,6 +298,38 @@ check "fragment mode over-bound refusal names the bound and the split fix" 1 \
   "the bound is 300: split it into multiple '- ' entries in this same fragment" \
   in_tree fragments-dev-over-bound
 
+# The terminal cite (#262) reds the PR that writes the fragment, through the
+# same shared predicate — which is the whole point of the rule living there
+# rather than in prose a reviewer has to remember.
+fragment_tree fragments-dev-uncited 1.2.4-dev <<'EOF'
+# Changelog
+
+## 1.2.3 — 2026-07-20
+
+- The shipped entry.
+EOF
+printf '%s\n' "- An entry that never learned to cite its issue." \
+  >"$TMP/fragments-dev-uncited/changelog.d/115.md"
+check "fragment mode refuses an uncited entry, fragment named" 1 \
+  "115.md' has an entry with no issue citation" \
+  in_tree fragments-dev-uncited
+check "fragment mode uncited refusal names the shape to write" 1 \
+  "end it with the issue it comes from: '(#N).'" \
+  in_tree fragments-dev-uncited
+
+fragment_tree fragments-dev-misplaced-cite 1.2.4-dev <<'EOF'
+# Changelog
+
+## 1.2.3 — 2026-07-20
+
+- The shipped entry.
+EOF
+printf '%s\n' "- The citation trails the period. (#115)" \
+  >"$TMP/fragments-dev-misplaced-cite/changelog.d/115.md"
+check "fragment mode refuses a non-terminal citation, fragment named" 1 \
+  "115.md' has an entry whose issue citation is not terminal" \
+  in_tree fragments-dev-misplaced-cite
+
 fragment_tree fragments-dev-grouped 1.2.4-dev <<'EOF'
 # Changelog
 
@@ -310,7 +342,7 @@ EOF
 cat >"$TMP/fragments-dev-grouped/changelog.d/115.md" <<'EOF'
 ### Changed
 
-- Added fragment mode.
+- Added fragment mode (#115).
 EOF
 check "fragment -dev + well-formed grouped fragment passes" 0 "fragment mode" \
   in_tree fragments-dev-grouped
@@ -322,11 +354,11 @@ fragment_tree fragments-dev-mixed 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- Flat fragment." >"$TMP/fragments-dev-mixed/changelog.d/114.md"
+printf '%s\n' "- Flat fragment (#115)." >"$TMP/fragments-dev-mixed/changelog.d/114.md"
 cat >"$TMP/fragments-dev-mixed/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode refuses mixed shapes with the shared assembler diagnosis" 1 \
   "fragment 'changelog.d/115.md' is grouped but fragment 'changelog.d/114.md' is not" \
@@ -342,7 +374,7 @@ EOF
 cat >"$TMP/fragments-dev-all-grouped-over-flat/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode refuses an all-grouped set over a flat published section" 1 \
   "changelog.d/115.md' is grouped but newest published section '1.2.3'" \
@@ -357,7 +389,7 @@ fragment_tree fragments-dev-flat-over-grouped 1.2.4-dev <<'EOF'
 
 - The shipped entry.
 EOF
-printf '%s\n' "- Flat fragment." >"$TMP/fragments-dev-flat-over-grouped/changelog.d/115.md"
+printf '%s\n' "- Flat fragment (#115)." >"$TMP/fragments-dev-flat-over-grouped/changelog.d/115.md"
 check "fragment mode refuses a flat set over a grouped published section" 1 \
   "changelog.d/115.md' is flat but newest published section '1.2.3'" \
   in_tree fragments-dev-flat-over-grouped
@@ -376,14 +408,14 @@ printf '%s\n' "grouped" >"$TMP/fragments-dev-flip/changelog.d/shape"
 cat >"$TMP/fragments-dev-flip/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode: 'grouped' sentinel admits the flip tree over a flat published section" 0 \
   "fragment mode" in_tree fragments-dev-flip
 
 # Post-flip drift is refused on its own PR: a flat probe fragment atop the
 # flip tree goes red — beside grouped fragments the mix rule names it first.
-printf '%s\n' "- Flat probe." >"$TMP/fragments-dev-flip/changelog.d/116.md"
+printf '%s\n' "- Flat probe (#116)." >"$TMP/fragments-dev-flip/changelog.d/116.md"
 check "fragment mode: a flat probe atop the flip tree is refused" 1 \
   "changelog.d/115.md' is grouped but fragment 'changelog.d/116.md' is not" \
   in_tree fragments-dev-flip
@@ -393,7 +425,7 @@ rm "$TMP/fragments-dev-flip/changelog.d/116.md"
 # holds the shape: an all-flat set under 'grouped' is refused, sentinel
 # named — the published-section inference never gets a say.
 rm "$TMP/fragments-dev-flip/changelog.d/115.md"
-printf '%s\n' "- Flat probe." >"$TMP/fragments-dev-flip/changelog.d/116.md"
+printf '%s\n' "- Flat probe (#116)." >"$TMP/fragments-dev-flip/changelog.d/116.md"
 check "fragment mode: a flat set under the 'grouped' sentinel refused, sentinel named" 1 \
   "changelog.d/116.md' is flat but 'changelog.d/shape' declares grouped" \
   in_tree fragments-dev-flip
@@ -417,7 +449,7 @@ EOF
 cat >"$TMP/fragments-dev-no-published/changelog.d/115.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#115).
 EOF
 check "fragment mode accepts a consistent set with no published section" 0 \
   "fragment mode" in_tree fragments-dev-no-published
@@ -484,7 +516,7 @@ check "fragment bare + stamped section + consumed directory passes" 0 \
   "fragment mode" in_tree fragments-bare-stamped
 
 cp -R "$TMP/fragments-bare-stamped" "$TMP/fragments-bare-survivor"
-printf '%s\n' "- This entry was not consumed." \
+printf '%s\n' "- This entry was not consumed (#115)." \
   >"$TMP/fragments-bare-survivor/changelog.d/115.md"
 check "fragment bare refuses and lists surviving fragments" 1 \
   "these fragments were not consumed: changelog.d/115.md" \

@@ -203,7 +203,13 @@ triage bug, and the move is to say so on the issue, not to guess.
   a change genuinely is one. An entry is at most 300 characters — the
   fragment guard reds longer (#167) — so a genuinely long change ships
   several short entries, never one long one; wrapping an entry over
-  continuation lines is fine and never counts against it. Never edit
+  continuation lines is fine and never counts against it. Every entry
+  **ends with its issue citation**, and the same guard reds an entry
+  without one: a single `(` group of `#N`, `repo#N` or `owner/repo#N`
+  references separated by `, `, then `)`, then the final `.` and nothing
+  after it — `(#262).` locally, `(#236, #250).` when one entry honestly
+  lands two. The citation need not name the fragment's own issue, because
+  the filename already carries the authorizing one (#262). Never edit
   `CHANGELOG.md` for an entry — the
   release PR assembles the section from the fragments (#112); the monotonic
   guard still refuses anything that deletes a shipped heading.
