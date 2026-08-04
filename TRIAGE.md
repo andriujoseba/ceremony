@@ -110,6 +110,11 @@ Every issue you mint carries, in this order:
   epic organizes it. Name a cross-repo dependency the same way with its
   repository qualified (`Blocked by repo#N` or `owner/repo#N`); the sweep
   cannot resolve it, so triage verifies it and flips the issue by hand.
+  When a deliverable is already carried by an open `ready`, `claimed`, or
+  `blocked` issue, the newer issue must declare an unconditional collision
+  edge with `Blocked by #N`, naming the newest open carrier; there is no
+  alternative for disjoint regions. This keeps every `ready` issue
+  concurrently claimable and makes each close release one successor (#288).
 - **Labels**: type (`bug`/`enhancement`/`documentation`), `scope:*`, and
   exactly one of `ready` / `blocked` (see [LABELS.md](LABELS.md)).
 
