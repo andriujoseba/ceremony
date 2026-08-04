@@ -74,6 +74,13 @@ interleaving unrelated windows blurs both the release story and the evidence
 behind it. Gates open windows; they do not silently admit members, so builders
 still see one deliberately ordered queue.
 
+While a window stands — an open release-labeled issue with a non-empty
+enumerated gate — its members form a DAG whose sink is the release issue.
+Every member reaches that sink; ordering edges live on members, while the sink
+records membership only; and the `ready` set is exactly the graph's sources.
+It follows that every `ready` issue is a gate member. `epic` and `post-merge`
+issues are exempt because neither is claimable (#292).
+
 The operator may declare a parallel track at init when its footprint is
 disjoint from the primary window: another repository, another artifact, or
 provably non-overlapping clusters. The declaration names the boundary and any
