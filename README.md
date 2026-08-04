@@ -111,12 +111,17 @@ way to certainty, tags the merge commit, publishes the GitHub release with
 the version's own changelog section as the body — the curated prose, never
 the generated PR list ([lib/changelog.sh](lib/changelog.sh) is the one
 canonical extractor, and [bin/changelog-section](bin/changelog-section) is
-its command-line face) — and re-arms main by bumping to `X.Y.(Z+1)-dev`; the
-version is the only re-arm left, the changelog needs none (#112). The
-machine does the transcription because humans err silently and machines fail
-loudly: **everything asserts its way to certainty and fails loudly, creating
-nothing** — a wrong release is worse than a missing one, so every failed
-assert leaves zero artifacts: no tag, no release, no bump.
+its command-line face) — and, on the bare-`X.Y.Z` path, re-arms main by
+bumping to `X.Y.(Z+1)-dev`; the version is the only re-arm left, the
+changelog needs none (#112). An rc ships too, and its next version is a human
+decision rather than arithmetic, so the re-arm stops for you to make it
+([The re-arm refused](#the-re-arm-refused-releaseyml)). The machine does the
+transcription because humans err silently and machines fail loudly:
+**everything asserts its way to certainty and fails loudly, creating
+nothing** — a wrong release is worse than a missing one, so every assert that
+fails *before* the publish leaves zero artifacts: no tag, no release, no
+bump. The re-arm is the one assert past that line, and its refusal is the
+single failure in this file that leaves a real release behind.
 
 ## The two doors
 
@@ -524,9 +529,12 @@ ceremony tags, writes the notes, publishes — and *then* the re-arm refuses.
 That is the machine correctly declining to guess rather than a bug: an rc's
 next version "is a human decision, not arithmetic"
 ([L78–L82](lib/version.sh#L78-L82)), so make the decision and bump main by
-hand to it. A `-dev` or garbage version reaching this line is the same
-refusal's other half, and that half really is unreachable as the doors stand —
-rows 1–2 send `-dev` to a no-op, and the tag door never bumps.
+hand to it. A `-dev` version reaching this line is the same refusal's other
+half, and *that* half is unreachable as the doors stand — rows 1–2 send `-dev`
+to a no-op, and the tag door never bumps. A malformed version is not: nothing
+upstream checks the shape ([version_read](lib/version.sh#L22-L33) checks only
+that a version is present and non-empty), so `banana` rides row 6 exactly as
+an rc does, and the same manual bump is the remedy.
 
 > version_write: npm is required for version-source: package-json
 
