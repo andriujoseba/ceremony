@@ -2047,28 +2047,50 @@ check "...and still leaves the job green (D7)" 0 "" test $? -eq 0
 # -- the two board flags (#293): the deliverable key, normalized ------------
 # The 2026-08-04 miss spelled one deliverable two ways, so exact-prefix
 # matching is specified away (D2). These pin the normalization itself.
-check "the em-dash prefix is the key" 0 "issueflow-reconcile" \
-  deliverable_keys <<<"issueflow-reconcile — the ruling clock counts assigned"
-check "a leading actions/ segment comes off" 0 "issueflow-reconcile" \
-  deliverable_keys <<<"actions/issueflow-reconcile — a failed board read"
-check "...and so does .github/" 0 "labeler" \
-  deliverable_keys <<<".github/labeler.yml — one wrong answer left by D4"
-check "...and lib/" 0 "attention" deliverable_keys <<<"lib/attention.sh — the target"
-check "...and bin/" 0 "decide" deliverable_keys <<<"bin/decide.sh — the door"
-check "every extension comes off, not just the last" 0 "issueflow-reconcile" \
-  deliverable_keys <<<"issueflow-reconcile.test.sh — the pre-read is unpinned"
-check "the key folds case" 0 "triage" deliverable_keys <<<"TRIAGE.md — the bullet"
-check "a + title carries both segments" 0 $'triage\nreleases' \
-  deliverable_keys <<<"TRIAGE.md + RELEASES.md — a standing window is a graph"
+count_lines() { deliverable_keys | grep -c .; }
+keys_of() { # title on stdin -> its keys, each bracketed so `check` matches exactly
+  # ANCHORED, because `check` compares its expectation as a substring: a bare
+  # `issueflow-reconcile` expectation is satisfied by `issueflow-reconcile.test`
+  # too, so the multi-extension row below stayed green under a normalization
+  # stripping only the last extension — it asserted nothing it was named for.
+  # Bracketing each key makes every row here fail for its own reason.
+  deliverable_keys | sed 's/.*/[&]/'
+}
+check "the em-dash prefix is the key" 0 "[issueflow-reconcile]" \
+  keys_of <<<"issueflow-reconcile — the ruling clock counts assigned"
+check "a leading actions/ segment comes off" 0 "[issueflow-reconcile]" \
+  keys_of <<<"actions/issueflow-reconcile — a failed board read"
+check "...and so does .github/" 0 "[labeler]" \
+  keys_of <<<".github/labeler.yml — one wrong answer left by D4"
+check "...and lib/" 0 "[attention]" keys_of <<<"lib/attention.sh — the target"
+check "...and bin/" 0 "[decide]" keys_of <<<"bin/decide.sh — the door"
+check "every extension comes off, not just the last" 0 "[issueflow-reconcile]" \
+  keys_of <<<"issueflow-reconcile.test.sh — the pre-read is unpinned"
+check "the key folds case" 0 "[triage]" keys_of <<<"TRIAGE.md — the bullet"
+check "a + title carries both segments" 0 $'[triage]\n[releases]' \
+  keys_of <<<"TRIAGE.md + RELEASES.md — a standing window is a graph"
 # A path segment the rule does not name stays part of the key: the strip list
 # is closed on purpose (D2), so `test/issueflow-reconcile.test.sh` is its own
 # deliverable and not the action it exercises.
-check "an unlisted path segment stays in the key" 0 "test/issueflow-reconcile" \
-  deliverable_keys <<<"test/issueflow-reconcile.test.sh — the pre-read"
+check "an unlisted path segment stays in the key" 0 "[test/issueflow-reconcile]" \
+  keys_of <<<"test/issueflow-reconcile.test.sh — the pre-read"
+# One issue answers a SET. Normalization is many-to-one by design, so a `+`
+# title can spell one deliverable twice — a deliverable and its test named
+# together is the ordinary shape here, not an exotic one — and a repeated key
+# makes the chain scan find the issue adjacent to ITSELF.
+check "a + title whose segments normalize to one key answers that key once" 0 \
+  "[issueflow-reconcile]" \
+  keys_of <<<"issueflow-reconcile.sh + issueflow-reconcile.test.sh — one deliverable"
+check "...and answers it exactly once, not twice" 0 "1" \
+  count_lines <<<"issueflow-reconcile.sh + issueflow-reconcile.test.sh — one deliverable"
+check "...and the path prefix folds onto the bare spelling the same way" 0 "1" \
+  count_lines <<<"actions/issueflow-reconcile + issueflow-reconcile.sh — still one"
 # No em dash, no key. Inventing one out of prose is the guessing this sweep
-# never does; the malformed title is triage's own contract to enforce.
-check "a title with no em dash names no deliverable" 0 "" \
-  deliverable_keys <<<"a title that names nothing"
+# never does; the malformed title is triage's own contract to enforce. The
+# emptiness is asserted through grep's exit, since `check` cannot assert an
+# empty expectation.
+check "a title with no em dash names no deliverable" 1 "" \
+  grep -q . < <(deliverable_keys <<<"a title that names nothing")
 
 # -- the collision decision: a chain, never a fan (#288 D3) ------------------
 # Sourced helpers, not `bash -c`: a subshell started with -c has none of these
@@ -2113,6 +2135,20 @@ check "a multi-file title folds its collisions into one state" 0 \
   $'295\treleases=292,triage=264' \
   collision_chain \
   <<<$'264\tready\tTRIAGE.md — one\n292\tready\tRELEASES.md — two\n295\tready\tTRIAGE.md + RELEASES.md — three'
+# ...and an issue can never be its own carrier. A `+` title whose segments
+# normalize to one key contributed that key twice, and the chain scan, which
+# reads adjacent rows within a key, then found the issue beside itself: the
+# comment asked #402 to declare `Blocked by #402`.
+check "a self-folding + title never chains an issue to its own number" 0 "" \
+  collision_chain \
+  <<<$'402\tready\tissueflow-reconcile.sh + issueflow-reconcile.test.sh — one deliverable'
+check "...and two such carriers chain once, to each other" 0 \
+  $'284\tissueflow-reconcile=257' \
+  collision_chain \
+  <<<$'257\tready\tissueflow-reconcile.sh + issueflow-reconcile.test.sh — one\n284\tready\tactions/issueflow-reconcile — two'
+check "...with the older carrier still asked for nothing" 1 "" \
+  collision_flags_issue 257 \
+  <<<$'257\tready\tissueflow-reconcile.sh + issueflow-reconcile.test.sh — one\n284\tready\tactions/issueflow-reconcile — two'
 
 # -- the window decision (#292 D1) ------------------------------------------
 window_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n264\tready\tTRIAGE.md — a non-member\n270\tepic\tsome epic — exempt\n271\tpost-merge\tsome item — exempt\n272\tblocked\tsome issue — already placed'
@@ -2134,6 +2170,28 @@ check "the window carrier is never flagged as its own non-member" 1 "" \
 check "no standing window means no flag at all" 0 "" \
   window_flags "" "" <<<"$window_board"
 check "two standing windows render as one state" 0 "#249, #250" window_state $'249\n250\n'
+# ONE reading of `unblocked` across both flags. D2 as corrected glosses the
+# word as "carrying `ready` or `claimed`" and D3b says D3 uses that gloss and
+# names the domain as the claimable set, so an issue that is `needs-triage` or
+# carries no queue label at all is outside BOTH flags. Excluding only
+# `blocked`/`epic`/`post-merge` admitted them, and the second case is the one
+# that showed: the same pass adds `needs-triage` to an unlabeled issue and
+# then tells it about a membership call made at mint time.
+scope_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n400\tneeds-triage\tTRIAGE.md — not through the door yet\n401\t\tTRIAGE.md — no queue label at all\n402\tclaimed\tREVIEWER.md — claimable, and a non-member'
+check "a needs-triage issue is not in the window flag's domain" 1 "" \
+  window_flags_issue 400 253 249 <<<"$scope_board"
+check "...nor is an issue carrying no queue label at all" 1 "" \
+  window_flags_issue 401 253 249 <<<"$scope_board"
+check "...while the claimable non-member beside them still flags" 0 "402" \
+  window_flags "253" "249" <<<"$scope_board"
+# The same word, asserted through the other flag, so the two can never drift
+# apart again without a red.
+check "the collision flag reads that word identically" 0 "" \
+  collision_chain <<<$'400\tneeds-triage\tTRIAGE.md — one\n401\t\tTRIAGE.md — two'
+check "...and both flags answer one shared predicate" 1 "" \
+  unblocked_claimable "needs-triage"
+check "...which admits ready and claimed, and nothing else" 0 "" \
+  unblocked_claimable "claimed,scope:labels"
 
 # -- the 2026-08-04 board, replayed whole (D5) ------------------------------
 # The corpus the operator ruled on. Both flags are decided over the WHOLE
