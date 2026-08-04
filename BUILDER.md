@@ -8,9 +8,9 @@ triage bug, and the move is to say so on the issue, not to guess.
 
 - Pick from issues labeled **`ready`** — never `blocked`, `claimed`, or an
   `epic` (epics organize; their children are the work). Inside an epic take
-  the earliest unblocked unclaimed child; otherwise prefer the issue that
-  unblocks the most work. Where a repo adopts version epics,
-  [RELEASES.md](RELEASES.md) governs the choice among window members.
+  the earliest unblocked unclaimed child, otherwise the issue that unblocks
+  the most work; where a repo adopts version epics,
+  [RELEASES.md](RELEASES.md) governs among window members.
 - **Your own red head outranks a new claim**: repair a failing check at your
   PR's head before claiming another issue (#163). Record the check and its
   failure class; rerun a clearly retryable infrastructure failure unchanged;
@@ -42,9 +42,9 @@ triage bug, and the move is to say so on the issue, not to guess.
      operator may lift by label alone (#149, #151). So read the label events
      (`gh api /repos/{owner}/{repo}/issues/{n}/timeline`), not just the
      comments, before standing down *or* up, and say in the claim which you
-     read, their timestamps and their actor. Refusing to claim through the
-     contradiction is no resting place: where the events do not resolve it,
-     say so and take the next `ready` issue.
+     read, their timestamps and their actor. Where they do not resolve the
+     contradiction, say so and take the next `ready` issue; refusing is no
+     resting place.
   Not parked: waiting on yourself, on CI (a red head is yours; a pending one
   resolves without you), or for a good moment. An issue you stopped working
   on is abandoned — unassign and restore `ready`. Parked claims are held
@@ -53,7 +53,7 @@ triage bug, and the move is to say so on the issue, not to guess.
 ## Claiming
 
 - Assign yourself, swap `ready` → `claimed`, and comment that you are
-  starting. The claim promises a draft PR soon: a claim with no PR and no
+  starting. The claim promises a draft PR soon: one with no PR and no
   activity is what the staleness sweep reclaims, unless `offsite` records
   that its PR lives in another repo.
 - **A park is declared, never inferred.** Comment naming what the claim
@@ -70,7 +70,7 @@ triage bug, and the move is to say so on the issue, not to guess.
 - **Pick up `attention` before anything else**: post a short pickup comment
   and remove the label, which is the ack. A demand on a parked claim is
   usually its unpark, so take the slot back — unless the demand *is* the
-  park, where the pickup comment doubles as the declaration.
+  park, the pickup comment then doubling as the declaration.
 - **A directed hold keeps its bookkeeping visible.** The PR carries
   `blocked` with a comment naming what it waits on; the issue stays
   `claimed` and carries `attention` until the builder acks. Nobody unassigns
@@ -85,8 +85,7 @@ triage bug, and the move is to say so on the issue, not to guess.
 ## Building
 
 - Branch per issue; open the PR **as a draft early**, `Closes #N` in the
-  body. Drafts are invisible to the panel on purpose: the draft phase is
-  yours.
+  body. Drafts are invisible to the panel on purpose: that phase is yours.
 - **`Closes #N` does not cross repos.** A PR in a different repo from its
   issue says `Part of <owner>/<repo>#N`, sets `offsite`, and comments the
   draft link on that issue in the same step; triage closes that issue by
@@ -95,12 +94,12 @@ triage bug, and the move is to say so on the issue, not to guess.
 - **`Closes #N` does not survive a post-merge criterion.** Where the issue
   body says a criterion can only be checked after the merge — a workflow
   trigger proved live, a released artifact, anything whose subject does not
-  exist until the change is on the base branch — the same-repo PR says `Refs
-  #N`; the issue goes `post-merge` at the merge, the builder walks away,
-  triage owns verification and closure on the evidence, and corrective work
-  is a fresh issue any builder claims from current `main`. The issue body is
-  what says so — you never judge which qualify, and absent that instruction
-  `Closes #N` is the default (#151).
+  exist until the change is on the base branch — the same-repo PR says
+  `Refs #N`; the issue goes `post-merge` at the merge, the builder walks
+  away, triage owns verification and closure on the evidence, and corrective
+  work is a fresh issue any builder claims from current `main`. The issue
+  body says so — you never judge which qualify — and absent it `Closes #N`
+  is the default (#151).
 - On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence
@@ -258,8 +257,7 @@ the same comment ([LABELS.md](LABELS.md)).
 
 When the round passes — every panel verdict approving the **current head**,
 no `blocker:*` standing (conflicts rebased, CI green, drill recorded if this
-is a release PR) — the engine does these mechanical steps for the builder,
-in order:
+is a release PR) — the engine does these steps for the builder, in order:
 
 1. request the human's review;
 2. set `state:needs-human`;
@@ -269,7 +267,6 @@ in order:
 The builder composes no new summary: the authored record already lives in
 the Round log, mirrored from each whole-round reply. The label write is
 optimistic — the reconciler validates it and takes it back if the PR is not
-mergeable-right-now. Then stop: the PR is the human's, and the claim is
-parked as shape 4 (Picking, above), that comment being its declaration and
-your slot free. Address what comes back (`state:addressing`) and re-hand-off
-the same way.
+mergeable-right-now. Then stop: the PR is the human's, and the claim parks
+as shape 4 (Picking, above), that comment its declaration and your slot
+free. Address what comes back (`state:addressing`) and re-hand-off alike.
