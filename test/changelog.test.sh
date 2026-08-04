@@ -182,11 +182,11 @@ printf 'marker\n' >"$FRAG/README.md"
 check "fragments: README.md is the directory marker, never a fragment" 0 "" \
   changelog_fragments "$FRAG"
 
-printf -- '- Two.\n' >"$FRAG/2.md"
-printf -- '- Nine.\n' >"$FRAG/9.md"
-printf -- '- Ten.\n' >"$FRAG/10.md"
-printf -- '- Cross.\n' >"$FRAG/ceremony-14.md"
-printf -- '- Local fourteen.\n' >"$FRAG/14.md"
+printf -- '- Two (#2).\n' >"$FRAG/2.md"
+printf -- '- Nine (#9).\n' >"$FRAG/9.md"
+printf -- '- Ten (#10).\n' >"$FRAG/10.md"
+printf -- '- Cross (#14).\n' >"$FRAG/ceremony-14.md"
+printf -- '- Local fourteen (#14).\n' >"$FRAG/14.md"
 
 assert_fragments_order() {
   local expected="$1" actual
@@ -205,19 +205,19 @@ check "fragments: issue number descending (numeric, 10 before 9), filename tie-b
 PF="$TMP/frag-problems"
 mkdir -p "$PF"
 
-printf -- '- Fine.\n' >"$PF/7.md"
+printf -- '- Fine (#7).\n' >"$PF/7.md"
 check "fragment predicate: a flat fragment passes" 0 "" \
   changelog_fragment_problem "$PF/7.md"
 
 cat >"$PF/8.md" <<'EOF'
 ### Added
 
-- Grouped fine.
+- Grouped fine (#8).
 EOF
 check "fragment predicate: a grouped fragment passes" 0 "" \
   changelog_fragment_problem "$PF/8.md"
 
-printf -- '- Cross-repo.\n' >"$PF/ceremony-14.md"
+printf -- '- Cross-repo (#14).\n' >"$PF/ceremony-14.md"
 check "fragment predicate: a cross-repo name passes" 0 "" \
   changelog_fragment_problem "$PF/ceremony-14.md"
 
@@ -274,14 +274,14 @@ check "length bound: the refusal names the bound and the split fix" 1 \
   "the bound is 300: split it into multiple '- ' entries in this same fragment" \
   changelog_fragment_problem "$PF/30.md"
 
-printf -- '- %s\n' "$(mkchars 300)" >"$PF/31.md"
+printf -- '- %s (#31).\n' "$(mkchars 293)" >"$PF/31.md"
 check "length bound: an entry of exactly 300 passes" 0 "" \
   changelog_fragment_problem "$PF/31.md"
 
 {
-  printf -- '- %s\n' "$(mkchars 150)"
-  printf -- '- %s\n' "$(mkchars 150)"
-  printf -- '- %s\n' "$(mkchars 150)"
+  printf -- '- %s (#32).\n' "$(mkchars 143)"
+  printf -- '- %s (#32).\n' "$(mkchars 143)"
+  printf -- '- %s (#32).\n' "$(mkchars 143)"
 } >"$PF/32.md"
 check "length bound: several within-bound entries pass though the file totals over 300" 0 "" \
   changelog_fragment_problem "$PF/32.md"
@@ -291,14 +291,14 @@ check "length bound: several within-bound entries pass though the file totals ov
   printf '  %s\n' "$(mkchars 50)"
   printf '  %s\n' "$(mkchars 50)"
   printf '  %s\n' "$(mkchars 50)"
-  printf '  %s\n' "$(mkchars 50)"
+  printf '  %s (#33).\n' "$(mkchars 50)"
 } >"$PF/33.md"
 check "length bound: a ~250-character entry wrapped over four continuation lines passes" 0 "" \
   changelog_fragment_problem "$PF/33.md"
 
 {
   printf '### Added\n\n'
-  printf -- '- %s\n' "$(mkchars 300)"
+  printf -- '- %s (#34).\n' "$(mkchars 293)"
 } >"$PF/34.md"
 check "length bound: a '### ' heading counts toward no entry — 300 under it still passes" 0 "" \
   changelog_fragment_problem "$PF/34.md"
@@ -331,6 +331,151 @@ check "length bound: published sections stay unvalidated — 0.3.0's over-bound 
 check "length bound: published sections stay unvalidated — 0.2.0 reds nothing either" 0 "" \
   changelog_section_problem "$ROOT/CHANGELOG.md" 0.2.0
 
+# --- the terminal issue cite (#262) ------------------------------------------
+
+# cite_case <number> <entry-line...> — a fragment holding exactly the given
+# lines, so a case reads as the entry it is about.
+cite_case() {
+  local num="$1"
+  shift
+  printf '%s\n' "$@" >"$PF/$num.md"
+}
+
+cite_case 40 '- Local (#262).'
+check "cite: the canonical '(#N).' passes" 0 "" \
+  changelog_fragment_problem "$PF/40.md"
+cite_case 41 '- Sibling repo (crew#309).'
+check "cite: a sibling-repo reference passes" 0 "" \
+  changelog_fragment_problem "$PF/41.md"
+cite_case 42 '- Fully qualified (heavy-duty/crew#309).'
+check "cite: an owner/repo reference passes" 0 "" \
+  changelog_fragment_problem "$PF/42.md"
+cite_case 43 '- Two issues, one entry (#236, #250).'
+check "cite: one group carrying two references passes" 0 "" \
+  changelog_fragment_problem "$PF/43.md"
+
+# The cite is measured on the normalized entry, so a citation that lands on
+# a continuation line still closes the entry — the #167 lesson, repeated:
+# wrapping alone must never red a compliant entry.
+cite_case 44 '- An entry whose prose wraps onto a' '  continuation line, cite and all (#262).'
+check "cite: a citation on a continuation line passes — the entry is normalized first" 0 "" \
+  changelog_fragment_problem "$PF/44.md"
+
+cite_case 45 '### Added' '' '- Added one (#101).' '- Added two (#102).' '' \
+  '### Changed' '' '- Changed one (#103).' '' '### Fixed' '' '- Fixed one (#104).'
+check "cite: a grouped fragment, three headings, every entry compliant, passes" 0 "" \
+  changelog_fragment_problem "$PF/45.md"
+
+# The two diagnoses are distinct by construction (D5): a builder who reads
+# one must not be told the other's fix.
+cite_case 50 '- No cite here.'
+check "cite: an entry with no reference at all is refused" 1 \
+  "50.md' has an entry with no issue citation" \
+  changelog_fragment_problem "$PF/50.md"
+check "cite: the uncited refusal names the shape to write" 1 \
+  "end it with the issue it comes from: '(#N).'" \
+  changelog_fragment_problem "$PF/50.md"
+
+cite_case 51 '- Cite before the period. (#262)'
+check "cite: a citation trailing the period is refused — the 248.md shape" 1 \
+  "51.md' has an entry whose issue citation is not terminal" \
+  changelog_fragment_problem "$PF/51.md"
+check "cite: the misplaced refusal names the shape to write" 1 \
+  "exactly one '(#N)' group ends the entry, the final '.' after it" \
+  changelog_fragment_problem "$PF/51.md"
+
+cite_case 52 '- Trailing prose (#262) and then more.'
+check "cite: a citation with prose after it is refused" 1 \
+  "has an entry whose issue citation is not terminal" \
+  changelog_fragment_problem "$PF/52.md"
+
+cite_case 53 '- Two groups (#236) and (#250).'
+check "cite: two citation groups are refused — one terminal group, or none (D2)" 1 \
+  "has an entry whose issue citation is not terminal" \
+  changelog_fragment_problem "$PF/53.md"
+
+cite_case 54 '- Bad token (#abc).'
+check "cite: a reference with no digits is no reference" 1 \
+  "has an entry with no issue citation" \
+  changelog_fragment_problem "$PF/54.md"
+cite_case 55 '- Bad token (#).'
+check "cite: an empty reference is no reference" 1 \
+  "has an entry with no issue citation" \
+  changelog_fragment_problem "$PF/55.md"
+
+# The citation need not name the file's own issue (D3): the filename already
+# carries the authorizing one, so an entry may cite the incident beside it.
+cite_case 56 '- Cites another issue entirely (#101).'
+check "cite: the reference need not match the filename" 0 "" \
+  changelog_fragment_problem "$PF/56.md"
+
+# Ordering: the bound outranks the cite across the whole fragment, so a
+# fragment that reds today draws the diagnosis it drew before this rule
+# existed. The uncited entry comes FIRST here on purpose — the other order
+# would pass whatever the precedence is.
+{
+  printf -- '- Uncited, and it comes first.\n'
+  printf -- '- %s\n' "$(mkchars 301)"
+} >"$PF/57.md"
+check "cite: an over-bound entry outranks an earlier uncited one" 1 \
+  "57.md' has a 301-character entry" \
+  changelog_fragment_problem "$PF/57.md"
+assert_one_diagnosis() {
+  local count
+  count="$(changelog_fragment_problem "$PF/$1.md" | wc -l)"
+  [ "$count" = 1 ] || {
+    printf 'wanted one diagnosis, got %s\n' "$count"
+    return 1
+  }
+}
+check "cite: the outranked citation problem is not reported beside it" 0 "" \
+  assert_one_diagnosis 57
+
+# The axis 57.md cannot test: its over-bound entry is LAST, so the only
+# flush that can print is END's, which exits immediately. A flush from a
+# main rule exits too — but awk runs END on the way out, so the citation
+# row a mid-file length row outranks would print after it unless END is
+# guarded. Both ways out of the walk, a bullet and a heading.
+{
+  printf -- '- Uncited, and it comes first.\n'
+  printf -- '- %s\n' "$(mkchars 301)"
+  printf -- '- A later entry the walk never reaches (#57).\n'
+} >"$PF/58.md"
+check "cite: an over-bound entry that is not the last one still reports the bound" 1 \
+  "58.md' has a 301-character entry" \
+  changelog_fragment_problem "$PF/58.md"
+check "cite: and it is still one diagnosis, not the protocol row spliced into it" 0 "" \
+  assert_one_diagnosis 58
+{
+  printf '### Fixed\n'
+  printf -- '- Misplaced, and it comes first. (#59)\n'
+  printf -- '- %s\n' "$(mkchars 301)"
+  printf '### Changed\n'
+  printf -- '- The heading is the other way out of the walk (#59).\n'
+} >"$PF/59.md"
+check "cite: a heading after the over-bound entry is the same one diagnosis" 1 \
+  "59.md' has a 301-character entry" \
+  changelog_fragment_problem "$PF/59.md"
+check "cite: the misplaced row does not ride along with it either" 0 "" \
+  assert_one_diagnosis 59
+
+# Published sections keep their pre-rule prose (D4): reddening history is a
+# wall, not a guard. Every shipped section predates the cite.
+check "cite: a published section with uncited entries still reds nothing" 0 "" \
+  changelog_section_problem "$ROOT/CHANGELOG.md" 0.3.0
+
+# The fragments this repo carries right now are the rule's own first
+# constituency — the guard is worth nothing if the tree it ships in fails it.
+assert_tree_fragments() {
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    changelog_fragment_problem "$f" || return 1
+  done <<<"$(changelog_fragments "$ROOT/changelog.d")"
+}
+check "cite: every fragment in this tree passes the rule it ships" 0 "" \
+  assert_tree_fragments
+
 # --- the assembler (#114) ----------------------------------------------------
 
 assert_assemble() {
@@ -347,11 +492,11 @@ mkdir -p "$AF"
 printf 'marker\n' >"$AF/README.md"
 cat >"$AF/3.md" <<'EOF'
 - Three — an em dash, and prose that
-  wraps onto a continuation line.
+  wraps onto a continuation line (#3).
 EOF
-printf -- '- Ten.\n- Ten again.\n' >"$AF/10.md"
+printf -- '- Ten (#10).\n- Ten again (#10).\n' >"$AF/10.md"
 check "assemble: flat fragments, newest issue first, prose verbatim" 0 "" \
-  assert_assemble "$AF" $'- Ten.\n- Ten again.\n- Three — an em dash, and prose that\n  wraps onto a continuation line.'
+  assert_assemble "$AF" $'- Ten (#10).\n- Ten again (#10).\n- Three — an em dash, and prose that\n  wraps onto a continuation line (#3).'
 
 check "assemble: an empty directory is empty output — refusing is the caller's stance" 0 "" \
   changelog_assemble "$TMP/no-such-dir"
@@ -361,36 +506,36 @@ mkdir -p "$AG"
 cat >"$AG/21.md" <<'EOF'
 ### Fixed
 
-- Fixed twenty-one.
+- Fixed twenty-one (#21).
 EOF
 cat >"$AG/20.md" <<'EOF'
 ### Added
 
-- Added twenty.
+- Added twenty (#20).
 
 ### Docs
 
-- Docs twenty.
+- Docs twenty (#20).
 EOF
 cat >"$AG/19.md" <<'EOF'
 ### Security
 
-- Security nineteen.
+- Security nineteen (#19).
 
 ### Added
 
-- Added nineteen.
+- Added nineteen (#19).
 EOF
 check "assemble: canonical group order, unnamed group appended, fragment order inside a group" 0 "" \
-  assert_assemble "$AG" $'### Added\n\n- Added twenty.\n- Added nineteen.\n\n### Fixed\n\n- Fixed twenty-one.\n\n### Security\n\n- Security nineteen.\n\n### Docs\n\n- Docs twenty.'
+  assert_assemble "$AG" $'### Added\n\n- Added twenty (#20).\n- Added nineteen (#19).\n\n### Fixed\n\n- Fixed twenty-one (#21).\n\n### Security\n\n- Security nineteen (#19).\n\n### Docs\n\n- Docs twenty (#20).'
 
 AM="$TMP/assemble-mixed"
 mkdir -p "$AM"
-printf -- '- Flat five.\n' >"$AM/5.md"
+printf -- '- Flat five (#5).\n' >"$AM/5.md"
 cat >"$AM/6.md" <<'EOF'
 ### Added
 
-- Grouped six.
+- Grouped six (#6).
 EOF
 check "assemble: mixed shapes refused, grouped side named" 1 "6.md" \
   changelog_assemble "$AM"
@@ -400,11 +545,11 @@ check "assemble: mixed shapes refused, flat side named too" 1 "5.md" \
 AX="$TMP/assemble-selfmixed"
 mkdir -p "$AX"
 cat >"$AX/7.md" <<'EOF'
-- Ungrouped lead.
+- Ungrouped lead (#7).
 
 ### Added
 
-- Grouped follow.
+- Grouped follow (#7).
 EOF
 check "assemble: one fragment mixing both shapes is refused, file named" 1 \
   "'$AX/7.md' mixes grouped headings and ungrouped bullets" \
@@ -429,14 +574,14 @@ cat >"$SHAPE_CHANGELOG" <<'EOF'
 
 - Older section is grouped.
 EOF
-printf -- '- Flat fragment.\n' >"$SHAPE_DIR/1.md"
+printf -- '- Flat fragment (#1).\n' >"$SHAPE_DIR/1.md"
 check "shape: flat set matches newest flat published section" 0 "" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
 
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 check "shape: grouped set names its conflict with newest flat published section" 1 \
   "fragment '$SHAPE_DIR/1.md' is grouped but newest published section '2.0.0' in '$SHAPE_CHANGELOG' is flat" \
@@ -451,7 +596,7 @@ cat >"$SHAPE_CHANGELOG" <<'EOF'
 
 - Newest section is grouped.
 EOF
-printf -- '- Flat fragment.\n' >"$SHAPE_DIR/1.md"
+printf -- '- Flat fragment (#1).\n' >"$SHAPE_DIR/1.md"
 check "shape: flat set names its conflict with newest grouped published section" 1 \
   "fragment '$SHAPE_DIR/1.md' is flat but newest published section '2.0.0' in '$SHAPE_CHANGELOG' is grouped" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -459,7 +604,7 @@ check "shape: flat set names its conflict with newest grouped published section"
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 check "shape: grouped set matches newest grouped published section" 0 "" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -484,7 +629,7 @@ EOF
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 printf 'grouped\n' >"$SHAPE_DIR/shape"
 check "shape: 'grouped' sentinel admits a grouped set over a flat published section" 0 "" \
@@ -492,7 +637,7 @@ check "shape: 'grouped' sentinel admits a grouped set over a flat published sect
 check "shape: the sentinel binds with no changelog at all — the assembler's call" 0 "" \
   changelog_shape_problem "" "$SHAPE_DIR"
 
-printf -- '- Flat fragment.\n' >"$SHAPE_DIR/1.md"
+printf -- '- Flat fragment (#1).\n' >"$SHAPE_DIR/1.md"
 check "shape: flat fragment under a 'grouped' sentinel refused, fragment and sentinel named" 1 \
   "fragment '$SHAPE_DIR/1.md' is flat but '$SHAPE_DIR/shape' declares grouped" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -512,14 +657,14 @@ check "shape: 'flat' sentinel admits a flat set over a grouped published section
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 check "shape: grouped fragment under a 'flat' sentinel refused, fragment and sentinel named" 1 \
   "fragment '$SHAPE_DIR/1.md' is grouped but '$SHAPE_DIR/shape' declares flat" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
 
 printf 'grouped\n' >"$SHAPE_DIR/shape"
-printf -- '- Flat two.\n' >"$SHAPE_DIR/2.md"
+printf -- '- Flat two (#2).\n' >"$SHAPE_DIR/2.md"
 check "shape: a mixed set is refused regardless of the sentinel" 1 \
   "fragment '$SHAPE_DIR/1.md' is grouped but fragment '$SHAPE_DIR/2.md' is not" \
   changelog_shape_problem "$SHAPE_CHANGELOG" "$SHAPE_DIR"
@@ -558,7 +703,7 @@ printf 'grouped\n' >"$SHAPE_DIR/shape"
 cat >"$SHAPE_DIR/1.md" <<'EOF'
 ### Fixed
 
-- Grouped fragment.
+- Grouped fragment (#1).
 EOF
 assert_fragments_exclude_sentinel() {
   local out
@@ -579,17 +724,17 @@ printf 'grouped\n' >"$AS/shape"
 cat >"$AS/30.md" <<'EOF'
 ### Fixed
 
-- Fixed thirty.
+- Fixed thirty (#30).
 EOF
 cat >"$AS/31.md" <<'EOF'
 ### Added
 
-- Added thirty-one.
+- Added thirty-one (#31).
 EOF
 check "assemble: the sentinel never assembles, and canonical order holds under it" 0 "" \
-  assert_assemble "$AS" $'### Added\n\n- Added thirty-one.\n\n### Fixed\n\n- Fixed thirty.'
+  assert_assemble "$AS" $'### Added\n\n- Added thirty-one (#31).\n\n### Fixed\n\n- Fixed thirty (#30).'
 rm "$AS/30.md" "$AS/31.md"
-printf -- '- Flat probe.\n' >"$AS/29.md"
+printf -- '- Flat probe (#29).\n' >"$AS/29.md"
 check "assemble: a flat set under a 'grouped' sentinel refuses to assemble" 1 \
   "declares grouped" \
   changelog_assemble "$AS"

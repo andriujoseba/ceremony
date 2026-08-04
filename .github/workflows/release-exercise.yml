@@ -119,7 +119,7 @@ jobs:
           EOF
           mkdir changelog.d
           printf '# changelog.d/ — assembled at release (heavy-duty/ceremony#112); the marker keeps the directory tracked.\n' > changelog.d/README.md
-          printf -- '- The entry this release ships.\n' > changelog.d/42.md
+          printf -- '- The entry this release ships (#42).\n' > changelog.d/42.md
           git add VERSION CHANGELOG.md changelog.d
           git commit -qm "base"
           printf '0.7.0\n' > VERSION
