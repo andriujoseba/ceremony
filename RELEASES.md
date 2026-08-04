@@ -76,10 +76,15 @@ still see one deliberately ordered queue.
 
 While a window stands — an open release-labeled issue with a non-empty
 enumerated gate — its members form a DAG whose sink is the release issue.
-Every member reaches that sink; ordering edges live on members, while the sink
-records membership only; and the `ready` set is exactly the graph's sources.
-It follows that every `ready` issue is a gate member. `epic` and `post-merge`
-issues are exempt because neither is claimable (#292).
+Every member reaches that sink. Members declare only their immediate
+predecessors; ordering edges live on members, while the sink records membership
+only; and the `ready` set is exactly the graph's current sources. Every close
+releases exactly its declared successors, and that whole set is concurrently
+claimable: a member may have multiple successors, while the collision rule
+already orders any that share a deliverable. Insertion re-points downstream
+edges rather than merely appending membership at the sink. It follows that
+every `ready` issue is a gate member. `epic` and `post-merge` issues are exempt
+because neither is claimable (#292).
 
 The operator may declare a parallel track at init when its footprint is
 disjoint from the primary window: another repository, another artifact, or

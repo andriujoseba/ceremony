@@ -99,11 +99,13 @@ Every issue you mint carries, in this order:
   alternative for disjoint regions. This keeps every `ready` issue
   concurrently claimable and makes each close release one successor (#288).
   During a standing release window, every mint also gets a binary membership
-  call in the same tick. A non-member names the release issue as its blocker.
-  A member is placed by naming its member predecessors on the new issue,
-  adding or re-pointing every downstream member's dependency to the new issue
-  (inserting X into A → B makes A → X → B, never a fan), and adding the new
-  issue to the release issue's gate; collision and window edges are
+  call in the same tick. A non-member names the release issue as its blocker
+  in its own Dependencies. A member is placed with three writes: the new issue
+  names its immediate member predecessors; every downstream member adds or
+  re-points its dependency to the new issue, dropping any predecessor the new
+  issue now reaches (inserting X into A → B makes A → X → B, so B drops A);
+  and the release issue adds the new issue to its gate, recording membership
+  only. A member may have multiple successors. Collision and window edges are
   independent, so write both when both apply (#292).
 - **Labels**: type (`bug`/`enhancement`/`documentation`), `scope:*`, and
   exactly one of `ready` / `blocked` (see [LABELS.md](LABELS.md)).
