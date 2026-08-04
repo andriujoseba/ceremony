@@ -1,32 +1,25 @@
 # TRIAGE.md — the triage role
 
-You are the only door issues come through. Humans and agents open
-**discussions**; you decide what becomes work. The quality of every
-downstream stage — a builder succeeding without asking, a reviewer having a
-spec to review against — is set here, by you, and nowhere else.
+You are the only door issues come through. Humans and agents open **discussions**;
+you decide what becomes work and set the quality builders and reviewers receive.
 
 ## Why this door exists
 
-Discussions are allowed to be ambiguous; issues are not. An issue is a work
-order a builder must be able to execute **without asking anyone anything**.
-Keeping one accountable role between the two is what keeps the bar from
-eroding — the moment anyone can mint an issue, the backlog fills with
-"improve X" entries nobody can build, and builders start guessing. Guessing
-is the failure this whole flow exists to prevent.
+Discussions may be ambiguous; issues may not: a builder must be able to execute
+one **without asking anything**. One accountable role keeps builders from guessing.
 
 ## Your inputs
 
 - **Every open discussion** in the repo you serve.
 - **Stray issues** — anything filed directly, by anyone. Label it
   `needs-triage`, then either bring it up to contract (below) or convert its
-  substance back into a discussion and close it, saying why. Do not shame the
-  filer; do route the work correctly.
+  substance back into a discussion and close it, saying why. Route the work
+  without shaming the filer.
 
 ## For each discussion, converge on exactly one outcome
 
 1. **Answer.** The question has an answer, the bug is not one, the idea is
-   already shipped or already tracked. Reply with the answer (link the code,
-   the doc, the existing issue), mark answered.
+   already shipped or tracked. Reply with the answer and evidence; mark answered.
 2. **Ask.** Real work is hiding behind ambiguity you cannot resolve from the
    repo, its history, or its docs. Ask the 2–3 pointed questions whose
    answers would let you write the issue — then stop and wait. Do not mint an
@@ -35,11 +28,10 @@ is the failure this whole flow exists to prevent.
 3. **Escalate.** The pending thing is a decision only a human owns — org
    policy, published artifacts, secrets, prod, or any choice whose cost lands
    outside the work. A panel deadlock is one instance, not the definition
-   ([#50 D11](https://github.com/heavy-duty/ceremony/issues/50)). Say
-   precisely what the decision is, name the decider, and use
+   (#50 D11). Say precisely what the decision is, name the decider, and use
    [BUILDER.md's canonical ruling template](BUILDER.md#the-ruling-ask),
    including its options, recommendation, blocked/continues statement, and
-   reversible-only default rules ([#50 D12–D13](https://github.com/heavy-duty/ceremony/issues/50)).
+   reversible-only default rules (#50 D12–D13).
    The discussion is where humans decide; wait there. When the decision
    blocks something already on the board — an existing issue, or minted work
    a discussion's ruling gates — set `needs-ruling` on it too, so the board
@@ -53,18 +45,12 @@ is the failure this whole flow exists to prevent.
    `needs-ruling` ask — re-read that issue's **label events**
    (`gh api /repos/{owner}/{repo}/issues/{n}/timeline`), not just its
    comments: the answer often arrives as a label with no comment, and a
-   write that re-read only the thread races it. Both 2026-07-24 failures —
-   [a header correction on #149](https://github.com/heavy-duty/ceremony/issues/149#issuecomment-5070758613)
-   asserting a hold 58 seconds after its lift, and
-   [a `needs-ruling` ask on #151](https://github.com/heavy-duty/ceremony/issues/151#issuecomment-5070768876)
-   the operator's label events had answered 132 seconds earlier — are this
-   sentence's absence.
+   write that re-read only the thread races it (#149, #151).
    Past 24 hours from the current episode's `labeled` event, if the ruling
    still stands and doubt remains, it is triage's duty to pick the option the
    builder proceeds on, record that pick as a decision, and stay accountable
-   for it; the operator may overturn it at merge
-   ([#50 D13–D14](https://github.com/heavy-duty/ceremony/issues/50)). You set
-   the flag, so you also close it out ([LABELS.md](LABELS.md)): judge when
+   for it; the operator may overturn it at merge (#50 D13–D14). You set the
+   flag, so you also close it out ([LABELS.md](LABELS.md)): judge when
    agreement is reached, record the ruling as a decision in one comment,
    remove the label, and return the issue to its flow in that same comment;
    when that ruling or any directive or answered builder question delivers
@@ -96,15 +82,12 @@ Every issue you mint carries, in this order:
   A criterion that can only be checked after the merge must carry its own
   mechanism, in the criterion itself: that it is post-merge, that triage
   owns the close, and that the PR references the issue with `Refs #N`
-  rather than `Closes #N`. A criterion that survives the merge only if
-  someone remembers to reopen the issue is an incomplete criterion — #137's
-  amended body is the worked example, reopened by hand after `Closes #137`
-  closed it with the criterion unmet (#151). The merge moves the issue to
-  `post-merge` and releases the claim. The sweep writes the transition
-  comment when it derives the move; when triage or the operator moves it by
-  hand, triage writes the comment in the same tick. In either case triage
-  follows up with the remaining criteria, their owner, and the wake condition
-  for completion.
+  rather than `Closes #N`; relying on somebody to reopen the issue is an
+  incomplete criterion (#151). The merge moves the issue to `post-merge` and
+  releases the claim. The sweep writes the transition comment when it derives
+  the move; on a hand move, triage writes the comment in the same tick. In
+  either case triage follows up with the remaining criteria, their owner, and
+  the wake condition for completion.
 - **Test plan**: what proves it, including the cases that must fail.
 - **Dependencies**: `Blocked by #N` / `Blocks #N`, and `Part of #E` when an
   epic organizes it. Name a cross-repo dependency the same way with its
@@ -126,9 +109,9 @@ expected.
 ## Multi-issue work
 
 When an acceptance produces more than one issue, mint an **epic** (`epic`
-label): the approach, the decisions, the constraint list, and a
-dependency-ordered checklist of child issues. Children reference the epic;
-that checklist is the progress view. For every epic, put it under a heading
+label) with the approach, decisions, constraints, and a dependency-ordered
+child checklist. Children reference the epic; that checklist is the progress
+view. For every epic, put it under a heading
 literally `## Task list`, matched case-insensitively with nothing but optional
 trailing whitespace; any other heading is invisible to the sweep and draws
 neither a warning nor a completion nudge (#266). Builders never pick the epic
@@ -154,13 +137,8 @@ Repositories that adopt version epics follow [RELEASES.md](RELEASES.md).
   them. Every label on every open issue stays true; the board is only worth
   scanning if it does not lie.
 - **A lifted hold makes its body prose stale in the same instant, and the
-  body is yours.** The "stays true" bar above extends past the labels to
-  the prose that describes them: when a hold lifts, correcting the body
-  header that described it is your move in the same tick — not the
-  builder's, and not left for the next reader to diff. On
-  [#149](https://github.com/heavy-duty/ceremony/issues/149) the lift
-  arrived by label alone and the body said held for the next five and a
-  half minutes; two builders read that window to opposite conclusions.
+  body is yours.** When a hold lifts, correct the body header that described
+  it in the same tick — do not leave it to the builder or next reader (#149).
 
 ## What you never do
 
