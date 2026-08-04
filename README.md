@@ -512,8 +512,8 @@ in this catalog whose remedy is a manual bump, not a re-run.
 
 [L86](lib/version.sh#L86): the version reaching the bump is not bare `X.Y.Z`.
 Two senses of *bare* meet here, and the gap between them is the **rc release
-path** — the one door an operator actually walks through. decide calls a
-version bare when it is not `-dev`
+path** — the way this refusal is actually reached, and designed behaviour
+rather than a decide bug. decide calls a version bare when it is not `-dev`
 ([version_is_dev](lib/version.sh#L68-L76) matches that suffix and nothing
 else), so row 6 admits a transition to `1.2.3-rc1`, and a labeled rc ceremony
 is designed to ship ([lib/decide.sh](lib/decide.sh#L108-L110)).
@@ -533,9 +533,9 @@ rows 1–2 send `-dev` to a no-op, and the tag door never bumps.
 [L106](lib/version.sh#L106): the package-json backend needs npm to write —
 `npm pkg set version=` plus a lockfile-only `npm install`
 ([L114–L115](lib/version.sh#L114-L115)), never `npm version`, which would tag
-— and the runner has none. The read path fails the
-same way one step earlier (`node is required…`, above), so a run reaching
-*this* message got past the read — set up node/npm in the caller.
+— and the runner has none. The read path fails the same way one step earlier
+(`node is required…`, above), so a run reaching *this* message got past the
+read — set up node/npm in the caller.
 
 > version_write: unknown backend: $backend
 
