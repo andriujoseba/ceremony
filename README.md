@@ -2,7 +2,9 @@
 
 The heavy-duty family's **governance repo**: the machinery every repo in the
 family runs, and the doctrine every agent in the family reads. Implemented
-once here, tested once here, consumed everywhere else — never copied.
+once here, tested once here, consumed everywhere else — the machinery never
+copied at all, the doctrine only as a mirror a guard keeps byte-identical to
+the pin.
 
 Two kinds of thing live in this tree, and they are consumed in two different
 ways because they have two different runtimes.
@@ -118,10 +120,15 @@ decision rather than arithmetic, so the re-arm stops for you to make it
 ([The re-arm refused](#the-re-arm-refused-releaseyml)). The machine does the
 transcription because humans err silently and machines fail loudly:
 **everything asserts its way to certainty and fails loudly, creating
-nothing** — a wrong release is worse than a missing one, so every assert that
-fails *before* the publish leaves zero artifacts: no tag, no release, no
-bump. The re-arm is the one assert past that line, and its refusal is the
-single failure in this file that leaves a real release behind.
+nothing** — a wrong release is worse than a missing one, so every assert in
+this file fires *before its door creates anything*, and one that fails leaves
+zero artifacts of the run's own: no tag it made, no release, no bump. Only two
+steps run past the tag. The consumer's
+[artifact hook](docs/CONSUMERS.md#the-artifact-hook) sits between the tag and
+the publish, so its non-zero exit aborts with a tag standing and no release —
+a state the [nothing-exists assert](#the-merge-door-refused-releaseyml) names,
+and recovers by the tag door. The re-arm runs after the publish, and its
+refusal is the single failure in this file that leaves a real release behind.
 
 ## The two doors
 
@@ -137,8 +144,12 @@ single failure in this file that leaves a real release behind.
   — **no `v` prefix**, box's 0.6.0 set the scheme
   ([release.yml](.github/workflows/release.yml#L303-L371)) — publishes the
   same way. The tag is the operator's explicit act, so there is no decide
-  and no label check; the one assert is that **the tag names the tree's own
-  version**, and a mismatch refuses, creating nothing. No `-dev` bump either
+  and no label check — what is left is two asserts: **the tag names the
+  tree's own version**
+  ([L328–L339](.github/workflows/release.yml#L328-L339)) and **the tagged
+  tree carries a publishable `## X.Y.Z` section**
+  ([L340–L352](.github/workflows/release.yml#L340-L352)); either failing
+  refuses, creating nothing. No `-dev` bump either
   — the fallback does not rewrite main (cast's precedent). Use it when the
   merge path is red, for backfills, and for the
   [first-release edge](#what-happens-when-my-pr-lands-on-main) (row 4).
@@ -534,7 +545,10 @@ half, and *that* half is unreachable as the doors stand — rows 1–2 send `-de
 to a no-op, and the tag door never bumps. A malformed version is not: nothing
 upstream checks the shape ([version_read](lib/version.sh#L22-L33) checks only
 that a version is present and non-empty), so `banana` rides row 6 exactly as
-an rc does, and the same manual bump is the remedy.
+an rc does, and the same manual bump is the remedy. The rc half has a shelf
+life: the 0.7.0 window makes rc cuts native and their re-arm deterministic
+(#317), after which no rc reaches this refusal — the malformed half still
+does.
 
 > version_write: npm is required for version-source: package-json
 
