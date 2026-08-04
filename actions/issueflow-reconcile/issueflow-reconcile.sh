@@ -346,10 +346,18 @@ blocked_parse_marker() { # $1 rendered set -> the echo's idempotency marker
   # pair and leave the class: `-`, `_` and `.` are legal in a qualifier token
   # and all collapse the same way. The slug stays in front so a human reading
   # the raw comment can still see which set it belongs to; it decides nothing.
+  state_marker blockers-parsed "$1"
+}
+
+state_marker() { # $1 = marker family, $2 = the state's rendered value
+  # The one spelling of a value-keyed marker. Three flags now key on a state
+  # that changes rather than on "have I ever said this" — the blocked-parse
+  # echo (#252) and the two board flags (#293) — and a second implementation
+  # of the slug-plus-digest rule is the drift a shared helper prevents.
   local slug digest
-  slug="$(printf '%s' "$1" | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
-  digest="$(printf '%s' "$1" | sha256sum | cut -c1-12)"
-  printf 'blockers-parsed-%s-%s\n' "${slug:-none}" "$digest"
+  slug="$(printf '%s' "$2" | tr -c '[:alnum:]' '-' | sed 's/--*/-/g; s/^-//; s/-$//')"
+  digest="$(printf '%s' "$2" | sha256sum | cut -c1-12)"
+  printf '%s-%s-%s\n' "$1" "${slug:-none}" "$digest"
 }
 
 blocked_parse_echo_needed() { # $1 issue, $2 this parse's marker → 0 echo, 1 quiet
@@ -367,13 +375,20 @@ blocked_parse_echo_needed() { # $1 issue, $2 this parse's marker → 0 echo, 1 q
   # Comparing markers rather than re-rendering the last set keeps the digest as
   # the only identity: two sets are the same here iff blocked_parse_marker says
   # so, the same rule the marker itself is built on.
+  state_echo_needed "$1" blockers-parsed "$2"
+}
+
+state_echo_needed() { # $1 issue, $2 family, $3 this state's marker → 0 echo, 1 quiet
+  # The value-keyed dedup itself, family-scoped so each flag compares against
+  # its OWN last word and never against another flag's (#293 D4 asks for the
+  # declaration echo's mechanism exactly, and three families now share it).
   local bodies last
   guarded_read bodies gh api --paginate "repos/$REPO/issues/$1/comments" --jq '.[].body' \
     || skip_issue "$1" "could not read its comments: $(read_failure_reason "$READ_FAILURE_STDERR")"
   # The read fails closed above (#247 D1): an unreadable history skips the
   # issue rather than answering "nothing echoed yet" and re-posting.
-  last="$(grep -o '<!-- issueflow:blockers-parsed-[[:alnum:]-]* -->' <<<"$bodies" | tail -n 1)"
-  [ "$last" != "<!-- issueflow:$2 -->" ]
+  last="$(grep -o "<!-- issueflow:$2-[[:alnum:]-]* -->" <<<"$bodies" | tail -n 1)"
+  [ "$last" != "<!-- issueflow:$3 -->" ]
 }
 
 blocked_decision() { # $1 local refs, $2 OPEN/CLOSED states, $3 cross-repo refs
@@ -400,6 +415,166 @@ epic_decision() { # $1 refs, $2 states
   if [ -n "$refs" ] && ! grep -Eq '^(OPEN|UNKNOWN)$' <<<"$states"; then echo NUDGE
   else echo KEEP
   fi
+}
+
+# ---- the two board flags (#293): collision (#288) and window (#292) --------
+#
+# Both are ADVISORY and comment-only (#293 D1). The sweep never guesses
+# intent, so neither writes a label, changes a state, or invents one: it
+# states the board fact and triage resolves it. Both are also the first
+# checks here whose input is the WHOLE board rather than one issue, so the
+# facts are gathered once in main() and every decision below is pure over
+# those records — one record per open issue, `number<TAB>labels<TAB>title`.
+#
+# Why they exist as guards at all: #288 and #292 are triage prose, and both
+# failed silently on the same morning (2026-08-04) — #284 minted `ready`
+# into a claimed file's function, and six `ready` non-members raced an
+# emptying gate. #262 measured the pattern: the same class of rule, once in
+# a guard, produced zero misses.
+
+DELIVERABLE_PATH_PREFIXES=(actions/ lib/ bin/ .github/)
+
+deliverable_key() { # $1 = one title segment -> its normalized key, or nothing
+  # Normalized, because the 2026-08-04 miss spelled one deliverable two ways
+  # — `actions/issueflow-reconcile` against plain `issueflow-reconcile` — so
+  # exact-prefix matching would have missed the pair it was written for
+  # (#293 D2). One leading path segment comes off, then every extension:
+  # `issueflow-reconcile.test.sh` and `issueflow-reconcile.sh` are the same
+  # spelling habit one more time.
+  local key="$1" prefix
+  key="${key#"${key%%[![:space:]]*}"}"
+  key="${key%"${key##*[![:space:]]}"}"
+  for prefix in "${DELIVERABLE_PATH_PREFIXES[@]}"; do
+    [ "${key#"$prefix"}" = "$key" ] || { key="${key#"$prefix"}"; break; }
+  done
+  while [[ "$key" =~ \.[[:alnum:]]+$ ]]; do key="${key%.*}"; done
+  # Case folds because the key is a spelling, not an identifier, and folding
+  # only ever widens the match — the same direction of error the blocked
+  # parse takes, and the cheap one: a false pair costs a comment a human
+  # dismisses, a missed pair costs two builders one deliverable.
+  printf '%s\n' "$key" | tr '[:upper:]' '[:lower:]'
+}
+
+deliverable_keys() { # title on stdin -> its deliverable keys, one per line
+  local title prefix segment key
+  IFS= read -r title
+  # The issue contract forces every title to name its deliverable before the
+  # em dash, so the key exists on every well-formed title by construction
+  # (#288 D5). A title without one names no deliverable, and inventing a key
+  # out of prose is the guessing this sweep never does — the malformed title
+  # is triage's own contract to enforce, not this flag's to infer around.
+  prefix="${title%%—*}"
+  [ "$prefix" != "$title" ] || return 0
+  # A multi-file deliverable joins its files with `+` and collides on any
+  # segment: `TRIAGE.md + RELEASES.md` carries both keys.
+  local segments=()
+  IFS='+' read -r -a segments <<<"$prefix"
+  # An issue answers a SET of keys, never a multiset. Normalization is
+  # many-to-one by design — `issueflow-reconcile.sh + issueflow-reconcile.test.sh`
+  # is one deliverable spelled twice, which is exactly the `+` shape D2 wrote
+  # the segment rule for — and a repeated key makes `collision_flags`' scan
+  # find the issue adjacent to itself, chaining it to its own number: the
+  # comment would ask #402 to declare `Blocked by #402`. It corrupts the chain
+  # between two such issues too, since each contributes two rows to one key.
+  # Deduping here rather than in the index keeps the set property with the
+  # function whose contract it is.
+  { for segment in "${segments[@]}"; do
+      key="$(deliverable_key "$segment")"
+      [ -z "$key" ] || printf '%s\n' "$key"
+    done
+  } | awk '!seen[$0]++'
+}
+
+unblocked_claimable() { # $1 = comma-joined labels -> 0 when the issue is unblocked
+  # THE one definition of `unblocked`, because #293 gives both flags one word
+  # and one gloss on it: D2 as corrected reads "`unblocked` means open and not
+  # `blocked` — carrying `ready` or `claimed`, with or without an open PR",
+  # and D3b's first line says D3 uses D2's corrected `unblocked` and names the
+  # domain as the claimable set. Two spellings of one spec word is how the
+  # flags came to disagree about `needs-triage`, so there is one predicate and
+  # both flags call it.
+  #
+  # `blocked` is out: a chained issue is the GOAL state of #288's rule, and
+  # flagging it would report the fix as the defect. Anything else without
+  # `ready` or `claimed` is out because it is not claimable — `needs-triage`
+  # and a label-less issue are not states a builder can pick up, and an
+  # unlabeled one is getting `needs-triage` from this very pass. `epic` and
+  # `post-merge` are out by #288 D6 and #292 D1 alike — neither is picked by a
+  # builder — and they carry no queue label to admit them here anyway.
+  case ",$1," in *,blocked,*) return 1 ;; esac
+  case ",$1," in *,ready,*|*,claimed,*) return 0 ;; esac
+  return 1
+}
+
+collision_in_scope() { # $1 = comma-joined labels -> 0 in the collision set
+  unblocked_claimable "$1"
+}
+
+window_in_scope() { # $1 = comma-joined labels -> 0 subject to the window rule
+  # The same `unblocked`, not a second reading of it. Excluding only
+  # `blocked`/`epic`/`post-merge` here admitted `needs-triage` and a
+  # label-less issue, which left the sweep adding `needs-triage` to an
+  # unlabeled issue and then, in the same pass, telling it about a membership
+  # call made at mint time. Neither is claimable; #292's invariant is stated
+  # over the claimable set (D3b), and its exemptions say why — `epic` and
+  # `post-merge` are exempt *because neither is claimable*.
+  unblocked_claimable "$1"
+}
+
+collision_key_index() { # board records on stdin -> "key<TAB>number" in scope
+  local n labels title key
+  while IFS=$'\t' read -r n labels title; do
+    [ -n "$n" ] || continue
+    collision_in_scope "$labels" || continue
+    while IFS= read -r key; do
+      [ -z "$key" ] || printf '%s\t%s\n' "$key" "$n"
+    done < <(deliverable_keys <<<"$title")
+  done
+}
+
+collision_flags() { # key index on stdin -> "number<TAB>key=carrier[,key=carrier]"
+  # A CHAIN, not a fan (#288 D3): within one key, each issue names the newest
+  # open carrier below it, so the declaration the flag asks for releases
+  # exactly one successor per close. Three issues on one deliverable draw two
+  # comments — #257 naming #253, #284 naming #257 — never three pairs, which
+  # is the fan the rule exists to forbid.
+  #
+  # One line per issue, its keys folded into one state: an issue carrying two
+  # colliding deliverables has ONE offending state and owes one comment (D4),
+  # the same shape the blocked-parse echo takes with its set.
+  sort -t $'\t' -k1,1 -k2,2n \
+    | awk -F '\t' '
+        $1 == key { print $2 "\t" $1 "=" carrier }
+        { key = $1; carrier = $2 }
+      ' \
+    | sort -t $'\t' -k1,1n -k2,2 \
+    | awk -F '\t' '
+        $1 != n { if (n != "") print n "\t" state; n = $1; state = $2; next }
+        { state = state "," $2 }
+        END { if (n != "") print n "\t" state }
+      '
+}
+
+window_flags() { # $1 gate members, $2 window carriers; records on stdin -> numbers
+  local n labels title gate="$1" carriers="$2"
+  [ -n "$carriers" ] || return 0
+  while IFS=$'\t' read -r n labels title; do
+    [ -n "$n" ] || continue
+    window_in_scope "$labels" || continue
+    grep -qxF "$n" <<<"$gate" && continue
+    # The release issue is the graph's SINK, never one of its own members
+    # (#292 D2), so it can never be its own non-member.
+    grep -qxF "$n" <<<"$carriers" && continue
+    printf '%s\n' "$n"
+  done
+}
+
+window_state() { # $1 = window carriers -> the rendered state, "#249" | "#249, #250"
+  awk 'NF { printf "%s#%s", (shown++ ? ", " : ""), $1 } END { printf "\n" }' <<<"$1"
+}
+
+flag_for_issue() { # $1 = issue, $2 = flag records "number<TAB>state"
+  awk -F '\t' -v n="$1" '$1 == n { print $2 }' <<<"$2"
 }
 
 offsite_cross_referenced_prs() { # timeline JSON on stdin -> owner/repo#N
@@ -542,6 +717,84 @@ last_issue_comment_activity() { # $1 issue, $2 created_at → epoch; non-zero on
   # Reading authorship back into the clock would mean a body read this issue
   # forbids.
   issue_activity_at "$1" "$2" comments-only
+}
+
+reconcile_board_flags() { # $1 = issue — the collision and window flags (#293)
+  # Dedup is the declaration echo's, per family (#293 D4): the marker is
+  # keyed to the offending state's VALUE and compared against this family's
+  # last word on the thread, so a state that changes speaks and a state that
+  # stands is silent. What that buys over ensure_comment's any-occurrence
+  # grep is the A -> B -> A case — an issue that collides with #257, is
+  # re-declared against #284, and collides with #257 again is saying
+  # something new each time, and an any-occurrence marker would go quiet on
+  # the third. What it does not buy is the state that resolves and returns
+  # unchanged: nothing is posted at the resolution, so the thread's last word
+  # is still the state itself and the return is silent. That is the echo's
+  # own boundary, and it is the right one here — the flag speaks about a
+  # board fact that is true right now, and a board where the fact never
+  # changed has nothing new to say.
+  local n="$1" state marker rendered
+  state="$(flag_for_issue "$n" "${COLLISION_FLAGS:-}")"
+  if [ -n "$state" ]; then
+    marker="$(state_marker collision "$state")"
+    if state_echo_needed "$n" collision "$marker"; then
+      rendered="$(tr ',' '\n' <<<"$state" \
+        | awk -F= '{ print "- `" $1 "` — also carried by #" $2 }')"
+      run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
+This issue and the issue named beside each key below are both open and
+unblocked, and their titles name the same deliverable:
+
+$rendered
+
+That owes a **collision edge**, and #288 makes it unconditional: a deliverable
+already carried by an open \`ready\`, \`claimed\` or \`blocked\` issue owes
+\`Blocked by #N\` on the newer issue, naming the newest open carrier, so each
+close releases exactly one successor. Disjoint regions do not waive it —
+\`ready\` must mean claimable concurrently with every other \`ready\` issue,
+and an undeclared collision sends two builders at one deliverable.
+
+The key is the title's em-dash prefix, normalized: one leading \`actions/\`,
+\`lib/\`, \`bin/\` or \`.github/\` segment comes off, then every extension, and
+a \`+\`-joined title matches on any segment. That is what the machine read,
+never a judgment about what the deliverable is — if two spellings normalized
+to one deliverable that is really two, say so and no edge is owed.
+
+*Comment only: nothing on this path writes a label or changes a state. The
+marker carries the collision itself, so an unchanged one never re-posts.*" >/dev/null
+      log "#$n: collision flag — $state"
+    fi
+  fi
+
+  state="$(flag_for_issue "$n" "${WINDOW_FLAGS:-}")"
+  if [ -n "$state" ]; then
+    marker="$(state_marker window-nonmember "$state")"
+    if state_echo_needed "$n" window-nonmember "$marker"; then
+      run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
+A release window is standing ($state) and this issue is neither one of its
+gate members nor an \`epic\` or \`post-merge\` issue.
+
+#292's invariant: during a standing window — an open \`release\`-labeled issue
+with a non-empty gate — the \`ready\` set is a subset of the gate, \`epic\` and
+\`post-merge\` exempt. Every mint during a window is a membership call, binary,
+made at mint time: **behind the gate**, this issue's own Dependencies declare
+the release issue as a blocker and the sweep releases it when the release
+closes; or **into the graph**, three writes in one tick — this issue declares
+its immediate predecessors, every member whose immediate predecessor it
+becomes re-points to it, and the release issue gains \`Blocked by #N\`, which
+records membership and nothing else. Silence is not a state.
+
+The gate is read from the release issue's own \`Blocked by\` declarations — the
+same parse every \`blocked\` issue is gated on, echoed on that issue.
+
+*Comment only: nothing on this path writes a label or changes a state. The
+marker carries the window itself, so an unchanged one never re-posts.*" >/dev/null
+      # "unblocked", not "ready": the flag fires on `claimed` too, PR in
+      # flight or not, which is the one wording #293 D3b went out of its way
+      # to correct. The log line is read by a human deciding whether the
+      # sweep understood the board, so it says what the predicate says.
+      log "#$n: window flag — an unblocked non-member under $state"
+    fi
+  fi
 }
 
 reconcile_issue() {
@@ -794,6 +1047,13 @@ See \`$release_doctrine_path\`. The operator blessing the order is the one step 
     reconcile_attention "$n" issue "$assignees" "$attention_suppression"
   fi
 
+  # ---- the two board flags (#293), on any queue state ----
+  # After the queue branches for the same reason the ruling block is: both
+  # compose with every queue state, and FLAG_CONFLICT's early return still
+  # short-circuits them, because a board lying about its queue state is
+  # repaired before anything is derived from it.
+  reconcile_board_flags "$n"
+
   # ---- the ruling invariants (#52), on any queue state ----
   # The flag composes with the queue labels (#50 D8), so this runs after the
   # queue branches rather than inside one of them. The FLAG_CONFLICT return
@@ -935,19 +1195,56 @@ main() {
         done < <(refs_references <<<"$body")
       done)"
 
-  local n tail_line issue_numbers
+  local n tail_line issue_numbers board_json release_bodies rn rbody gate
+  local window_rendered=""
   SKIPPED_COUNT=0
   SKIPPED_ISSUES=""
   # A command substitution in a for list suppresses errexit. Capture and
   # check the board read before entering the loop, or a 504 (including one
   # after partial pagination) reports a full pass over a truncated board
   # (#257).
-  if ! guarded_read issue_numbers gh api --paginate \
-      "repos/$REPO/issues?state=open&per_page=100" \
-      --jq '.[] | select(has("pull_request") | not) | .number'; then
+  #
+  # The read answers the whole payload rather than a projection of it because
+  # the two board flags (#293) are decided over the WHOLE board — every open
+  # issue's labels and title, and every open `release` issue's body. One read
+  # supplies all of it; a second pagination for the same rows would be a
+  # second board, free to disagree with this one mid-sweep.
+  if ! guarded_read board_json gh api --paginate \
+      "repos/$REPO/issues?state=open&per_page=100"; then
     log "could not read the issue board: $(read_failure_reason "$READ_FAILURE_STDERR")"
     return 1
   fi
+  BOARD_RECORDS="$(jq -r '.[] | select(has("pull_request") | not)
+    | [(.number | tostring), ((.labels // []) | map(.name) | join(",")), (.title // "")]
+    | @tsv' \
+    <<<"$board_json")"
+  issue_numbers="$(cut -f1 <<<"$BOARD_RECORDS")"
+  # A standing window is an open `release`-labeled issue whose gate still
+  # holds an OPEN member (#292 D1). The board read IS the open set, so
+  # membership decides openness with no extra call — and an all-closed gate
+  # is exactly the emptied gate the release's own `blocked` -> `ready`
+  # promotion answers, which is why a `ready` release leaves the flag
+  # dormant rather than flagging the whole board.
+  release_bodies="$(jq -r '.[] | select(has("pull_request") | not)
+    | select((.labels // []) | map(.name) | index("release"))
+    | [(.number | tostring), ((.body // "") | gsub("[\t\r\n]"; " "))] | @tsv' \
+    <<<"$board_json")"
+  WINDOW_CARRIERS=""
+  WINDOW_GATE=""
+  if [ -n "$issue_numbers" ]; then
+    while IFS=$'\t' read -r rn rbody; do
+      [ -n "$rn" ] || continue
+      gate="$(blocked_references <<<"$rbody")"
+      [ -n "$gate" ] || continue
+      grep -qxF -f <(printf '%s\n' "$issue_numbers") <<<"$gate" || continue
+      WINDOW_CARRIERS="${WINDOW_CARRIERS}${rn}"$'\n'
+      WINDOW_GATE="${WINDOW_GATE}${gate}"$'\n'
+    done <<<"$release_bodies"
+  fi
+  [ -z "$WINDOW_CARRIERS" ] || window_rendered="$(window_state "$WINDOW_CARRIERS")"
+  COLLISION_FLAGS="$(collision_key_index <<<"$BOARD_RECORDS" | collision_flags)"
+  WINDOW_FLAGS="$(window_flags "$WINDOW_GATE" "$WINDOW_CARRIERS" <<<"$BOARD_RECORDS" \
+    | awk -v state="$window_rendered" 'NF { print $1 "\t" state }')"
   if [ -z "$issue_numbers" ]; then
     log "no open issues."
   else

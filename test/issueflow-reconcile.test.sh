@@ -2044,6 +2044,472 @@ order_board '[{"number":83}]'
 order_run >/dev/null
 check "...and still leaves the job green (D7)" 0 "" test $? -eq 0
 
+# -- the two board flags (#293): the deliverable key, normalized ------------
+# The 2026-08-04 miss spelled one deliverable two ways, so exact-prefix
+# matching is specified away (D2). These pin the normalization itself.
+count_lines() { deliverable_keys | grep -c .; }
+keys_of() { # title on stdin -> its keys, each bracketed so `check` matches exactly
+  # ANCHORED, because `check` compares its expectation as a substring: a bare
+  # `issueflow-reconcile` expectation is satisfied by `issueflow-reconcile.test`
+  # too, so the multi-extension row below stayed green under a normalization
+  # stripping only the last extension — it asserted nothing it was named for.
+  # Bracketing each key makes every row here fail for its own reason.
+  deliverable_keys | sed 's/.*/[&]/'
+}
+check "the em-dash prefix is the key" 0 "[issueflow-reconcile]" \
+  keys_of <<<"issueflow-reconcile — the ruling clock counts assigned"
+check "a leading actions/ segment comes off" 0 "[issueflow-reconcile]" \
+  keys_of <<<"actions/issueflow-reconcile — a failed board read"
+check "...and so does .github/" 0 "[labeler]" \
+  keys_of <<<".github/labeler.yml — one wrong answer left by D4"
+check "...and lib/" 0 "[attention]" keys_of <<<"lib/attention.sh — the target"
+check "...and bin/" 0 "[decide]" keys_of <<<"bin/decide.sh — the door"
+check "every extension comes off, not just the last" 0 "[issueflow-reconcile]" \
+  keys_of <<<"issueflow-reconcile.test.sh — the pre-read is unpinned"
+check "the key folds case" 0 "[triage]" keys_of <<<"TRIAGE.md — the bullet"
+check "a + title carries both segments" 0 $'[triage]\n[releases]' \
+  keys_of <<<"TRIAGE.md + RELEASES.md — a standing window is a graph"
+# A path segment the rule does not name stays part of the key: the strip list
+# is closed on purpose (D2), so `test/issueflow-reconcile.test.sh` is its own
+# deliverable and not the action it exercises.
+check "an unlisted path segment stays in the key" 0 "[test/issueflow-reconcile]" \
+  keys_of <<<"test/issueflow-reconcile.test.sh — the pre-read"
+# One issue answers a SET. Normalization is many-to-one by design, so a `+`
+# title can spell one deliverable twice — a deliverable and its test named
+# together is the ordinary shape here, not an exotic one — and a repeated key
+# makes the chain scan find the issue adjacent to ITSELF.
+check "a + title whose segments normalize to one key answers that key once" 0 \
+  "[issueflow-reconcile]" \
+  keys_of <<<"issueflow-reconcile.sh + issueflow-reconcile.test.sh — one deliverable"
+check "...and answers it exactly once, not twice" 0 "1" \
+  count_lines <<<"issueflow-reconcile.sh + issueflow-reconcile.test.sh — one deliverable"
+check "...and the path prefix folds onto the bare spelling the same way" 0 "1" \
+  count_lines <<<"actions/issueflow-reconcile + issueflow-reconcile.sh — still one"
+# No em dash, no key. Inventing one out of prose is the guessing this sweep
+# never does; the malformed title is triage's own contract to enforce. The
+# emptiness is asserted through grep's exit, since `check` cannot assert an
+# empty expectation.
+check "a title with no em dash names no deliverable" 1 "" \
+  grep -q . < <(deliverable_keys <<<"a title that names nothing")
+
+# -- the collision decision: a chain, never a fan (#288 D3) ------------------
+# Sourced helpers, not `bash -c`: a subshell started with -c has none of these
+# functions, and a pipeline ending in grep would then answer "no match" from a
+# command-not-found and pass a negative case for the wrong reason.
+collision_chain() { collision_key_index | collision_flags; }
+collision_flags_issue() { collision_chain | grep -q "^$1"; }
+window_flags_issue() { # $1 issue, $2 gate, $3 carriers; records on stdin
+  window_flags "$2" "$3" | grep -qx "$1"
+}
+collision_board=$'253\tclaimed\tissueflow-reconcile — release-init\n257\tclaimed\tactions/issueflow-reconcile — a failed board read\n284\tready\tissueflow-reconcile — the ruling clock'
+check "three issues on one deliverable chain, each naming the newest below it" 0 \
+  $'257\tissueflow-reconcile=253\n284\tissueflow-reconcile=257' \
+  collision_chain <<<"$collision_board"
+check "...so the oldest carrier is never itself flagged" 1 "" \
+  collision_flags_issue 253 <<<"$collision_board"
+check "a lone carrier draws nothing" 0 "" \
+  collision_chain <<<$'284\tready\tissueflow-reconcile — alone'
+# `blocked` is the GOAL state of #288's rule; flagging it reports the fix as
+# the defect. Both legs of the test plan, on one board.
+check "two blocked twins are the declared chain, not a collision" 0 "" \
+  collision_chain \
+  <<<$'264\tblocked\tTRIAGE.md — one\n266\tblocked\tTRIAGE.md — two'
+check "a blocked twin does not carry a ready one's edge either" 0 "" \
+  collision_chain \
+  <<<$'264\tblocked\tTRIAGE.md — one\n266\tready\tTRIAGE.md — two'
+check "an epic carrying the key is outside the claimable set (#288 D6)" 0 "" \
+  collision_chain \
+  <<<$'264\tepic\tTRIAGE.md — one\n266\tready\tTRIAGE.md — two'
+check "a post-merge carrier is outside it too" 0 "" \
+  collision_chain \
+  <<<$'264\tpost-merge\tTRIAGE.md — one\n266\tready\tTRIAGE.md — two'
+# The #284 shape, stated as its own case (test plan): a `claimed` issue whose
+# PR is already in flight is the STRONGEST collision on the board, not a
+# weaker one, and the flag reads the queue label rather than the PR link.
+check "a claimed carrier with a PR in flight still carries the collision" 0 \
+  $'284\tissueflow-reconcile=253' \
+  collision_chain \
+  <<<$'253\tclaimed,scope:labels\tissueflow-reconcile — release-init\n284\tready\tissueflow-reconcile — the ruling clock'
+# One issue, two colliding deliverables: ONE offending state, one comment (D4).
+check "a multi-file title folds its collisions into one state" 0 \
+  $'295\treleases=292,triage=264' \
+  collision_chain \
+  <<<$'264\tready\tTRIAGE.md — one\n292\tready\tRELEASES.md — two\n295\tready\tTRIAGE.md + RELEASES.md — three'
+# ...and an issue can never be its own carrier. A `+` title whose segments
+# normalize to one key contributed that key twice, and the chain scan, which
+# reads adjacent rows within a key, then found the issue beside itself: the
+# comment asked #402 to declare `Blocked by #402`.
+check "a self-folding + title never chains an issue to its own number" 0 "" \
+  collision_chain \
+  <<<$'402\tready\tissueflow-reconcile.sh + issueflow-reconcile.test.sh — one deliverable'
+check "...and two such carriers chain once, to each other" 0 \
+  $'284\tissueflow-reconcile=257' \
+  collision_chain \
+  <<<$'257\tready\tissueflow-reconcile.sh + issueflow-reconcile.test.sh — one\n284\tready\tactions/issueflow-reconcile — two'
+check "...with the older carrier still asked for nothing" 1 "" \
+  collision_flags_issue 257 \
+  <<<$'257\tready\tissueflow-reconcile.sh + issueflow-reconcile.test.sh — one\n284\tready\tactions/issueflow-reconcile — two'
+
+# -- the window decision (#292 D1) ------------------------------------------
+window_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n264\tready\tTRIAGE.md — a non-member\n270\tepic\tsome epic — exempt\n271\tpost-merge\tsome item — exempt\n272\tblocked\tsome issue — already placed'
+check "a ready non-member is flagged during a standing window" 0 "264" \
+  window_flags "253" "249" <<<"$window_board"
+check "...and a gate member is not" 1 "" \
+  window_flags_issue 264 $'253\n264' 249 <<<"$window_board"
+check "...nor an epic (#292 D1 exempts it by name)" 1 "" \
+  window_flags_issue 270 253 249 <<<"$window_board"
+check "...nor a post-merge issue" 1 "" \
+  window_flags_issue 271 253 249 <<<"$window_board"
+check "...nor a blocked issue, which is already placed behind something" 1 "" \
+  window_flags_issue 272 253 249 <<<"$window_board"
+# The release issue is the graph's SINK (#292 D2), so it can never be its own
+# non-member — even when its own labels would otherwise admit it.
+check "the window carrier is never flagged as its own non-member" 1 "" \
+  window_flags_issue 249 253 249 \
+  <<<$'249\tready,release\tRelease 0.6.0 — the board empties'
+check "no standing window means no flag at all" 0 "" \
+  window_flags "" "" <<<"$window_board"
+check "two standing windows render as one state" 0 "#249, #250" window_state $'249\n250\n'
+# ONE reading of `unblocked` across both flags. D2 as corrected glosses the
+# word as "carrying `ready` or `claimed`" and D3b says D3 uses that gloss and
+# names the domain as the claimable set, so an issue that is `needs-triage` or
+# carries no queue label at all is outside BOTH flags. Excluding only
+# `blocked`/`epic`/`post-merge` admitted them, and the second case is the one
+# that showed: the same pass adds `needs-triage` to an unlabeled issue and
+# then tells it about a membership call made at mint time.
+scope_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n400\tneeds-triage\tTRIAGE.md — not through the door yet\n401\t\tTRIAGE.md — no queue label at all\n402\tclaimed\tREVIEWER.md — claimable, and a non-member'
+check "a needs-triage issue is not in the window flag's domain" 1 "" \
+  window_flags_issue 400 253 249 <<<"$scope_board"
+check "...nor is an issue carrying no queue label at all" 1 "" \
+  window_flags_issue 401 253 249 <<<"$scope_board"
+check "...while the claimable non-member beside them still flags" 0 "402" \
+  window_flags "253" "249" <<<"$scope_board"
+# The same word, asserted through the other flag, so the two can never drift
+# apart again without a red.
+check "the collision flag reads that word identically" 0 "" \
+  collision_chain <<<$'400\tneeds-triage\tTRIAGE.md — one\n401\t\tTRIAGE.md — two'
+check "...and both flags answer one shared predicate" 1 "" \
+  unblocked_claimable "needs-triage"
+check "...which admits ready and claimed, and nothing else" 0 "" \
+  unblocked_claimable "claimed,scope:labels"
+
+# -- the 2026-08-04 board, replayed whole (D5) ------------------------------
+# The corpus the operator ruled on. Both flags are decided over the WHOLE
+# board, so a sourced decision probe cannot exercise the gather — these run
+# the script as a subprocess behind the PATH-stubbed gh, #91's lesson applied
+# to a board-wide check.
+BOARD="$TMP/board"
+mkdir -p "$BOARD"
+cp "$ARRIVAL/fixtures/graphql-open.json" "$BOARD/graphql-open.json"
+cp "$ARRIVAL/fixtures/graphql-merged.json" "$BOARD/graphql-merged.json"
+
+board_issue() { # $1 number, $2 labels(csv), $3 title, $4 body, $5 assignee count
+  local labels_json
+  labels_json="$(printf '%s' "$2" | tr ',' '\n' \
+    | jq -R . | jq -sc 'map(select(. != "") | {name: .})')"
+  jq -n --argjson n "$1" --argjson labels "$labels_json" --arg t "$3" \
+    --arg b "${4:-}" --argjson a "${5:-0}" --arg at "$(iso_at "$INOW")" \
+    '{number: $n, state: "open", title: $t, body: $b, labels: $labels,
+      created_at: $at, user: {login: "triage-one"},
+      assignees: (if $a > 0 then [{login: "builder-bot"}] else [] end)}' \
+    >"$BOARD/repos_owner_repo_issues_$1.json"
+}
+
+board_assemble() { # numbers… -> the open-issue list, with fresh comment threads
+  local n
+  for n in "$@"; do printf '[]\n' >"$BOARD/repos_owner_repo_issues_${n}_comments.json"; done
+  # shellcheck disable=SC2016 # the filename expansion belongs to the loop below
+  for n in "$@"; do cat "$BOARD/repos_owner_repo_issues_$n.json"; done \
+    | jq -sc . >"$BOARD/repos_owner_repo_issues_state_open_per_page_100.json"
+}
+
+flag_count() { # $1 = collision|window, $2 = a sweep's output
+  grep -c ": $1 flag — " <<<"$2"
+}
+
+board_run() {
+  : >"$BOARD/edits"
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$BOARD" ISSUEFLOW_NOW="$INOW" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+}
+
+# The morning shape, as the board actually stood at the 10:28:54Z mint:
+# #253 `claimed` with no open PR (#285 was not created until 10:49:16Z),
+# #257 `ready` since the evening before, #284 minted `ready` into both of
+# them — six `ready` non-members against a standing gate, and one deliverable
+# carried three times in two spellings.
+board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
+  'Blocked by #253.'
+board_issue 253 claimed 'issueflow-reconcile — a release epic announces its own release-init' '' 1
+board_issue 257 ready 'actions/issueflow-reconcile — a failed board read sweeps an empty board'
+board_issue 264 ready 'TRIAGE.md — the no-assignee clause scopes to the flag'
+# shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
+board_issue 266 ready 'TRIAGE.md — the epic task-list heading is literally `## Task list`'
+board_issue 276 ready 'REVIEWER.md — the green-check precondition'
+board_issue 281 ready 'LABELS.md — the attention row'
+# The blocked twin on the same key, on the board rather than in a decision
+# probe: it is neither a collision flag nor one of the six.
+board_issue 282 blocked 'TRIAGE.md — the two comment links come out' 'Blocked by #266.'
+# shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
+board_issue 284 ready 'issueflow-reconcile — the issue-side ruling clock counts `assigned`'
+board_assemble 249 253 257 264 266 276 281 282 284
+morning_out="$(board_run)"
+morning_rc=$?
+
+check "the morning board replays green" 0 "" test "$morning_rc" -eq 0
+# D5's named pair, and the whole reason the key is normalized: #257 spells the
+# deliverable `actions/issueflow-reconcile`, #284 spells it bare.
+check "#284 draws the collision flag, naming #257 across the spelling variance" 0 \
+  'issueflow: #284: collision flag — issueflow-reconcile=257' \
+  printf '%s\n' "$morning_out"
+check "...and #257 names #253, so the flag asks for a chain and not a fan" 0 \
+  'issueflow: #257: collision flag — issueflow-reconcile=253' \
+  printf '%s\n' "$morning_out"
+check "...while #253, the oldest carrier, is asked for nothing" 1 "" \
+  grep -qF 'issueflow: #253: collision flag' <<<"$morning_out"
+check "the TRIAGE.md pair chains the same way" 0 \
+  'issueflow: #266: collision flag — triage=264' printf '%s\n' "$morning_out"
+check "...while the blocked twin beside them is the goal state, not a flag" 1 "" \
+  grep -qF 'issueflow: #282: collision flag' <<<"$morning_out"
+check "the morning board draws exactly three collision flags" 0 "3" \
+  flag_count collision "$morning_out"
+# D3's corpus: the six `ready` non-members that raced the emptying gate.
+for nonmember in 257 264 266 276 281 284; do
+  check "#$nonmember is flagged as an unblocked non-member under #249" 0 \
+    "issueflow: #$nonmember: window flag — an unblocked non-member under #249" \
+    printf '%s\n' "$morning_out"
+done
+check "the morning board draws exactly six window flags" 0 "6" \
+  flag_count window "$morning_out"
+check "...and never flags the gate member holding the window open" 1 "" \
+  grep -qF 'issueflow: #253: window flag' <<<"$morning_out"
+check "...nor the blocked issue already placed behind something" 1 "" \
+  grep -qF 'issueflow: #282: window flag' <<<"$morning_out"
+check "...nor the release issue that carries the window" 1 "" \
+  grep -qF 'issueflow: #249: window flag' <<<"$morning_out"
+# D1: comments only. Not "no unexpected edit" — no edit at all.
+check "the whole replay writes no label and no state (D1)" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
+check "...and no new label is ever proposed" 1 "" \
+  grep -qE 'add-label (collision|window)' "$BOARD/edits"
+check "the collision comment cites the rule it is asking for" 0 "" \
+  grep -qF 'collision edge' "$BOARD/edits"
+check "...and names #288 as its authority" 0 "" grep -qF '#288 makes it unconditional' "$BOARD/edits"
+check "the window comment names #292's invariant" 0 "" \
+  grep -qF "#292's invariant" "$BOARD/edits"
+# shellcheck disable=SC2016 # backticks are the comment body's own Markdown
+check "...and states the subset rule with its exemptions" 0 "" \
+  grep -qF 'the `ready` set is a subset of the gate' "$BOARD/edits"
+check "both comments carry idempotency markers (D4)" 0 "" \
+  grep -qF '<!-- issueflow:collision-' "$BOARD/edits"
+check "...the window one too" 0 "" grep -qF '<!-- issueflow:window-nonmember-' "$BOARD/edits"
+
+# D4: a state that still stands is silent on the next sweep. The thread is
+# seeded with the marker the first sweep wrote, which is exactly what the
+# real API answers an hour later.
+jq -n --arg b "<!-- issueflow:$(state_marker collision 'issueflow-reconcile=257') -->
+said already" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
+  >"$BOARD/repos_owner_repo_issues_284_comments.json"
+jq -n --arg b "<!-- issueflow:$(state_marker window-nonmember '#249') -->
+said already" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
+  >"$BOARD/repos_owner_repo_issues_276_comments.json"
+resweep_out="$(board_run)"
+check "a standing collision is silent on the next sweep (D4)" 1 "" \
+  grep -qF 'issueflow: #284: collision flag' <<<"$resweep_out"
+check "a standing window non-membership is silent too" 1 "" \
+  grep -qF 'issueflow: #276: window flag' <<<"$resweep_out"
+check "...while every other flag on the board still speaks" 0 "2" \
+  flag_count collision "$resweep_out"
+check "...and the window flags with it" 0 "5" \
+  flag_count window "$resweep_out"
+# The value-keyed marker's whole point: a state that CHANGED speaks, even
+# though this family has already had its say on the thread (#252's A -> B -> A).
+jq -n --arg b "<!-- issueflow:$(state_marker collision 'issueflow-reconcile=253') -->
+an older, different state" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
+  >"$BOARD/repos_owner_repo_issues_284_comments.json"
+changed_out="$(board_run)"
+check "a changed collision state speaks over this family's last word" 0 \
+  'issueflow: #284: collision flag — issueflow-reconcile=257' \
+  printf '%s\n' "$changed_out"
+# And a family only ever silences itself: the blocked-parse echo's marker
+# lives on many of these threads and must not read as either flag's.
+jq -n --arg b "<!-- issueflow:blockers-parsed-none-abc123def456 -->
+a different family entirely" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
+  >"$BOARD/repos_owner_repo_issues_284_comments.json"
+foreign_out="$(board_run)"
+check "another family's marker never silences the collision flag" 0 \
+  'issueflow: #284: collision flag — issueflow-reconcile=257' \
+  printf '%s\n' "$foreign_out"
+# The direction that is actually load-bearing, and that the case above cannot
+# reach: a foreign family's marker landing AFTER this flag's own must not make
+# the flag speak again. Family-blind, "the last marker on the thread" is the
+# blocked-parse echo's, which is not this state's marker, and the flag
+# re-posts a comment that already stands — the noise D4's dedup exists to
+# stop, on the one thread where three families all have something to say.
+jq -n --arg b "<!-- issueflow:$(state_marker collision 'issueflow-reconcile=257') -->
+this flag's own last word" \
+  --arg c "<!-- issueflow:blockers-parsed-none-abc123def456 -->
+a different family, later on the thread" \
+  '[{"user": {"login": "sweep-bot"}, "body": $b},
+    {"user": {"login": "sweep-bot"}, "body": $c}]' \
+  >"$BOARD/repos_owner_repo_issues_284_comments.json"
+later_foreign_out="$(board_run)"
+check "a foreign family's LATER marker never makes the flag re-post" 1 "" \
+  grep -qF 'issueflow: #284: collision flag' <<<"$later_foreign_out"
+check "...while every other collision on the board still speaks" 0 "2" \
+  flag_count collision "$later_foreign_out"
+
+# -- the post-ruling board draws nothing (D5's must-not-flag leg) -----------
+# The same issues after triage placed them: the TRIAGE.md triple chained
+# oldest-first, the reconciler chain chained, and every one of them a gate
+# member. Every flag above must go quiet, or the flag is reporting the fix.
+board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
+  'Blocked by #253, #257, #264, #266, #276, #281, #282, #284.'
+board_issue 253 claimed 'issueflow-reconcile — a release epic announces its own release-init' '' 1
+board_issue 257 blocked 'actions/issueflow-reconcile — a failed board read sweeps an empty board' \
+  'Blocked by #253.'
+board_issue 264 ready 'TRIAGE.md — the no-assignee clause scopes to the flag'
+# shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
+board_issue 266 blocked 'TRIAGE.md — the epic task-list heading is literally `## Task list`' \
+  'Blocked by #264.'
+board_issue 276 ready 'REVIEWER.md — the green-check precondition'
+board_issue 281 ready 'LABELS.md — the attention row'
+board_issue 282 blocked 'TRIAGE.md — the two comment links come out' 'Blocked by #266.'
+# shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
+board_issue 284 blocked 'issueflow-reconcile — the issue-side ruling clock counts `assigned`' \
+  'Blocked by #257.'
+board_assemble 249 253 257 264 266 276 281 282 284
+ruled_out="$(board_run)"
+check "the post-ruling board replays green" 0 "" test $? -eq 0
+check "...and draws no collision flag at all" 1 "" \
+  grep -qF ': collision flag' <<<"$ruled_out"
+check "...and no window flag either" 1 "" grep -qF ': window flag' <<<"$ruled_out"
+check "...and still reports a whole pass" 0 'issueflow: reconciled.' \
+  printf '%s\n' "$ruled_out"
+
+# -- an emptied gate leaves the window flag dormant (test plan) -------------
+# A gate DECLARATION never empties: #249 names fifteen members and still names
+# fifteen after all fifteen close. So the precondition is the gate's OPEN
+# members, not its parse — read straight off the board, which already is the
+# open set. Under the declaration reading the release issue, now `ready`, is
+# itself an open unblocked non-`epic` non-member, and D3 would flag the sink
+# at the exact moment the window ends.
+board_issue 249 ready,release 'Release 0.6.0 — the board empties into the tag' \
+  'Blocked by #218, #230, #232, #236, #237, #238, #241, #242, #247, #248, #251, #252, #253, #254, #257.'
+board_issue 264 ready 'TRIAGE.md — the no-assignee clause scopes to the flag'
+# shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
+board_issue 266 ready 'TRIAGE.md — the epic task-list heading is literally `## Task list`'
+board_assemble 249 264 266
+empty_gate_out="$(board_run)"
+check "a fifteen-member declaration with every member closed leaves D3 dormant" 1 "" \
+  grep -qF ': window flag' <<<"$empty_gate_out"
+check "...and the release issue is never flagged as its own non-member" 1 "" \
+  grep -qF 'issueflow: #249' <<<"$empty_gate_out"
+check "...while the collision flag beside it is unaffected" 0 \
+  'issueflow: #266: collision flag — triage=264' printf '%s\n' "$empty_gate_out"
+
+# -- both carriers claimed, both with their own PRs open (test plan) --------
+# The ninety-three minutes from #285's creation to its merge: under D2's
+# struck parenthetical the live collision went silent for all of them, so
+# whether the flag ever fired depended on where the sweep tick fell relative
+# to a builder opening a PR. It fires on the board, and only on the board.
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":285,"body":"","closingIssuesReferences":{"nodes":[{"number":253}]}},{"number":286,"body":"","closingIssuesReferences":{"nodes":[{"number":284}]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$BOARD/graphql-open.json"
+board_issue 253 claimed 'issueflow-reconcile — a release epic announces its own release-init' '' 1
+# shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
+board_issue 284 claimed 'issueflow-reconcile — the issue-side ruling clock counts `assigned`' '' 1
+board_assemble 253 284
+both_claimed_out="$(board_run)"
+check "two claimed carriers, both with PRs in flight, still draw the newer's flag" 0 \
+  'issueflow: #284: collision flag — issueflow-reconcile=253' \
+  printf '%s\n' "$both_claimed_out"
+check "...and both live claims are left exactly as they were" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
+# The same board with the newer side `ready`, so the queue label is visibly
+# the only input the flag has.
+# shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
+board_issue 284 ready 'issueflow-reconcile — the issue-side ruling clock counts `assigned`'
+board_assemble 253 284
+in_flight_out="$(board_run)"
+check "a claimed carrier with an open PR draws the ready issue's flag too" 0 \
+  'issueflow: #284: collision flag — issueflow-reconcile=253' \
+  printf '%s\n' "$in_flight_out"
+
+# -- D3b's headline case, on the WINDOW side (acceptance criterion) ----------
+# The criterion says a `claimed` non-member is flagged whether or not it has
+# an open PR, and it is the line the 18:11Z ruling turned on — triage had
+# excluded the open-PR case at 18:06Z and corrected it five minutes later.
+# The collision fixtures above cover the PR-liveness question for their flag;
+# this covers it for the other one. #292's charge against the third state is
+# that a non-member competes with gate members for builders, and a non-member
+# holding a builder AND a review round is that competition realized.
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":403,"body":"","closingIssuesReferences":{"nodes":[{"number":402}]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$BOARD/graphql-open.json"
+board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
+  'Blocked by #253.'
+board_issue 253 claimed 'issueflow-reconcile — a member holding the window open' '' 1
+board_issue 402 claimed 'REVIEWER.md — a non-member with a builder and a round' '' 1
+board_assemble 249 253 402
+nonmember_pr_out="$(board_run)"
+check "a claimed non-member with an open PR still draws the window flag" 0 \
+  'issueflow: #402: window flag — an unblocked non-member under #249' \
+  printf '%s\n' "$nonmember_pr_out"
+check "...and the gate member beside it, also claimed with a PR, is not" 1 "" \
+  grep -qF 'issueflow: #253: window flag' <<<"$nonmember_pr_out"
+check "...and the live claim is left exactly as it was" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
+check "...one window flag on the board, and only one" 0 "1" \
+  flag_count window "$nonmember_pr_out"
+
+# -- flagged, resolved, recreated unchanged: silent, and specified ----------
+# D4's boundary, asserted rather than left accidental. Nothing is posted at
+# the resolution — D1 admits no comment there — so the thread's last word is
+# still the state itself and an identical return says nothing new. #292 D2b
+# owns the recurrence: a board state violating the window invariants is
+# triage's to repair in the tick it is seen, and triage has already been told
+# about this one.
+jq -n --arg b "<!-- issueflow:$(state_marker collision 'issueflow-reconcile=253') -->
+flagged once" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
+  >"$BOARD/repos_owner_repo_issues_284_comments.json"
+board_assemble_keep() { # board_assemble without wiping the seeded threads
+  local n
+  for n in "$@"; do cat "$BOARD/repos_owner_repo_issues_$n.json"; done \
+    | jq -sc . >"$BOARD/repos_owner_repo_issues_state_open_per_page_100.json"
+}
+board_assemble_keep 284
+resolved_out="$(board_run)"
+check "the collision resolves when its carrier leaves the board" 1 "" \
+  grep -qF ': collision flag' <<<"$resolved_out"
+check "...and the resolution itself writes nothing at all" 1 "" test -s "$BOARD/edits"
+board_assemble_keep 253 284
+recreated_out="$(board_run)"
+check "an unchanged state recreated is silent — D4's stated boundary" 1 "" \
+  grep -qF 'issueflow: #284: collision flag' <<<"$recreated_out"
+
+# -- today's board draws nothing (the post-ruling shape, live) --------------
+# #249 the `blocked` sink, this issue `claimed` with no open PR and a gate
+# member, #307 and #311 `blocked`. The `claimed` member is the case D3b would
+# flag if membership were read wrong, which is why it is here.
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$BOARD/graphql-open.json"
+board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
+  'Blocked by #293, #307.'
+board_issue 293 claimed 'issueflow-reconcile — the sweep flags what the window and collision rules forbid' '' 1
+board_issue 307 blocked 'test/issueflow-reconcile.test.sh — the ruling pre-read is unpinned' \
+  'Blocked by #293.'
+board_issue 311 blocked 'docs/CONSUMERS.md — a deliberate non-member' 'Blocked by #249.'
+board_assemble 249 293 307 311
+today_out="$(board_run)"
+check "today's board draws no collision flag" 1 "" grep -qF ': collision flag' <<<"$today_out"
+check "...and no window flag: the claimed member is a member" 1 "" \
+  grep -qF ': window flag' <<<"$today_out"
+check "...and still reports a whole pass" 0 'issueflow: reconciled.' \
+  printf '%s\n' "$today_out"
+
 # -- the invariant is enforced at the source, not remembered ----------------
 # Staging only holds while every mutation goes through run(). A future call
 # site reaching gh directly would reopen this hole silently, so it is pinned
