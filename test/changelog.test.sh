@@ -409,15 +409,27 @@ cite_case 56 '- Cites another issue entirely (#101).'
 check "cite: the reference need not match the filename" 0 "" \
   changelog_fragment_problem "$PF/56.md"
 
-# Ordering: the bound outranks the cite, so a fragment that reds today draws
-# the diagnosis it drew before this rule existed.
+# Ordering: the bound outranks the cite across the whole fragment, so a
+# fragment that reds today draws the diagnosis it drew before this rule
+# existed. The uncited entry comes FIRST here on purpose — the other order
+# would pass whatever the precedence is.
 {
+  printf -- '- Uncited, and it comes first.\n'
   printf -- '- %s\n' "$(mkchars 301)"
-  printf -- '- Uncited too.\n'
 } >"$PF/57.md"
-check "cite: an over-bound entry still reports the bound, not the cite" 1 \
+check "cite: an over-bound entry outranks an earlier uncited one" 1 \
   "57.md' has a 301-character entry" \
   changelog_fragment_problem "$PF/57.md"
+assert_one_diagnosis_57() {
+  local count
+  count="$(changelog_fragment_problem "$PF/57.md" | wc -l)"
+  [ "$count" = 1 ] || {
+    printf 'wanted one diagnosis, got %s\n' "$count"
+    return 1
+  }
+}
+check "cite: the outranked citation problem is not reported beside it" 0 "" \
+  assert_one_diagnosis_57
 
 # Published sections keep their pre-rule prose (D4): reddening history is a
 # wall, not a guard. Every shipped section predates the cite.
