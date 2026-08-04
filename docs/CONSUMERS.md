@@ -604,8 +604,8 @@ Anything on the consumer's side that needs to know *which* documents are
 vendored — a re-vendor script, a `docs-sync` equivalent, the task list of a
 conversion issue — reads **the pin's `docs/VENDORED.txt`** and never names
 the files itself. The manifest is available at the pinned ref from `0.5.0`
-and later (ceremony#251); it is one path per line, relative to ceremony's
-root, and blank lines are ignored:
+and later — it shipped with `actions/docs-sync` itself (ceremony#19) — and
+it is one path per line, relative to ceremony's root, blank lines ignored:
 
 ```sh
 # the vendored doc set at the ref this repo is pinned to
