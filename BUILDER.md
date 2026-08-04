@@ -13,18 +13,17 @@ triage bug, and the move is to say so on the issue, not to guess.
   adopts version epics, [RELEASES.md](RELEASES.md) governs the choice among
   release-window members.
 - **Your own red head outranks a new claim.** Pick up a failing check at the
-  head of a PR you authored before claiming another issue: a red head that
-  owes no round and holds no conflict is otherwise nobody's next move, and
-  the PR strands mergeable (#163). Record the failing check and its failure
+  head of a PR you authored before claiming another issue, or it strands
+  mergeable and unattended (#163). Record the failing check and its failure
   class; rerun a clearly retryable infrastructure failure without changing
-  code; return to the normal fix-round and worklog discipline when the
-  failure belongs to the branch; leave visible evidence when a rerun cannot
+  code; return to the normal fix-round and worklog discipline where the
+  failure belongs to the branch; leave visible evidence where a rerun cannot
   be started or the cause is uncertain; never repeatedly rerun a
   deterministic branch failure without a corrective commit; hand off once
   the check is green and current-head approvals stand. Such a PR is **not
   parked**, whatever the round's verdict state says. Red and green are the
-  review round's ruled terms below; how the engine detects a red head is
-  crew's to describe, not this file's.
+  ruled terms of the review round below; how the engine detects a red head
+  is crew's to describe, not this file's.
 - **One build at a time**: at most one issue on which you are writing or
   revising a deliverable, finished or released before you start new work.
   The rule counts build work in flight, not claims — a **parked** claim,
@@ -45,20 +44,19 @@ triage bug, and the move is to say so on the issue, not to guess.
   5. the claim is **held by directive** — triage or the operator stopped the
      work, the direction names what the hold waits on, and only they end it.
      A hold ends the way it started, **on the labels**: where labels and
-     prose disagree the most recent queue-label event by the hold's owner
+     prose disagree, the most recent queue-label event by the hold's owner
      governs, an operator being free to lift by label alone (#149, #151). So
-     read the issue's label events
-     (`gh api /repos/{owner}/{repo}/issues/{n}/timeline`), not only its
-     comments, before standing down *or* standing up; where you act on the
-     labels against stale prose, say so in the claim — name the events, their
-     timestamps and their actor, and invite the correction. Refusing to claim
-     through the contradiction is no resting place either: where the events
-     do not resolve it, say so on the issue and pick the next `ready` issue.
+     read the label events (`gh api /repos/{owner}/{repo}/issues/{n}/timeline`),
+     not only the comments, before standing down *or* standing up, and where
+     you act against stale prose say so in the claim, naming the events,
+     their timestamps and their actor. Refusing to claim through the
+     contradiction is no resting place: where the events do not resolve it,
+     say so on the issue and take the next `ready` issue.
   Not parked: waiting on yourself, on CI (a red head is your own work; a
   pending one resolves without you), or for a good moment. An issue you have
   simply stopped working on is abandoned, not parked — unassign and restore
-  `ready`. The rule counts work and not claims because parked claims are
-  legitimately held beside the one active build (#15, #16, #73).
+  `ready`. The rule counts work because parked claims are legitimately held
+  beside the one active build (#15, #16, #73).
 
 ## Claiming
 
@@ -106,10 +104,9 @@ triage bug, and the move is to say so on the issue, not to guess.
 - **`Closes #N` does not cross repos.** A PR in a different repo from its
   authorizing issue says `Part of <owner>/<repo>#N`, sets `offsite`, and
   comments the draft PR link on that issue in the same step. Triage closes
-  that issue by hand once its acceptance criteria are met; at that handoff
-  the builder reports whether the PR merged or closed and clears `offsite`
-  in the same comment. The cross-repo merge never closes the authorizing
-  issue (#13, #16).
+  that issue by hand once its acceptance criteria are met, and at that
+  handoff the builder reports whether the PR merged or closed and clears
+  `offsite` in the same comment (#13, #16).
 - **`Closes #N` does not survive a post-merge criterion.** Where the issue's
   body states that a criterion can only be checked after the merge — a live
   proof of a workflow trigger, a released-artifact check, anything whose
@@ -117,10 +114,10 @@ triage bug, and the move is to say so on the issue, not to guess.
   same-repo PR says `Refs #N` and triage closes by hand on the evidence. The
   merge releases the claim: the issue moves to `post-merge`, the builder
   walks away, and triage owns verification and closure, returning it to
-  `ready` or minting a fresh issue where corrective work is needed, which
-  any builder claims from current `main`. The issue body is what says so —
-  you never judge which issues qualify, and absent that instruction
-  `Closes #N` is the default (#151).
+  `ready` or minting a fresh issue for corrective work that any builder
+  claims from current `main`. The issue body is what says so — you never
+  judge which issues qualify, and absent that instruction `Closes #N` is the
+  default (#151).
 - On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence
@@ -140,12 +137,12 @@ triage bug, and the move is to say so on the issue, not to guess.
   entries; wrapping one over continuation lines never counts against it. It
   **ends with its issue citation**: one `(` group of `#N`, `repo#N` or
   `owner/repo#N` separated by `, `, then `)`, then the final `.` and nothing
-  after it — `(#262).`, or `(#236, #250).` where an entry honestly lands
-  two — and it need not name the fragment's own issue, which the filename
-  carries. The fragment guard reds a longer entry (#167) and an uncited one
-  (#262) alike. Never edit `CHANGELOG.md` for an entry: the release PR
-  assembles the section from the fragments (#112), and the monotonic guard
-  refuses anything that deletes a shipped heading.
+  after it — `(#262).`, or `(#236, #250).` where an entry honestly lands two
+  — and it need not name the fragment's own issue, which the filename
+  carries. The guard reds a longer entry (#167) and an uncited one (#262)
+  alike. Never edit `CHANGELOG.md` for an entry: the release PR assembles
+  the section from the fragments (#112), and the monotonic guard refuses
+  anything that deletes a shipped heading.
 - Follow the repo's conventions file and match the code you touch. Tests are
   not optional: the issue's test plan is the floor, not the ceiling.
 - **A write-capable job gets a repo-owned script, not a third-party action.**
@@ -163,39 +160,32 @@ triage bug, and the move is to say so on the issue, not to guess.
 
 ## The review round
 
-(Read as `.ceremony/BUILDER.md` in a governed repo: repo-specific facts such
-as the panel roster live in that repo's own CONTRIBUTING, and the shared
-flow lives here.)
-
 1. Mark ready-for-review; request **the whole panel**: the PR repo's
    `panel[<your-login>]=` line if it defines one, else its `panel=` line,
    minus the author in either case (#224) — never the roster of the repo the
    issue is in. That repo's `.github/labels.conf` governs over its
    CONTRIBUTING roster, being what the state machine reads; where the PR
-   repo names no roster, ask triage on the authorizing issue before marking
-   ready-for-review rather than guessing. You may request an off-panel
-   reviewer, saying that their verdict is advisory and does not become
-   required.
+   repo names no roster, ask triage on the authorizing issue rather than
+   guessing. An off-panel reviewer may be requested, saying that their
+   verdict is advisory and does not become required.
    **A review request requires a green check at the head**, and that binds
    you whether or not any engine enforces it: a red check is the author's
    own signal, not the panel's work, so fix it and push, then request. The
    one exception is a failure genuinely outside the PR — a runner outage, a
    flaky dependency, a failure already present on the default branch — and
    only where the request says so explicitly and names the evidence ("the
-   same job fails identically on `origin/main` at `<sha>`"). Silence about a
-   red check is what is prohibited; an argued exception shifts the burden to
-   the author.
+   same job fails identically on `origin/main` at `<sha>`"); silence about a
+   red check is what is prohibited.
    *Green* is a ruled term (operator, 2026-07-27), read in two steps,
    because a head carries more rollup entries than it has checks. **First
    find the check's word at this head**: its newest entry by start time,
    except that a `CANCELLED` entry is never the word while the same check
-   has a non-cancelled entry at that head. Date entries by start and not by
+   has a non-cancelled entry at that head. Date entries by start, not by
    completion — a cancelled run outlives its replacement's start, so the
    other reading picks the corpse. A check whose every entry at the head is
-   cancelled has not reported at all and stays not-green by the classes
-   below; that is a collapse, not a new class, and the gate partitions the
-   same way, dropping a cancelled entry only where its context keeps a
-   non-cancelled survivor (#139, #276).
+   cancelled has not reported and stays not-green by the classes below; that
+   is a collapse and not a new class, the gate likewise dropping a cancelled
+   entry only where its context keeps a non-cancelled survivor (#139, #276).
    **Then classify that entry from its `conclusion`, never its `status`**,
    which can still disagree with it (#259). No conclusion at all is neither
    class: a configured run still in progress is not green, and waiting on it
@@ -228,10 +218,10 @@ flow lives here.)
    head did not move — the round answered with argument or evidence, nothing
    pushed — do you re-request just the non-approvers, a standing approval
    already covering this exact head (#94). **The re-request carries the same
-   green-check-at-head precondition as the first request**, argued exception
-   included: a fix push whose check comes up red is your next fix, not the
-   panel's. Prefer verification over argument — where a reviewer doubts
-   behavior, add the test that settles it.
+   green-check-at-head precondition**, argued exception included: a fix push
+   whose check comes up red is your next fix, not the panel's. Prefer
+   verification over argument — where a reviewer doubts behavior, add the
+   test that settles it.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
    in the PR; silence and force-forward are not options, and a panel
@@ -240,21 +230,20 @@ flow lives here.)
 **A fix round may ride a draft**, and the draft changes nothing about who
 owes what. An engine may convert a PR back to draft when a round closes, so
 that mid-round saves stop firing CI on a ready PR; ceremony implements no
-such conversion and this passage specifies none, but whoever meets a
-mid-round draft reads it as a draft always read — the draft phase is yours
-and the panel cannot see it — while the round outranks the draft, so you
-still owe it whole, the fixes and the reply and the flip
-([LABELS.md](LABELS.md)'s `state:building` row, #205). **Ready-for-review is
-the act that ends the round, and it is the builder's alone**: the flip
-asserts that the round was answered whole, the one judgement about a round
-its author cannot delegate, so an engine may draft a PR but only the builder
-undrafts it. **Where a draft suppressed the checks, green is proven at the
-flip and the request still follows it**: marking ready is what runs the
-checks the draft held back, so the order is flip, let the head answer, then
-request — step 1's precondition, not a second one. Waiting there is
-compliance, not a stall, and `blocker:unrequested` does not fire while a
-head's checks are pending or red, because the one blocker that demands an
-act has to know when the act is permitted (#236).
+such conversion, but whoever meets a mid-round draft reads it as a draft
+always read — the draft phase is yours and the panel cannot see it — while
+the round outranks the draft, so you still owe it whole, the fixes and the
+reply and the flip ([LABELS.md](LABELS.md)'s `state:building` row, #205).
+**Ready-for-review is the act that ends the round, and it is the builder's
+alone**: the flip asserts that the round was answered whole, the one
+judgement about a round its author cannot delegate, so an engine may draft a
+PR but only the builder undrafts it. **Where a draft suppressed the checks,
+green is proven at the flip and the request still follows it**: marking
+ready is what runs the checks the draft held back, so the order is flip, let
+the head answer, then request — step 1's precondition, not a second one —
+and waiting there is compliance, not a stall, which is why
+`blocker:unrequested` does not fire while a head's checks are pending or red
+(#236).
 
 ## The ruling ask
 
@@ -289,21 +278,20 @@ The ladder is anchored to the current episode's `needs-ruling` **`labeled`
 event**, not its `Default:` deadline or the last activity (#50 D13–D14):
 
 - **0–12h:** proceed when a still-clear, reversible default expires, and say
-  out loud that you did. A hard block waits.
-- **at 12h:** do not fire a stale default. Re-read it against what has landed
-  and ask whether it still holds and whether reasonable doubt remains. If
-  doubt has appeared, make it a hard block.
-- **at 24h:** proceed regardless, **as a PR**. Pick an option and state in the
-  PR body which way you went and what doubt remains. Nothing merges by this;
-  the human still gates the merge.
-- **past 24h:** hand the choice to triage. Triage picks the option, records it
-  as a decision, and remains accountable; the operator can overturn it at
+  out loud that you did; a hard block waits.
+- **at 12h:** do not fire a stale default — re-read it against what has
+  landed, and where doubt has appeared, make it a hard block.
+- **at 24h:** proceed regardless, **as a PR**: pick an option and state in
+  the PR body which way you went and what doubt remains. Nothing merges by
+  this; the human still gates the merge.
+- **past 24h:** hand the choice to triage, which picks the option, records
+  it as a decision, and remains accountable; the operator can overturn it at
   merge.
 
 A re-flag starts a fresh ladder. The ladder applies whatever `Default:` says,
-including a hard block, and an active back-and-forth still climbs it. This is
-different from the 7-day nudge, which resets on real activity. The machine
-observes both clocks but never sets, clears, or decides `needs-ruling`.
+including a hard block, and an active back-and-forth still climbs it — unlike
+the 7-day nudge, which resets on real activity. The machine observes both
+clocks but never sets, clears, or decides `needs-ruling`.
 
 The label stays until agreement is *reached*, not until the maintainer
 replies. The setter records the ruling, removes the label, and returns the
