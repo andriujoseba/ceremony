@@ -113,12 +113,19 @@ the machinery at all:
    self-hosted runner still wants it: the guard's value is the day
    somebody adds one.
 
-   This guide documents `main`. New machinery is marked **unreleased**
-   here until a release tag ships it — and the release PR that ships the
-   machinery clears, in that same PR, every marker its own assembled
-   section makes false: the section cites its issues, each marker cites
-   the same issue, and the release PR's diff is the one place both
-   halves are visible at once (#221). If an action does not exist at the
+   This guide documents `main`. A marker is the literal token
+   `**unreleased**` immediately followed by its issue citation (for example,
+   `(#238)`); whitespace between them may include a line break. A citation is
+   mandatory, because a marker the guard cannot trace is a marker it cannot
+   prove false. A token inside an inline-code span is a mention, not a marker;
+   spans are ignored individually, so unrelated inline code cannot hide one.
+   A marker for this repository's own issue uses bare `#N`. Cross-repo
+   citations such as `(crew#293)` satisfy the traceability rule but are not
+   compared with this repository's release section. The ceremony-only
+   `marker-check.sh` guard enforces these rules. The release PR that ships the machinery clears, in that same PR,
+   every marker its own assembled section makes false: the section cites its
+   issues, each marker cites the same issue, and the release PR's diff is the
+   one place both halves are visible at once (#221). If an action does not exist at the
    consumer's pinned tag, adopt it with the pin bump to the first tag that
    carries it; never mix a moving or newer ref into an otherwise exact-pin
    consumer. In particular, `0.1.0` carries `changelog-armed`,
@@ -148,7 +155,7 @@ the machinery at all:
          - uses: heavy-duty/ceremony/actions/refs-not-closing@<pinned-tag>
    ```
 
-   `refs-not-closing` is **unreleased** until the first tag carrying #218.
+   `refs-not-closing` is **unreleased** (#218) until the first tag carrying it.
    Adopt this caller with that ordinary pin bump; never point only this file
    at a moving or newer ref.
 7. **Labels automation** (optional but recommended): the two callers from
@@ -587,7 +594,7 @@ mirror), `--check` re-diffs it in CI on every PR, so a hand edit or a stale
 pin goes red instead of quietly governing.
 
 `RELEASES.md` joins that mirror with the first tag carrying ceremony#248.
-It is **unreleased** until that tag exists: consumers add
+It is **unreleased** (#248) until that tag exists: consumers add
 `.ceremony/RELEASES.md` only with the ordinary pin bump and re-sync, never by
 copying it ahead of their pinned doctrine set.
 
