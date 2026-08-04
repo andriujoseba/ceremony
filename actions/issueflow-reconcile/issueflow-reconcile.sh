@@ -746,7 +746,7 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
         log "#$n: blockers closed -> ready" ;;
     esac
   elif has_issue_label epic; then
-    if has_issue_label release; then
+    if has_issue_label release && ! issue_comment_has_marker "$n" release-init-due; then
       refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
       cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
       states="$(reference_states <<<"$refs")"
@@ -760,7 +760,7 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
 4. Ask the operator to bless the order, then open the first wave.
 5. Ship the release, close this epic, and trigger the next window.
 
-See [\`RELEASES.md\`](https://github.com/$REPO/blob/main/RELEASES.md). The operator blessing the order is the one step this chain never automates."
+See \`.ceremony/RELEASES.md\`. The operator blessing the order is the one step this chain never automates."
         log "#$n: release-init due"
       fi
     fi

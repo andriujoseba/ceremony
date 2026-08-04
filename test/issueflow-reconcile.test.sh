@@ -479,16 +479,22 @@ check "a release epic with every declared blocker closed announces init" 0 "" \
   grep -qF '<!-- issueflow:release-init-due -->' "$TMP/posted-53"
 check "the init announce names all five steps" 0 "5" \
   grep -cE '^[1-5]\. ' "$TMP/posted-53"
-check "the init announce cites RELEASES.md" 0 "" \
-  grep -qF 'RELEASES.md' "$TMP/posted-53"
+check "the init announce cites the portable vendored doctrine path" 0 "" \
+  grep -qF 'See `.ceremony/RELEASES.md`.' "$TMP/posted-53"
 check "the init announce names the never-automated operator blessing" 0 "" \
   grep -qF 'operator blessing the order is the one step this chain never automates' \
   "$TMP/posted-53"
 check "the opened release gate is logged" 0 "" \
   grep -qF '#53: release-init due' <<<"$release_init"
+release_init_gate_reads_before_repeat="$(
+  grep -cE 'repos/owner/repo/issues/(201|202)$' "$TMP/api-calls"
+)"
 issue_probe 53 $'epic\nrelease' 0 false "" "$release_init_body" >/dev/null
 check "an unchanged opened gate announces only once" 0 "1" \
   grep -cF '<!-- issueflow:release-init-due -->' "$TMP/posted-53"
+check "an announced gate does not re-read its durable blockers" 0 \
+  "$release_init_gate_reads_before_repeat" \
+  grep -cE 'repos/owner/repo/issues/(201|202)$' "$TMP/api-calls"
 
 printf '[]\n' >"$(cfix 54)"
 issue_probe 54 $'epic\nrelease' 0 false "" \
