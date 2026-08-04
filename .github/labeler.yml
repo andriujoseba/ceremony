@@ -7,6 +7,18 @@
 # these globs implement. Scopes locate, they do not alert — a path that maps
 # to nothing is fine (the mapping is advisory), so these rows chase the big
 # surfaces, not every file.
+#
+# A row that matches everything is worse than a missing one: it costs the
+# same silence and adds a wrong answer. `changelog.d/**` sat under
+# scope:release-flow until #267 measured it — the last 20 PRs (#197–#263)
+# all carried scope:release-flow and 3 of them touched a release surface,
+# because BUILDER.md makes every behavior change write a fragment, so the
+# glob was "any PR that changes behavior" by doctrine. CHANGELOG.md stays:
+# the same doctrine forbids editing it for an entry, so only the release PR
+# does. The other rows #267 added — the issueflow reconciler, the three
+# unmapped guard actions, RELEASES.md, README (which this tree spells
+# README.md, so the old glob could match nothing) — are the same read of the
+# same file, gaps rather than wrong answers.
 scope:release-flow:
   - changed-files:
       - any-glob-to-any-file:
@@ -18,7 +30,6 @@ scope:release-flow:
           - bin/**
           - VERSION
           - CHANGELOG.md
-          - changelog.d/**
           - drills/**
           - test/decide.test.sh
           - test/facts.test.sh
@@ -30,14 +41,20 @@ scope:guards:
   - changed-files:
       - any-glob-to-any-file:
           - actions/changelog-armed/**
+          - actions/changelog-assembled/**
           - actions/changelog-monotonic/**
+          - actions/docs-sync/**
           - actions/drill-recorded/**
           - actions/refs-not-closing/**
+          - actions/runner-isolated/**
           - .github/workflows/refs-guard.yml
           - test/changelog-armed.test.sh
+          - test/changelog-assembled.test.sh
           - test/changelog-monotonic.test.sh
+          - test/docs-sync.test.sh
           - test/drill-recorded.test.sh
           - test/refs-not-closing.test.sh
+          - test/runner-isolated.test.sh
 scope:labels:
   - changed-files:
       - any-glob-to-any-file:
@@ -45,19 +62,26 @@ scope:labels:
           - .github/workflows/self-labels.yml
           - .github/labeler.yml
           - .github/labels.conf
+          - actions/issueflow-reconcile/**
           - actions/labels-reconcile/**
           - actions/labels-scope/**
+          # shared by both reconcilers; lib/** keeps scope:release-flow too,
+          # and a mixed file honestly wears both labels (#267 D4)
+          - lib/read.sh
+          - lib/ruling.sh
           - LABELS.md
+          - test/issueflow-reconcile.test.sh
           - test/labels.test.sh
           - test/labels-reconcile.test.sh
           - test/labels-scope.test.sh
 scope:docs:
   - changed-files:
       - any-glob-to-any-file:
-          - README
+          - README.md
           - docs/**
           - AGENTS.md
           - BUILDER.md
+          - RELEASES.md
           - REVIEWER.md
           - TRIAGE.md
           - CONTRIBUTING.md
