@@ -122,12 +122,16 @@ transcription because humans err silently and machines fail loudly:
 **everything asserts its way to certainty and fails loudly, creating
 nothing** — a wrong release is worse than a missing one, so every assert in
 this file fires *before its door creates anything*, and one that fails leaves
-zero artifacts of the run's own: no tag it made, no release, no bump. Only two
-steps run past the tag. The consumer's
+zero artifacts of the run's own: no tag it made, no release, no bump. Three
+steps run past the tag, and what a failure at each leaves behind is what
+sorts them. Two fail before the release exists: the consumer's
 [artifact hook](docs/CONSUMERS.md#the-artifact-hook) sits between the tag and
-the publish, so its non-zero exit aborts with a tag standing and no release —
-a state the [nothing-exists assert](#the-merge-door-refused-releaseyml) names,
-and recovers by the tag door. The re-arm runs after the publish, and its
+the publish, so its non-zero exit aborts, and the publish itself
+([`gh release create --verify-tag`](.github/workflows/release.yml#L246-L258))
+can fail on the API call or the assets. Either leaves the same state — a tag
+standing and no release — which the
+[nothing-exists assert](#the-merge-door-refused-releaseyml) names and the tag
+door recovers. The third is the re-arm, which runs after the publish, and its
 refusal is the single failure in this file that leaves a real release behind.
 
 ## The two doors
@@ -485,9 +489,9 @@ clobber, and what catches a manual tag racing the merge. If the release
 truly exists, there is nothing to do: this red is the system declining to do
 the thing twice. If the tag exists but the release does not (a manual tag
 won the race, or
-[a failed artifact hook](docs/CONSUMERS.md#the-artifact-hook)), recover by
-the tag door: delete and re-push the tag, or `gh release create` by hand
-from a fixed tree.
+[a failed artifact hook](docs/CONSUMERS.md#the-artifact-hook), or the publish
+step itself failing after the tag), recover by the tag door: delete and
+re-push the tag, or `gh release create` by hand from a fixed tree.
 
 > direct push refused (branch protection?) — opening the bump PR instead
 
