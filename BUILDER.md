@@ -252,14 +252,37 @@ CONTRIBUTING; the shared flow lives here and is not restated there.)
    explicitly and names the evidence (e.g. "the same job fails identically
    on `origin/main` at `<sha>`"). Silence about a red check is what is
    prohibited; an argued exception shifts the burden to the author.
-   *Green* is a ruled term (operator, 2026-07-27), and it is read from
-   each check's **`conclusion`**, never its `status`: a check carrying a
-   terminal conclusion is green or not-green by that conclusion whatever
-   its `status` field still reports — the two can disagree, and on #259 a
-   finished job's `status` lagged its own `conclusion: success` at the
-   head. A check with no conclusion at all is neither class: a configured
-   run still in progress is not green, and waiting for it is compliance,
-   not a stall. A **cancelled or stale** check is not a green head —
+   *Green* is a ruled term (operator, 2026-07-27), and it is read in two
+   steps, because a head carries more rollup entries than it has checks:
+   first pick the entry that is a check's word at this head, then
+   classify that entry. **A check's word at a head is its newest entry
+   by start time, and a `CANCELLED` entry is not that word while the
+   same check carries a non-cancelled entry at the same head.** The
+   survivor is the verdict about these bytes; the entry it displaced
+   reported nothing about them. Say **start** time and mean it: a
+   cancelled run does not stop the moment its replacement begins, so the
+   dead run's completion routinely postdates the live run's start, and a
+   reader who dates entries by completion picks the corpse. When *every*
+   entry a check has at the head is cancelled, nothing survives to be
+   its word: that check has not reported at all, and it stays not-green
+   by the classes below — the all-cancelled context is the case this
+   leaves exactly where it was. This states a collapse and not a new
+   class: `checks_state`'s carve-out drops a cancelled entry only where
+   its context keeps a non-cancelled survivor, and leaves an
+   all-cancelled context intact and still blocking, so doctrine and gate
+   partition alike on a mixed context (#139, #276). What the *machine*
+   drops from the rollup before it grades anything is a different
+   question, and crew's to describe rather than this file's.
+   Then classify that entry, and classify it from its **`conclusion`**,
+   never its `status`: a check carrying a terminal conclusion is green or
+   not-green by that conclusion whatever its `status` field still
+   reports — the two can disagree, and on #259 a finished job's `status`
+   lagged its own `conclusion: success` at the head. A check with no
+   conclusion at all is neither class: a configured run still in progress
+   is not green, and waiting for it is compliance, not a stall. Picking
+   the newest entry never settles a live one: where the survivor is the
+   run still going, the head is not green and you wait on it exactly as
+   you would have. A **cancelled or stale** check is not a green head —
    *stale* means a check belonging to a superseded head, which the
    head-scoped rollup does not show anyway, so what survives there is
    same-head cancellation, never a same-head node whose `status` lags its
