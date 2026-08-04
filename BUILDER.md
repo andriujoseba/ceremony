@@ -95,13 +95,13 @@ triage bug, and the move is to say so on the issue, not to guess.
 - **`Closes #N` does not survive a post-merge criterion.** Where the issue
   body says a criterion can only be checked after the merge — a workflow
   trigger proved live, a released artifact, anything whose subject does not
-  exist until the change is on the base branch — the same-repo PR says `Refs
-  #N`; the issue goes `post-merge` at the merge, the builder walks away, and
-  triage owns verification and closure on the evidence, returning the issue
-  to `ready` or minting a fresh one where corrective work is needed —
-  claimable by any builder from current `main`, the original having no
-  special standing. The issue body says so — you never judge which qualify —
-  and absent it `Closes #N` is the default (#151).
+  exist until the change is on the base branch — the same-repo PR says
+  `Refs #N`; the issue goes `post-merge` at the merge, the builder walks
+  away, and triage owns verification and closure on the evidence, returning
+  the issue to `ready` or minting a fresh one where corrective work is
+  needed — claimable by any builder from current `main`, the original having
+  no special standing. The issue body says so — you never judge which
+  qualify — and absent it `Closes #N` is the default (#151).
 - On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence
