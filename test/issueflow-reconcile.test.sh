@@ -416,7 +416,7 @@ issue_stub_gh() {
       shift
     done
     printf '%s\n----\n' "$body" >>"$TMP/posted-$n"
-    file="$TMP/repos_owner_repo_issues_${n}_comments.json"
+    file="$TMP/$(printf 'repos/%s/issues/%s/comments' "$REPO" "$n" | tr / _).json"
     [ -f "$file" ] || printf '[]\n' >"$file"
     jq --arg b "$body" --arg at "$(iso_at "$INOW")" \
       '. + [{"user":{"login":"sweep-bot"},"created_at":$at,"html_url":"https://x/posted","body":$b}]' \
@@ -435,7 +435,7 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
     # only way to prove a rule that self-rate-limits on its own comment's
     # timestamp (#254): sweep, then sweep again a day later and watch the
     # nudge stay silent because the comment it posted is now the activity.
-    REPO=owner/repo NOW="${PROBE_NOW:-$INOW}"
+    REPO="${PROBE_REPO:-owner/repo}" NOW="${PROBE_NOW:-$INOW}"
     ISSUE_LABELS="$2"
     ISSUE_JSON="$(jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
       --argjson assignees "$assignee_json" --arg body "$body" \
@@ -465,6 +465,87 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
 
 tfix() { printf '%s/repos_owner_repo_issues_%s_timeline.json' "$TMP" "$1"; }
 cfix() { printf '%s/repos_owner_repo_issues_%s_comments.json' "$TMP" "$1"; }
+
+# -- release epics announce an opened declared gate, comment-only (#253) -----
+printf '{"state":"closed"}\n' >"$TMP/repos_owner_repo_issues_201.json"
+printf '{"state":"closed"}\n' >"$TMP/repos_owner_repo_issues_202.json"
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_203.json"
+printf '[]\n' >"$(cfix 53)"
+: >"$TMP/issue-edits"
+release_init_edits_before="$(wc -l <"$TMP/issue-edits")"
+release_init_body=$'Blocked by #201, #202.\n\n## Task list\n- [ ] #203 later work'
+release_init="$(issue_probe 53 $'epic\nrelease' 0 false "" "$release_init_body")"
+check "a release epic with every declared blocker closed announces init" 0 "" \
+  grep -qF '<!-- issueflow:release-init-due -->' "$TMP/posted-53"
+check "the init announce names all five steps" 0 "5" \
+  grep -cE '^[1-5]\. ' "$TMP/posted-53"
+# shellcheck disable=SC2016 # backticks are the literal portable doctrine citation
+check "the init announce cites the portable vendored doctrine path" 0 "" \
+  grep -qF 'See `.ceremony/RELEASES.md`.' "$TMP/posted-53"
+check "the init announce names the never-automated operator blessing" 0 "" \
+  grep -qF 'operator blessing the order is the one step this chain never automates' \
+  "$TMP/posted-53"
+check "the opened release gate is logged" 0 "" \
+  grep -qF '#53: release-init due' <<<"$release_init"
+release_init_gate_reads_before_repeat="$(
+  grep -cE 'repos/owner/repo/issues/(201|202)$' "$TMP/api-calls"
+)"
+issue_probe 53 $'epic\nrelease' 0 false "" "$release_init_body" >/dev/null
+check "an unchanged opened gate announces only once" 0 "1" \
+  grep -cF '<!-- issueflow:release-init-due -->' "$TMP/posted-53"
+check "an announced gate does not re-read its durable blockers" 0 \
+  "$release_init_gate_reads_before_repeat" \
+  grep -cE 'repos/owner/repo/issues/(201|202)$' "$TMP/api-calls"
+
+printf '{"state":"closed"}\n' >"$TMP/repos_heavy-duty_ceremony_issues_201.json"
+printf '{"state":"closed"}\n' >"$TMP/repos_heavy-duty_ceremony_issues_202.json"
+printf '[]\n' >"$TMP/repos_heavy-duty_ceremony_issues_53_comments.json"
+PROBE_REPO=heavy-duty/ceremony \
+  issue_probe 53 $'epic\nrelease' 0 false "" "$release_init_body" >/dev/null
+# shellcheck disable=SC2016 # backticks are the literal dogfood doctrine citation
+check "the ceremony dogfood announce cites its root doctrine path" 0 "" \
+  grep -qF 'See `RELEASES.md`.' "$TMP/posted-53"
+
+printf '[]\n' >"$(cfix 54)"
+issue_probe 54 $'epic\nrelease' 0 false "" \
+  $'Blocked by #203.\n\n## Task list\n- [x] #201 complete' >/dev/null
+check "an open declared blocker suppresses init despite a complete task list" 1 "" \
+  grep -qF '<!-- issueflow:release-init-due -->' "$TMP/posted-54"
+check "the independent epic-complete nudge still fires" 0 "" \
+  grep -qF '<!-- issueflow:epic-complete -->' "$TMP/posted-54"
+
+printf '[]\n' >"$(cfix 55)"
+issue_probe 55 $'epic\nrelease' 0 false "" \
+  $'Blocked by #201.\n\n## Task list\n- [x] #202 complete' >/dev/null
+check "release-init and epic-complete can coexist" 0 "2" \
+  grep -c -- '^----$' "$TMP/posted-55"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the coexisting comments keep distinct markers" 0 "" \
+  bash -c 'grep -qF "<!-- issueflow:release-init-due -->" "$1" && grep -qF "<!-- issueflow:epic-complete -->" "$1"' \
+  _ "$TMP/posted-55"
+
+for n in 56 57 58 59; do printf '[]\n' >"$(cfix "$n")"; done
+issue_probe 56 $'epic\nrelease' 0 false "" 'No dependency declaration.' >/dev/null
+check "a release epic without a Blocked by declaration stays silent" 1 "" \
+  test -f "$TMP/posted-56"
+issue_probe 57 $'epic\nrelease' 0 false "" 'Blocked by heavy-duty/rig#9.' >/dev/null
+check "a cross-repo release gate stays silent" 1 "" test -f "$TMP/posted-57"
+issue_probe 58 $'epic\nrelease' 0 false "" 'Blocked by #204.' >/dev/null
+check "an unreadable release gate stays silent" 1 "" test -f "$TMP/posted-58"
+: >"$TMP/api-calls"
+issue_probe 59 epic 0 false "" 'Blocked by #201.' >/dev/null
+check "a plain epic does not parse or announce a release gate" 1 "" \
+  test -f "$TMP/posted-59"
+check "a plain epic pays no Blocked by reference read" 1 "" \
+  grep -qF 'repos/owner/repo/issues/201' "$TMP/api-calls"
+
+printf '[]\n' >"$(cfix 60)"
+issue_probe 60 $'ready\nrelease' 0 false "" 'Blocked by #201.' >/dev/null
+check "a non-epic release issue does not announce init" 1 "" \
+  test -f "$TMP/posted-60"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "every release-init probe is comment-only" 0 "$release_init_edits_before" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
 # -- malformed attention targets are diagnosed, never repaired (#232) -------
 attention_episode() { # $1 issue, $2 labeled timestamp
