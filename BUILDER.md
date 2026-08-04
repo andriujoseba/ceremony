@@ -150,52 +150,56 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    That repo's `.github/labels.conf` governs over its CONTRIBUTING roster,
    being what the state machine reads; where it names no roster, ask triage
    on the authorizing issue rather than guess. An off-panel reviewer may be
-   requested, said to be advisory and not required. **A review request
-   requires a green check at the head**, whether or not an engine enforces
-   it: a red check is the author's own signal, so fix it and push, then
-   request. The one exception is a failure genuinely outside the PR — a
-   runner outage, a flaky dependency, a failure already on the default
-   branch — and only where the request says so and names the evidence ("the
-   same job fails identically on `origin/main` at `<sha>`"); silence about a
-   red check is what is prohibited, and an argued exception shifts the
-   burden to the author. *Green* is a ruled term (operator, 2026-07-27),
-   read in two steps. **First take the check's word at this head**: its
-   newest entry by start time — not completion, a cancelled run outliving
-   its replacement's start — and never a `CANCELLED` entry while the same
-   check has a non-cancelled one there. A check whose entries at the head
-   are all cancelled has not reported at all and is not green — a collapse,
-   not a new class, and the gate partitions alike, dropping a cancelled
-   entry only where a non-cancelled survivor remains and leaving an
-   all-cancelled context blocking (#139, #276). **Then classify that entry
-   by `conclusion`, never `status`**, which can disagree with it (#259). No
-   conclusion is not green: a configured run in progress is waited on, and
-   waiting is compliance, not a stall. Cancelled or stale is not green,
-   *stale* being a superseded head's check, which a head-scoped rollup never
-   shows. Skipped or neutral is green, those being deliberate "passed / not
-   applicable" conclusions. No checks configured is green — the third ruled
-   case, not an argued exception, so the request goes out at once with no
-   evidence owed; that never covers nothing-answered-yet, and the machine
-   partitions alike, admitting the ask on `SUCCESS` and `NONE` (#236). The
-   costs behind the line are asymmetric: a false green spends a
-   three-reviewer round, a false red one author session. What the machine
-   drops from the rollup before grading is crew's to describe.
+   requested, said to be advisory and not required.
+
+   **A review request requires a green check at the head**, whether or not
+   an engine enforces it: a red check is the author's own signal, so fix it
+   and push, then request. The one exception is a failure genuinely outside
+   the PR — a runner outage, a flaky dependency, a failure already on the
+   default branch — and only where the request says so and names the
+   evidence ("the same job fails identically on `origin/main` at `<sha>`");
+   silence about a red check is what is prohibited, and an argued exception
+   shifts the burden to the author.
+
+   *Green* is a ruled term (operator, 2026-07-27), read in two steps.
+   **First take the check's word at this head**: its newest entry by start
+   time — not completion, a cancelled run outliving its replacement's start
+   — and never a `CANCELLED` entry while the same check has a non-cancelled
+   one there. A check whose entries at the head are all cancelled has not
+   reported at all and is not green — a collapse, not a new class, and the
+   gate partitions alike, dropping a cancelled entry only where a
+   non-cancelled survivor remains and leaving an all-cancelled context
+   blocking (#139, #276). **Then classify that entry by `conclusion`, never
+   `status`**, which can disagree with it (#259). No conclusion is not
+   green: a configured run in progress is waited on, and waiting is
+   compliance, not a stall. Cancelled or stale is not green, *stale* being a
+   superseded head's check, which a head-scoped rollup never shows. Skipped
+   or neutral is green, those being deliberate "passed / not applicable"
+   conclusions. No checks configured is green — the third ruled case, not an
+   argued exception, so the request goes out at once with no evidence owed;
+   that never covers nothing-answered-yet, and the machine partitions alike,
+   admitting the ask on `SUCCESS` and `NONE` (#236). The costs behind the
+   line are asymmetric: a false green spends a three-reviewer round, a false
+   red one author session. What the machine drops from the rollup before
+   grading is crew's to describe.
 2. **Wait for every verdict, then answer the round whole** — one reply
    covering every point, stating what changed and what was verified. That
    reply is the written record: the engine mirrors it under the PR body's
-   **Round log**, newest last, marked with the round's head so a retry is a
-   no-op, so you owe the reply and no body edit; a round answered without
-   one is recorded as such and never blocks handoff. Then push the fixes and
-   re-request **by head, not by verdict**. A push makes every approval stale
-   — an approval is of a specific tree, and the handoff predicate counts
-   only approvals at the current head — so **every panelist is re-requested,
-   approvers included**; one left un-re-requested can never approve the tree
-   you shipped (#26, #39). Only where the head did not move — answered with
-   argument or evidence, nothing pushed — do you re-request just the
-   non-approvers, the engine absorbing a re-request at an unchanged head —
-   its mechanism crew's to describe (#94). **The re-request carries the same
-   green-check-at-head precondition**, argued exception included: a fix push
-   whose check comes up red is your next fix, not the panel's. Prefer
-   verification over argument — add the test that settles the doubt.
+   **Round log**, newest last and marked with the round's head, which makes
+   a retry a no-op; you owe the reply and no body edit, and a round answered
+   without one is recorded as such and never blocks handoff. Then push the
+   fixes and re-request **by head, not by verdict**. A push makes every
+   approval stale — an approval is of a specific tree, and the handoff
+   predicate counts only approvals at the current head — so **every panelist
+   is re-requested, approvers included**; one left un-re-requested can never
+   approve the tree you shipped (#26, #39). Only where the head did not move
+   — answered with argument or evidence, nothing pushed — do you re-request
+   just the non-approvers; the engine absorbs a re-request at an unchanged
+   head, and its mechanism is crew's to describe (#94). **The re-request
+   carries the same green-check-at-head precondition**, argued exception
+   included: a fix push whose check comes up red is your next fix, not the
+   panel's. Prefer verification over argument — add the test that settles
+   the doubt.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
    in the PR; silence and force-forward are not options, and a panel
