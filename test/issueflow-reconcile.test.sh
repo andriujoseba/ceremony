@@ -416,7 +416,7 @@ issue_stub_gh() {
       shift
     done
     printf '%s\n----\n' "$body" >>"$TMP/posted-$n"
-    file="$TMP/repos_owner_repo_issues_${n}_comments.json"
+    file="$TMP/$(printf 'repos/%s/issues/%s/comments' "$REPO" "$n" | tr / _).json"
     [ -f "$file" ] || printf '[]\n' >"$file"
     jq --arg b "$body" --arg at "$(iso_at "$INOW")" \
       '. + [{"user":{"login":"sweep-bot"},"created_at":$at,"html_url":"https://x/posted","body":$b}]' \
@@ -435,7 +435,7 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
     # only way to prove a rule that self-rate-limits on its own comment's
     # timestamp (#254): sweep, then sweep again a day later and watch the
     # nudge stay silent because the comment it posted is now the activity.
-    REPO=owner/repo NOW="${PROBE_NOW:-$INOW}"
+    REPO="${PROBE_REPO:-owner/repo}" NOW="${PROBE_NOW:-$INOW}"
     ISSUE_LABELS="$2"
     ISSUE_JSON="$(jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
       --argjson assignees "$assignee_json" --arg body "$body" \
@@ -496,6 +496,15 @@ check "an unchanged opened gate announces only once" 0 "1" \
 check "an announced gate does not re-read its durable blockers" 0 \
   "$release_init_gate_reads_before_repeat" \
   grep -cE 'repos/owner/repo/issues/(201|202)$' "$TMP/api-calls"
+
+printf '{"state":"closed"}\n' >"$TMP/repos_heavy-duty_ceremony_issues_201.json"
+printf '{"state":"closed"}\n' >"$TMP/repos_heavy-duty_ceremony_issues_202.json"
+printf '[]\n' >"$TMP/repos_heavy-duty_ceremony_issues_53_comments.json"
+PROBE_REPO=heavy-duty/ceremony \
+  issue_probe 53 $'epic\nrelease' 0 false "" "$release_init_body" >/dev/null
+# shellcheck disable=SC2016 # backticks are the literal dogfood doctrine citation
+check "the ceremony dogfood announce cites its root doctrine path" 0 "" \
+  grep -qF 'See `RELEASES.md`.' "$TMP/posted-53"
 
 printf '[]\n' >"$(cfix 54)"
 issue_probe 54 $'epic\nrelease' 0 false "" \

@@ -747,6 +747,9 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
     esac
   elif has_issue_label epic; then
     if has_issue_label release && ! issue_comment_has_marker "$n" release-init-due; then
+      release_doctrine_path=.ceremony/RELEASES.md
+      # Ceremony dogfoods the action but owns doctrine at the repository root (#253).
+      [ "$REPO" != heavy-duty/ceremony ] || release_doctrine_path=RELEASES.md
       refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
       cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
       states="$(reference_states <<<"$refs")"
@@ -760,7 +763,7 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
 4. Ask the operator to bless the order, then open the first wave.
 5. Ship the release, close this epic, and trigger the next window.
 
-See \`.ceremony/RELEASES.md\`. The operator blessing the order is the one step this chain never automates."
+See \`$release_doctrine_path\`. The operator blessing the order is the one step this chain never automates."
         log "#$n: release-init due"
       fi
     fi
