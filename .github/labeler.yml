@@ -19,6 +19,20 @@
 # unmapped guard actions, RELEASES.md, README (which this tree spells
 # README.md, so the old glob could match nothing) — are the same read of the
 # same file, gaps rather than wrong answers.
+#
+# #302 is the same read once more, from #300's review: lib/attention.sh had
+# #267 D4's premise exactly (both reconcilers source it, nothing release-side
+# does) and was not in the rows — a wrong answer, not a gap. The sweep
+# workflow pair joins beside its trigger pair: the sweeps detached in #209
+# and took the reconcile jobs and the cron with them. Two asymmetries are
+# deliberate, not drift: the TESTS of the shared lib/ files take
+# scope:labels alone, because lib/ruling.sh and lib/read.sh wear
+# scope:release-flow only through the lib/** glob being kept whole and a
+# test file inherits no such glob; and there is still no test/** or
+# .github/scripts/** catch-all, because both directories span all four
+# scopes — a catch-all is the changelog.d/** defect again, 100% recall and
+# no locating power. The enumeration is the price of a test locating its
+# subject.
 scope:release-flow:
   - changed-files:
       - any-glob-to-any-file:
@@ -37,6 +51,9 @@ scope:release-flow:
           - test/version.test.sh
           - test/changelog.test.sh
           - test/self-ref.test.sh
+          - test/changelog-assemble.test.sh
+          - .github/scripts/release-path.sh
+          - test/release-path.test.sh
 scope:guards:
   - changed-files:
       - any-glob-to-any-file:
@@ -55,25 +72,38 @@ scope:guards:
           - test/drill-recorded.test.sh
           - test/refs-not-closing.test.sh
           - test/runner-isolated.test.sh
+          - .github/scripts/marker-check.sh
+          - test/marker-check.test.sh
+          - .github/scripts/vendored-check.sh
+          - test/vendored.test.sh
 scope:labels:
   - changed-files:
       - any-glob-to-any-file:
           - .github/workflows/labels.yml
           - .github/workflows/self-labels.yml
+          - .github/workflows/labels-sweep.yml
+          - .github/workflows/self-labels-sweep.yml
           - .github/labeler.yml
           - .github/labels.conf
           - actions/issueflow-reconcile/**
           - actions/labels-reconcile/**
           - actions/labels-scope/**
           # shared by both reconcilers; lib/** keeps scope:release-flow too,
-          # and a mixed file honestly wears both labels (#267 D4)
+          # and a mixed file honestly wears both labels (#267 D4, #302 D1)
           - lib/read.sh
           - lib/ruling.sh
+          - lib/attention.sh
           - LABELS.md
           - test/issueflow-reconcile.test.sh
           - test/labels.test.sh
           - test/labels-reconcile.test.sh
           - test/labels-scope.test.sh
+          # tests of the shared lib/ files: scope:labels ALONE — a test
+          # inherits no lib/** glob, so its row is the one scope its subject
+          # actually locates (#302 D3)
+          - test/attention.test.sh
+          - test/ruling.test.sh
+          - test/labels-triggers.test.sh
 scope:docs:
   - changed-files:
       - any-glob-to-any-file:
