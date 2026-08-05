@@ -155,9 +155,9 @@ the machinery at all:
          - uses: heavy-duty/ceremony/actions/refs-not-closing@<pinned-tag>
    ```
 
-   `refs-not-closing` is **unreleased** (#218) until the first tag carrying it.
-   Adopt this caller with that ordinary pin bump; never point only this file
-   at a moving or newer ref.
+   `refs-not-closing` is available at `0.6.0` and later (#218). Adopt this
+   caller with that ordinary pin bump; never point only this file at a
+   moving or newer ref.
 7. **Labels automation** (optional but recommended): the two callers from
    [Labels automation](#labels-automation) — the event-facing labels
    caller and the sweep caller (#209) — plus `.github/labels.conf`
@@ -593,10 +593,10 @@ marking the directory machine-managed. `actions/docs-sync` owns the copy:
 mirror), `--check` re-diffs it in CI on every PR, so a hand edit or a stale
 pin goes red instead of quietly governing.
 
-`RELEASES.md` joins that mirror with the first tag carrying ceremony#248.
-It is **unreleased** (#248) until that tag exists: consumers add
-`.ceremony/RELEASES.md` only with the ordinary pin bump and re-sync, never by
-copying it ahead of their pinned doctrine set.
+`RELEASES.md` joins that mirror with the first tag carrying ceremony#248,
+and is available at `0.6.0` and later: consumers add `.ceremony/RELEASES.md`
+only with the ordinary pin bump and re-sync, never by copying it ahead of
+their pinned doctrine set.
 
 ### Read the manifest, never a copy of it
 
@@ -625,10 +625,9 @@ What makes reading the manifest *sufficient* — rather than merely better
 than a copy — is that ceremony's CI now refuses a root doctrine file that is
 declared in neither the manifest nor a short in-script exemption list
 (`.github/scripts/vendored-check.sh`), so the manifest at a tag is the
-complete set as of that tag. That guarantee is **unreleased** (#251) until
-the first tag carrying it exists; the manifest is worth reading at every
-earlier pin regardless, since it is what `actions/docs-sync` has always
-mirrored.
+complete set as of that tag. That guarantee holds at `0.6.0` and later
+(#251); the manifest is worth reading at every earlier pin regardless, since
+it is what `actions/docs-sync` has always mirrored.
 
 The consumer's ci.yml gains the guard alongside the others:
 
