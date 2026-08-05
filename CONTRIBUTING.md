@@ -87,14 +87,13 @@ table repeats it (#104).
 
 ## Doctrine conventions
 
-The vendored role files — `AGENTS.md`, `TRIAGE.md`, `BUILDER.md`,
-`REVIEWER.md`, `LABELS.md`, and `RELEASES.md` — state each normative rule
-completely, keep at most one sentence of why, and cite its record only with a
-bare parenthetical such as `(#N)`, `(#N D3)`, or `(#N, #M)`. Incident
-narrative — timestamps, actors, quoted comments, measured counts, and links to
-specific comments — belongs in that record. If a rule cannot be followed
-without chasing its cite, the rule is under-stated: fix the statement, not the
-citation. (#280)
+The vendored role files — the set [`docs/VENDORED.txt`](docs/VENDORED.txt)
+declares — state each normative rule completely, keep at most one sentence of
+why, and cite its record only with a bare parenthetical such as `(#N)`,
+`(#N D3)`, or `(#N, #M)`. Incident narrative — timestamps, actors, quoted
+comments, measured counts, and links to specific comments — belongs in that
+record. If a rule cannot be followed without chasing its cite, the rule is
+under-stated: fix the statement, not the citation. (#280)
 
 Normative text in those files does not cite issues from other repositories.
 Consumers read the vendored bytes outside this organization's context, and a
@@ -109,21 +108,12 @@ every session. (#280)
 
 ## How the other repos use this
 
-Two consumption modes, split by what has a runtime:
-
-- **Machinery is consumed by reference.** Workflows and actions are fetched
-  by GitHub at run time from the ref the caller pins — no copy exists in the
-  consumer.
-- **Doctrine is consumed as a machine-verified mirror.** A document's only
-  "runtime" is an agent reading the working tree of the repo it stands in —
-  a doc that requires a cross-repo fetch before it governs is a doc that
-  sometimes goes unread. So the agent-facing set — **AGENTS.md, TRIAGE.md,
-  BUILDER.md, REVIEWER.md, LABELS.md, RELEASES.md** — is vendored into each governed
-  repo at **`.ceremony/`**, byte-identical to this repo at the pinned ref,
-  by the sync tool (issue #19). A CI guard diffs the mirror against the pin
-  on every PR: hand-editing a vendored file, or bumping the pin without
-  re-syncing, goes red. It is a copy that cannot drift — which is the only
-  kind of copy this org allows.
+Two consumption modes, split by what has a runtime: **machinery by
+reference**, fetched at run time from the ref a caller pins, and **doctrine
+as a mirror** — the set [`docs/VENDORED.txt`](docs/VENDORED.txt) declares,
+vendored at `.ceremony/` and held to the pin by a guard (issue #19). The
+[README](README.md) states both modes in full, and why they differ; what
+follows is only what they leave a governed repo to carry.
 
 A governed repo (box, rig, cast, incubator, …) therefore carries:
 
