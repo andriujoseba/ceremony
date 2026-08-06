@@ -86,6 +86,48 @@ edges rather than merely appending membership at the sink. It follows that
 every `ready` issue is a gate member. `epic` and `post-merge` issues are exempt
 because neither is claimable (#292).
 
+**A member that lands `post-merge` releases nothing, so split it.** That
+exemption is about claimability — whether a builder may pick the issue up — and
+says nothing about whether the issue releases its successors. It does not: a
+member whose PR merged while acceptance criteria remain open stays `OPEN` and
+carries `post-merge`, [LABELS.md](LABELS.md) rules that the sweep never reclaims
+that state (*"weeks of quiet can be the state working"*), and the blocker parse
+tests `CLOSED` or `MERGED`. So every successor declaring on it stays held, the
+sweep never promotes, and the window stops advancing along that edge with
+nothing announcing it. The rule: **when a member reaches `post-merge` and any
+open declaration names it, split the remainder** — mint a fresh issue carrying
+the outstanding criteria verbatim, with their own owner and wake condition and a
+citation back, and close the original on what it delivered. The successors then
+release normally.
+
+Three qualifications, each load-bearing:
+
+1. **Only when something declares on it.** The trigger is a check, not a
+   judgement: run the blocker parse over every open `blocked` body and see
+   whether this number appears. If none does, the issue strands nothing and the
+   split is board growth for no gain — leave it `post-merge`, which is that
+   state working as intended.
+2. **Never close work out from under a builder.** If the original is assigned,
+   `claimed`, or carrying an open PR, do not close it. Amend its body to hand
+   the outstanding criteria to the new issue, mint the new issue anyway, and let
+   the original close on its own. The successors are released by whichever of
+   the two closes first carrying no remaining criteria.
+3. **The new issue is not a copy.** It carries the outstanding criteria
+   verbatim, names its owner and its wake condition, and cites the original.
+   [heavy-duty/crew#350 → crew#355](https://github.com/heavy-duty/crew/issues/355)
+   is the worked shape — the manoeuvre performed once by operator ruling, which
+   is what this rule generalises.
+
+**The alternative was rejected, and the rejection is recorded so it is not
+re-proposed**: teaching the blocker parse to count `post-merge` as landed is the
+obvious simplification and costs a guarantee to save an issue. It promotes a
+successor while its predecessor still owes acceptance criteria, so that
+successor's builder works against a deliverable nobody has finished accepting;
+it loosens a parser whose stated doctrine is the opposite — an unknown number
+defaults to `OPEN`, so a parse miss leaves an issue blocked, and the direction
+of that error is chosen; and it needs label data the state map does not carry,
+that map being `number → state` alone.
+
 The operator may declare a parallel track at init when its footprint is
 disjoint from the primary window: another repository, another artifact, or
 provably non-overlapping clusters. The declaration names the boundary and any
