@@ -87,9 +87,9 @@ every `ready` issue is a gate member. `epic` and `post-merge` issues are exempt
 because neither is claimable (#292).
 
 A member that lands `post-merge` releases nothing: that exemption is about
-claimability, while the blocker parse tests `CLOSED` or `MERGED` and a
-`post-merge` issue is `OPEN`, so every successor declaring on it stays held and
-the window stops advancing along that edge (#329).
+claimability, while a `post-merge` issue is still open and an open predecessor
+holds its successors, so every successor declaring on it stays held and the
+window stops advancing along that edge (#329).
 
 **When a member reaches `post-merge` and any open declaration names it, triage
 splits the remainder**: mint a fresh issue carrying the outstanding criteria
@@ -113,8 +113,9 @@ is reached without taking the work from them (#329).
 
 **Do not instead teach the blocker parse that `post-merge` counts as landed.**
 That promotes a successor while its predecessor still owes acceptance criteria,
-inverts a parser whose unknown numbers deliberately default to `OPEN`, and needs
-label data a `number → state` map does not carry (#329).
+inverts a parser whose deliberate error direction is to hold or flag a reference
+it cannot read rather than release it, and needs label data a reference-state
+lookup does not carry (#329).
 
 The operator may declare a parallel track at init when its footprint is
 disjoint from the primary window: another repository, another artifact, or
