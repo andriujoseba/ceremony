@@ -33,7 +33,10 @@ triage bug, and the move is to say so on the issue, not to guess.
      re-requests posted, by head and not by verdict (steps 1–2). A red check
      at the head takes it out of this shape: the next move is yours;
   3. every remaining acceptance criterion is operator-owned, stated so by
-     triage on the issue;
+     triage on the issue. **An operator-owned remainder parks the claim and
+     never the handoff**: this shape is reached only from the far side of
+     shape 4, because it is the state finishing the work puts you in and
+     would otherwise excuse the handoff it should follow (#336);
   4. it is **handed off** — round passed, no `blocker:*` standing,
      `state:needs-human` set per Handoff, the merge the human's. Shapes 2
      and 4 are sequential and never overlap;
@@ -210,8 +213,11 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    withheld one is indistinguishable from a session that died (#330).
    **Never wait on an event you have no wake for** — where the engine is
    what observes the check settling, the wait is the engine's to keep
-   (#330). Prefer verification over argument — add the test that settles
-   the doubt.
+   (#330). **Never block on a producer you cannot prove alive either**:
+   where a job signals its own completion, that signal is the wake and the
+   finished output is read afterwards, because a follow on a file nothing is
+   writing cannot tell *not yet* from *never* (#336). Prefer verification
+   over argument — add the test that settles the doubt.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
    in the PR; silence and force-forward are not options, and a panel
