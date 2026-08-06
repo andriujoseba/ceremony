@@ -12,6 +12,40 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.6.1 — 2026-08-06
+
+### Changed
+
+- `CONTRIBUTING.md` no longer enumerates the vendored set: both the doctrine
+  convention's scope and the consumption section name and link
+  `docs/VENDORED.txt`, so a seventh vendored doc is one edit to the manifest
+  and the convention reaches it (#316).
+- The two-consumption-modes framing in "How the other repos use this" is
+  compressed to a lead that routes to the README, which now states it in
+  full; the governed-repo list and the one-pin paragraph stay (#316, #311).
+
+### Fixed
+
+- `BUILDER.md` scopes the green-check precondition to the act it governs:
+  where an engine mediates the request, declaring a round answered is not
+  requesting the panel, so the declaration goes out as soon as the round's
+  fixes are pushed (#330).
+- The reason is stated where a builder reads it: the engine already holds
+  the request while a head is pending or red, so an early declaration
+  cannot produce an early request, while a withheld one is priced as
+  silence (#330).
+- `RELEASES.md` states what happens when a gate member lands `post-merge`
+  with successors declaring on it: triage splits the remainder onto a fresh
+  issue and closes the original on what it delivered (#329).
+- The release edge is named — the original's close, never the remainder's,
+  since each successor's declaration keys to the original's number (#329).
+- The trigger is a check rather than a judgement, the blocker parse over
+  open `blocked` bodies, and the picked-up exception keeps a claimed issue
+  from being closed out from under its builder (#329).
+- The rejected alternative is recorded with its three reasons, so teaching
+  the blocker parse to count `post-merge` as landed is not re-proposed as an
+  obvious simplification (#329).
+
 ## 0.6.0 — 2026-08-05
 
 ### Added
