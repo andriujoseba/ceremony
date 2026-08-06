@@ -206,14 +206,12 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    the engine's act and not yours**: declaring a round answered is not
    requesting the panel, so declare it as soon as the round's fixes are
    pushed and stop. The engine holds the request while the head is pending
-   or red and re-evaluates as the check settles, so an early declaration
-   cannot produce an early request — while a withheld one costs the round
-   the only thing that tells a session still working apart from a session
-   that died. A round declared and then abandoned is recoverable; an
-   undeclared one is indistinguishable from silence, and is priced as
-   silence. **Never wait on an event you have no wake for** — if the engine
-   is what observes the check settling, the wait is the engine's to keep.
-   Prefer verification over argument — add the test that settles the doubt.
+   or red, so an early declaration cannot produce an early request while a
+   withheld one is indistinguishable from a session that died (#330).
+   **Never wait on an event you have no wake for** — where the engine is
+   what observes the check settling, the wait is the engine's to keep
+   (#330). Prefer verification over argument — add the test that settles
+   the doubt.
 3. Never dismiss a review, never merge, never mark your own work as passed.
    A blocking point you disagree with is answered with evidence or escalated
    in the PR; silence and force-forward are not options, and a panel
