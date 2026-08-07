@@ -12,6 +12,18 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.6.2 — 2026-08-07
+
+### Fixed
+
+- `BUILDER.md` gives the parked-claim shapes the ordering they were missing:
+  an operator-owned remainder parks the claim and never the handoff, so the
+  state finishing the work puts you in cannot excuse the handoff it should
+  follow (#336).
+- A session does not block on a producer it cannot prove alive — where a job
+  signals its own completion, that signal is the wake and the finished
+  output is read afterwards (#336).
+
 ## 0.6.1 — 2026-08-06
 
 ### Changed
