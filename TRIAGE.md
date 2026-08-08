@@ -106,9 +106,11 @@ Every issue you mint carries, in this order:
   new issue, dropping any predecessor the new issue now reaches (inserting X
   into A → B makes A → X → B, so B drops A); a member that must land after the
   new issue but already reaches it through another member declares nothing
-  new; and the release issue adds the new issue to its gate, recording
-  membership only. Collision and window edges are independent, so write both
-  when both apply (#292).
+  new; and the release issue adds a row for the new issue to its membership
+  record, which records membership only and is the only place the sweep reads
+  it — a release issue's `Blocked by` line answers its predecessor gate and
+  never its membership (#292, #343). Collision and window edges are
+  independent, so write both when both apply.
 - **Labels**: type (`bug`/`enhancement`/`documentation`), `scope:*`, and
   exactly one of `ready` / `blocked` (see [LABELS.md](LABELS.md)).
 
