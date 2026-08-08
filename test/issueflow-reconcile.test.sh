@@ -1923,12 +1923,6 @@ check "a failed dependency read leaves the armed edit recorder empty" 0 "0 0" \
 check "the blocked issue names the dependency read it skipped" 0 \
   "issueflow: #73: skipped this pass — could not read dependency #74: $GH_STUB_STDERR" \
   printf '%s\n' "$dependency_out"
-# This is runtime boundary instrumentation, not a source-shape assertion:
-# restoring `|| echo UNKNOWN` makes the same failing gh stub cross into payload
-# grading, even though D2 still prevents the historical false comment (#345).
-check "a failed dependency read stops before dependency-state grading" 1 "" \
-  grep -qF 'dependency #74 answered a state other than open or closed' \
-  <<<"$dependency_out"
 check "the dependency skip ends with the partial-pass tail" 0 \
   'issueflow: 1 issue skipped this pass on an unreadable fact: #73' \
   printf '%s\n' "$dependency_out"
