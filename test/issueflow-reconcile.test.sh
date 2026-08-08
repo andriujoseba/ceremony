@@ -2263,6 +2263,31 @@ check "a bare row with no checkbox enrols too" 0 "257" \
 # already has, stated once in RELEASES.md and implemented once here.
 check "the heading matches case-insensitively with trailing whitespace" 0 "412" \
   membership_references <<<"$(printf '%s\n' '##   MEMBERS   ' '- #412 — admitted')"
+# Every CommonMark list marker opens a row. A row is whatever a reader sees as
+# one, so a marker class narrower than the set Markdown renders would drop a
+# member a human wrote — and take the standing window down with it, which is
+# silence in the one place D2 does not want silence. Only the first token rule
+# decides what a row MEANS; the marker class decides what a row IS.
+marker_body="$(printf '%s\n' \
+  '## Members' \
+  '- #412 — a hyphen row' \
+  '* #413 — an asterisk row' \
+  '+ #414 — a plus row' \
+  '1. #415 — an ordered row' \
+  '2) #416 — an ordered row, the paren form' \
+  '#417 — no marker at all, so not a row')"
+check "every Markdown list marker opens a member row" 0 "[412 413 414 415 416]" \
+  membership_set <<<"$marker_body"
+check "a plus row enrols its member" 0 "" \
+  grep -qx 414 < <(membership_references <<<"$marker_body")
+check "an ordered row enrols its member" 0 "" \
+  grep -qx 415 < <(membership_references <<<"$marker_body")
+check "...and so does its paren form" 0 "" \
+  grep -qx 416 < <(membership_references <<<"$marker_body")
+# The marker is what makes the line a row, so a bare reference on its own line
+# is narration inside the record, not a member.
+check "a line with no list marker is not a row" 1 "" \
+  grep -qx 417 < <(membership_references <<<"$marker_body")
 
 # -- the carrier decision reads the record (#343 D3, D4, D5) ----------------
 check "an open member in the record makes the release issue a carrier" 0 \

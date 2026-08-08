@@ -46,11 +46,14 @@ A release issue's `Blocked by` line answers the predecessor gate above and
 nothing else. Which issues are *in* the release is a separate record on the
 same issue, and the sweep reads it by heading (#343):
 
-- the heading is literally `## Members`, matched case-insensitively with
-  nothing but optional trailing whitespace, and the record runs to the next
-  heading — the same shape `## Task list` already has;
-- one member per list row. The member is the row's first token after the list
-  marker and an optional checkbox, and it is a bare local `#<number>`: `- #253`
+- the heading is literally `## Members`, matched case-insensitively, tolerant
+  of any run of whitespace between the `##` and the word and of trailing
+  whitespace after it, and the record runs to the next heading — the same
+  shape `## Task list` already has;
+- one member per list row, under any Markdown list marker: `-`, `*`, `+`,
+  `<n>.` or `<n>)` all open a row, because a row is whatever a reader sees as
+  one. The member is the row's first token after the list marker and an
+  optional checkbox, and it is a bare local `#<number>`: `- #253`
   and `- [ ] #253` both enrol #253. Everything after that token is prose and
   contributes nothing, so a row is free to cite the PR that closed it, a
   sibling repository, or an issue it names as explicitly *not* a member;

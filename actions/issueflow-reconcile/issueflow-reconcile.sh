@@ -598,12 +598,20 @@ membership_references() { # release body on stdin -> its enumerated members
   # local `#<number>` contributes nothing: silence, not a guess. A qualified
   # reference is never a member either, because a window is one repository's
   # DAG decided against one board read.
+  #
+  # A row is any Markdown list row, so the marker class is the whole CommonMark
+  # set — `-`, `*`, `+`, `<n>.` and `<n>)`. Recognising only some of them would
+  # drop a row a human wrote, and reads, as a member: silence is the correct
+  # answer to a row whose first token is not a bare local reference, and the
+  # wrong one to a member enumerated under a marker this parse did not know.
+  # `epic_references` matches a narrower class; it is a progress view with its
+  # own fixtures and is byte-unchanged here (#343 D7).
   awk '
     tolower($0) ~ /^##[[:space:]]+members[[:space:]]*$/ { in_record = 1; next }
     in_record && /^#/ { exit }
-    in_record && /^[[:space:]]*[-*][[:space:]]+/ {
+    in_record && /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/ {
       row = $0
-      sub(/^[[:space:]]*[-*][[:space:]]+/, "", row)
+      sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, "", row)
       sub(/^\[[ xX]\][[:space:]]+/, "", row)
       split(row, token, "[[:space:]]+")
       if (token[1] ~ /^#[0-9]+$/) print substr(token[1], 2)
