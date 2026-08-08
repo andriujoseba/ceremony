@@ -2275,7 +2275,7 @@ marker_body="$(printf '%s\n' \
   '+ #414 — a plus row' \
   '1. #415 — an ordered row' \
   '2) #416 — an ordered row, the paren form' \
-  '#417 — no marker at all, so not a row')"
+  '  #417 — no marker at all, so not a row')"
 check "every Markdown list marker opens a member row" 0 "[412 413 414 415 416]" \
   membership_set <<<"$marker_body"
 check "a plus row enrols its member" 0 "" \
@@ -2285,9 +2285,17 @@ check "an ordered row enrols its member" 0 "" \
 check "...and so does its paren form" 0 "" \
   grep -qx 416 < <(membership_references <<<"$marker_body")
 # The marker is what makes the line a row, so a bare reference on its own line
-# is narration inside the record, not a member.
+# is narration inside the record, not a member. Indented deliberately: at
+# column 0 a `#` would end the record as a heading, and this assertion is about
+# the marker, not the terminator.
 check "a line with no list marker is not a row" 1 "" \
   grep -qx 417 < <(membership_references <<<"$marker_body")
+# The terminator itself, pinned where it can be seen: the record ends at the
+# next line starting with `#`, the shape `## Task list` already has. A bare
+# unindented reference is therefore the end of the record, not a member of it,
+# and the rows after it are outside.
+check "an unindented bare reference ends the record" 0 "[412]" \
+  membership_set <<<"$(printf '%s\n' '## Members' '- #412' '#417' '- #418')"
 
 # -- the carrier decision reads the record (#343 D3, D4, D5) ----------------
 check "an open member in the record makes the release issue a carrier" 0 \
