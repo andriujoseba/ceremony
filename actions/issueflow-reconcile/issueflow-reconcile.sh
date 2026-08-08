@@ -611,12 +611,24 @@ membership_references() { # release body on stdin -> its enumerated members
   # flag. The bound is written twice, in the row match and in the strip, and
   # both are pinned. `epic_references` matches a narrower class; it is a
   # progress view with its own fixtures and is byte-unchanged here (#343 D7).
+  #
+  # Indentation is bounded the same way and for the same reason: at most three
+  # spaces open a row (CommonMark 4.4). A line indented four or more is an
+  # indented code block to every renderer, and reading one as a row is the same
+  # phantom-member direction as a tenth digit — GitHub renders
+  # `    - #412` under `## Members` as `<pre><code>`, not a list. A leading tab
+  # falls under it too, being four columns of indentation wherever indentation
+  # decides block structure, so `\t- #412` opens nothing. The record is FLAT:
+  # one member per top-level row. A sub-row indented one to three spaces still
+  # enrols, and cannot not: it is byte-identical to a top-level row a human
+  # indented, and CommonMark tells them apart from list context this line-based
+  # parse deliberately does not carry (#348).
   awk '
     tolower($0) ~ /^##[[:space:]]+members[[:space:]]*$/ { in_record = 1; next }
     in_record && /^#/ { exit }
-    in_record && /^[[:space:]]*([-*+]|[0-9]{1,9}[.)])[[:space:]]+/ {
+    in_record && /^ {0,3}([-*+]|[0-9]{1,9}[.)])[[:space:]]+/ {
       row = $0
-      sub(/^[[:space:]]*([-*+]|[0-9]{1,9}[.)])[[:space:]]+/, "", row)
+      sub(/^ {0,3}([-*+]|[0-9]{1,9}[.)])[[:space:]]+/, "", row)
       sub(/^\[[ xX]\][[:space:]]+/, "", row)
       split(row, token, "[[:space:]]+")
       if (token[1] ~ /^#[0-9]+$/) print substr(token[1], 2)

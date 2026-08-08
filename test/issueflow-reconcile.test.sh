@@ -2306,6 +2306,30 @@ check "a tenth digit is not an ordered marker, so the line is not a row" 1 "" \
 # the marker, not the terminator.
 check "a line with no list marker is not a row" 1 "" \
   grep -qx 417 < <(membership_references <<<"$marker_body")
+# Indentation bounds the row the way the digit count bounds the marker, and for
+# the same reason. Three spaces still open a row — CommonMark 4.4 allows up to
+# three, and dropping such a row would lose a member a human wrote and reads.
+# Four do not: that line is an indented code block to every renderer, so reading
+# it as a row takes a member out of non-row content, and one phantom open member
+# keeps a window standing and suppresses its non-member flag. A leading tab is
+# four columns wherever indentation decides block structure, so it opens nothing
+# either. Both sides asserted, because a bound met on one side alone is a class
+# merely different rather than right.
+indent_body="$(printf '%s\n' \
+  '## Members' \
+  '- #421 — column zero' \
+  '   - #422 — three spaces, the deepest indentation that still opens a row' \
+  '    - #423 — four spaces, an indented code block and not a row' \
+  $'\t- #424 — a tab, four columns of indentation, so not a row either')"
+check "the record admits exactly its unindented and shallowly indented rows" 0 \
+  "[421 422]" \
+  membership_set <<<"$indent_body"
+check "three spaces still open a row" 0 "" \
+  grep -qx 422 < <(membership_references <<<"$indent_body")
+check "a four-space line is an indented code block, so it is not a row" 1 "" \
+  grep -qx 423 < <(membership_references <<<"$indent_body")
+check "...and neither is a tab-indented one" 1 "" \
+  grep -qx 424 < <(membership_references <<<"$indent_body")
 # The terminator itself, pinned where it can be seen: the record ends at the
 # next line starting with `#`, the shape `## Task list` already has. A bare
 # unindented reference is therefore the end of the record, not a member of it,
