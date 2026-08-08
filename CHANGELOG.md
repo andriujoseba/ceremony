@@ -12,6 +12,17 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.6.3 — 2026-08-08
+
+### Changed
+
+- A release issue records its window membership under a `## Members` heading, read by heading and one bare `#N` per row; its `Blocked by` line answers the predecessor gate and nothing else (#343).
+- The standing-window decision and the non-member flag read that record, with no fallback to the gate: a release issue that enumerates no membership stands no window and draws no flag (#343).
+
+### Fixed
+
+- Prevent release-window carriers from joining their own gates and suppress stale board-flag claims after an issue pass changes queue state (#327).
+
 ## 0.6.2 — 2026-08-07
 
 ### Fixed
