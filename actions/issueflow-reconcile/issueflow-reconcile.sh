@@ -613,16 +613,17 @@ membership_references() { # release body on stdin -> its enumerated members
   # progress view with its own fixtures and is byte-unchanged here (#343 D7).
   #
   # Indentation is bounded the same way and for the same reason: at most three
-  # spaces open a row (CommonMark 4.4). A line indented four or more is an
-  # indented code block to every renderer, and reading one as a row is the same
-  # phantom-member direction as a tenth digit — GitHub renders
-  # `    - #412` under `## Members` as `<pre><code>`, not a list. A leading tab
-  # falls under it too, being four columns of indentation wherever indentation
-  # decides block structure, so `\t- #412` opens nothing. The record is FLAT:
-  # one member per top-level row. A sub-row indented one to three spaces still
-  # enrols, and cannot not: it is byte-identical to a top-level row a human
-  # indented, and CommonMark tells them apart from list context this line-based
-  # parse deliberately does not carry (#348).
+  # spaces open a row (CommonMark 4.4), and a leading tab is four columns of it
+  # wherever indentation decides block structure. Past that bound the line is
+  # not a top-level row, and which non-row it is depends on context this parse
+  # does not carry — GitHub renders `    - #412` after `## Members` as
+  # `<pre><code>` and the same bytes under a `- #N` row as a nested `<li>`. The
+  # record is FLAT, so both are silence: an indented code block is not a row at
+  # all, a sub-bullet annotating a member row is not a second member, and
+  # enrolling either is the tenth digit's phantom-member direction one axis
+  # over. Below the bound the answer goes the other way for the same reason: one
+  # to three spaces is byte-identical to a top-level row a human indented, so it
+  # enrols, and the sub-row that shape can also be is the price (#348).
   awk '
     tolower($0) ~ /^##[[:space:]]+members[[:space:]]*$/ { in_record = 1; next }
     in_record && /^#/ { exit }

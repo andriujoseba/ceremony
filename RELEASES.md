@@ -56,10 +56,11 @@ same issue, and the sweep reads it by heading (#343):
   nothing, CommonMark's ordered marker being at most nine digits, so
   `1234567890. #412` is narration and enrols no member. Indentation is bounded
   the same way: up to three spaces still open a row, four or more open nothing,
-  because at four the line is an indented code block and not a row — a leading
-  tab with it, being four columns of indentation. The record is flat, one
-  member per top-level row; a sub-row indented one to three spaces enrols like
-  any other row, the two being the same bytes. The member is the
+  a leading tab counting as four. The record is **flat** — one member per
+  top-level row — and past that bound a line is not one: standing alone it is
+  an indented code block, and under a row it is a sub-bullet annotating that
+  member, and neither is a member itself. Below the bound it enrols, an
+  indented row being the same bytes as a top-level one. The member is the
   row's first token after the list marker and an optional checkbox, and it is
   a bare local `#<number>`: `- #253` and `- [ ] #253` both enrol #253.
   Everything after that token is prose and contributes nothing, so a row is
