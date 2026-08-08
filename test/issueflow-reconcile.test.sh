@@ -1932,6 +1932,7 @@ check "the failed dependency read never accuses the declaration" 1 "" \
 dependency_state_probe() {
   (
     REPO=owner/repo
+    # shellcheck disable=SC2317 # reached indirectly by reference_states
     gh() { issue_stub_gh "$@"; }
     local states=""
     reference_states 75 states <<<"76"
