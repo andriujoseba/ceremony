@@ -691,9 +691,16 @@ check "the flag-free control is reclaimed (the clock still runs elsewhere)" 0 ""
 
 # -- merged Refs work releases the claim before the reclaim clock ------------
 printf '[]\n' >"$(cfix 35)"
+COLLISION_FLAGS=$'35\tissueflow-reconcile=34'
+WINDOW_FLAGS=$'35\t#50'
 transition="$(issue_probe 35 claimed 1 false 350 $'- [x] built\n- [ ] verify dispatch\n  * [ ] confirm warning clears')"
+unset COLLISION_FLAGS WINDOW_FLAGS
 check "merged Refs + unchecked criteria transitions in the sweep body" 0 "" \
   grep -q 'merged Refs PR -> post-merge; claim released' <<<"$transition"
+check "a pass concluding post-merge draws no precomputed collision flag" 1 "" \
+  grep -q 'collision flag' <<<"$transition"
+check "...and no precomputed window flag" 1 "" \
+  grep -q 'window flag' <<<"$transition"
 # shellcheck disable=SC2016 # positional parameters belong to bash -c
 check "...names every remaining criterion verbatim in the comment" 0 "" \
   bash -c 'grep -qF -- "- [ ] verify dispatch" "$1" &&
@@ -2168,6 +2175,27 @@ check "...and two such carriers chain once, to each other" 0 \
 check "...with the older carrier still asked for nothing" 1 "" \
   collision_flags_issue 257 \
   <<<$'257\tready\tissueflow-reconcile.sh + issueflow-reconcile.test.sh — one\n284\tready\tactions/issueflow-reconcile — two'
+
+# -- a release carrier is not a member of its own gate (#327 D1) -----------
+self_gate_body='A member narrates Blocked by #163.'
+check "a self-only parsed gate does not make its release issue a carrier" 0 "" \
+  release_window_gate 163 $'163\n164' <<<"$self_gate_body"
+mixed_gate_body='Blocked by #163, #164, #165.'
+check "an open non-self member still makes the release issue a carrier" 0 \
+  $'163\t164\n163\t165' \
+  release_window_gate 163 $'163\n164' <<<"$mixed_gate_body"
+check "the carrier number never contributes to its own WINDOW_GATE" 1 "" \
+  awk -F '\t' '$2 == 163 { found = 1 } END { exit !found }' \
+  < <(release_window_gate 163 $'163\n164' <<<"$mixed_gate_body")
+
+# The snapshot may nominate a flag before this issue's own queue branch runs;
+# the pure second gate reads the state that branch actually concluded.
+check "a pass concluding ready still permits both board flags" 0 "" \
+  board_flags_in_scope ready
+check "a pass concluding claimed still permits both board flags" 0 "" \
+  board_flags_in_scope claimed
+check "a pass concluding post-merge silences both board flags" 1 "" \
+  board_flags_in_scope post-merge
 
 # -- the window decision (#292 D1) ------------------------------------------
 window_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n264\tready\tTRIAGE.md — a non-member\n270\tepic\tsome epic — exempt\n271\tpost-merge\tsome item — exempt\n272\tblocked\tsome issue — already placed'

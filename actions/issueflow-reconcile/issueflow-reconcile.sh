@@ -521,6 +521,15 @@ window_in_scope() { # $1 = comma-joined labels -> 0 subject to the window rule
   unblocked_claimable "$1"
 }
 
+board_flags_in_scope() { # $1 = queue state concluded by this issue's pass
+  # The board snapshot decides which issues might owe a flag, but this pass
+  # speaks only about the queue state it leaves behind (#327 D2). A derived
+  # claimed -> post-merge transition therefore cannot post the snapshot's
+  # now-false claim that the issue is still unblocked and claimable.
+  case "$1" in ready|claimed) return 0 ;; esac
+  return 1
+}
+
 collision_key_index() { # board records on stdin -> "key<TAB>number" in scope
   local n labels title key
   while IFS=$'\t' read -r n labels title; do
@@ -562,11 +571,24 @@ window_flags() { # $1 gate members, $2 window carriers; records on stdin -> numb
     [ -n "$n" ] || continue
     window_in_scope "$labels" || continue
     grep -qxF "$n" <<<"$gate" && continue
-    # The release issue is the graph's SINK, never one of its own members
-    # (#292 D2), so it can never be its own non-member.
+    # The carrier is the graph's SINK, so the flag excludes it explicitly;
+    # membership parsing is a separate decision and cannot prove this guard.
     grep -qxF "$n" <<<"$carriers" && continue
     printf '%s\n' "$n"
   done
+}
+
+release_window_gate() { # $1 carrier, $2 open issue numbers; body on stdin -> carrier<TAB>member
+  # A carrier is never a member of its own gate (#327 D1). Remove it before
+  # deciding whether any open member makes the window stand, and before
+  # returning every non-self parsed member that contributes to WINDOW_GATE.
+  local carrier="$1" open_numbers="$2" gate member
+  gate="$(blocked_references | awk -v carrier="$carrier" '$0 != carrier')"
+  [ -n "$gate" ] || return 0
+  grep -qxF -f <(printf '%s\n' "$open_numbers") <<<"$gate" || return 0
+  while IFS= read -r member; do
+    [ -n "$member" ] && printf '%s\t%s\n' "$carrier" "$member"
+  done <<<"$gate"
 }
 
 window_state() { # $1 = window carriers -> the rendered state, "#249" | "#249, #250"
@@ -719,7 +741,7 @@ last_issue_comment_activity() { # $1 issue, $2 created_at → epoch; non-zero on
   issue_activity_at "$1" "$2" comments-only
 }
 
-reconcile_board_flags() { # $1 = issue — the collision and window flags (#293)
+reconcile_board_flags() { # $1 issue, $2 concluded queue state — board flags (#293)
   # Dedup is the declaration echo's, per family (#293 D4): the marker is
   # keyed to the offending state's VALUE and compared against this family's
   # last word on the thread, so a state that changes speaks and a state that
@@ -734,6 +756,7 @@ reconcile_board_flags() { # $1 = issue — the collision and window flags (#293)
   # board fact that is true right now, and a board where the fact never
   # changed has nothing new to say.
   local n="$1" state marker rendered
+  board_flags_in_scope "$2" || return 0
   state="$(flag_for_issue "$n" "${COLLISION_FLAGS:-}")"
   if [ -n "$state" ]; then
     marker="$(state_marker collision "$state")"
@@ -802,9 +825,14 @@ reconcile_issue() {
   local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set="" parse_marker=""
   local unchecked="" remove_claimed=claimed
   local attention_active=true attention_suppression=""
+  local concluded_queue_state=""
+  for label in needs-triage epic "${QUEUE_LABELS[@]}"; do
+    has_issue_label "$label" && concluded_queue_state="$label"
+  done
   decision="$(queue_decision <<<"$ISSUE_LABELS")"
   case "$decision" in
     ADD_NEEDS_TRIAGE)
+      concluded_queue_state=needs-triage
       run gh issue edit "$n" -R "$REPO" --add-label needs-triage >/dev/null
       log "#$n: needs-triage (no queue state)" ;;
     FLAG_CONFLICT)
@@ -858,6 +886,7 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
           --remove-label "$remove_claimed" --add-label post-merge >/dev/null
       fi
       log "#$n: merged Refs PR -> post-merge; claim released"
+      concluded_queue_state=post-merge
       attention_active=false
     else
       created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
@@ -888,6 +917,7 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
           else
             run gh issue edit "$n" -R "$REPO" --remove-label claimed --add-label ready >/dev/null
           fi
+          concluded_queue_state=ready
           log "#$n: stale claim reclaimed -> ready" ;;
       esac
       [ "$decision" != FLAG_UNASSIGNED ] || attention_suppression=claimed-unassigned
@@ -1006,6 +1036,7 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
         ensure_comment "$n" blockers-cleared \
           'Every issue named by `Blocked by` is closed. The sweep is moving this issue to `ready`.'
         run gh issue edit "$n" -R "$REPO" --remove-label blocked --add-label ready >/dev/null
+        concluded_queue_state=ready
         log "#$n: blockers closed -> ready" ;;
     esac
   elif has_issue_label epic; then
@@ -1052,7 +1083,7 @@ See \`$release_doctrine_path\`. The operator blessing the order is the one step 
   # compose with every queue state, and FLAG_CONFLICT's early return still
   # short-circuits them, because a board lying about its queue state is
   # repaired before anything is derived from it.
-  reconcile_board_flags "$n"
+  reconcile_board_flags "$n" "$concluded_queue_state"
 
   # ---- the ruling invariants (#52), on any queue state ----
   # The flag composes with the queue labels (#50 D8), so this runs after the
@@ -1195,7 +1226,7 @@ main() {
         done < <(refs_references <<<"$body")
       done)"
 
-  local n tail_line issue_numbers board_json release_bodies rn rbody gate
+  local n tail_line issue_numbers board_json release_bodies rn rbody window_records
   local window_rendered=""
   SKIPPED_COUNT=0
   SKIPPED_ISSUES=""
@@ -1232,14 +1263,16 @@ main() {
   WINDOW_CARRIERS=""
   WINDOW_GATE=""
   if [ -n "$issue_numbers" ]; then
-    while IFS=$'\t' read -r rn rbody; do
-      [ -n "$rn" ] || continue
-      gate="$(blocked_references <<<"$rbody")"
-      [ -n "$gate" ] || continue
-      grep -qxF -f <(printf '%s\n' "$issue_numbers") <<<"$gate" || continue
-      WINDOW_CARRIERS="${WINDOW_CARRIERS}${rn}"$'\n'
-      WINDOW_GATE="${WINDOW_GATE}${gate}"$'\n'
-    done <<<"$release_bodies"
+    window_records="$(
+      while IFS=$'\t' read -r rn rbody; do
+        [ -n "$rn" ] || continue
+        release_window_gate "$rn" "$issue_numbers" <<<"$rbody"
+      done <<<"$release_bodies"
+    )"
+    # One record per parsed non-self gate member keeps the carrier decision
+    # and its WINDOW_GATE contribution coupled to the extracted function.
+    WINDOW_CARRIERS="$(cut -f1 <<<"$window_records" | awk 'NF' | sort -nu)"
+    WINDOW_GATE="$(cut -f2 <<<"$window_records" | awk 'NF' | sort -nu)"
   fi
   [ -z "$WINDOW_CARRIERS" ] || window_rendered="$(window_state "$WINDOW_CARRIERS")"
   COLLISION_FLAGS="$(collision_key_index <<<"$BOARD_RECORDS" | collision_flags)"
