@@ -219,6 +219,11 @@ check "all closed blockers release issue" 0 "READY" blocked_decision "$refs" $'C
 check "missing blocked declaration is flagged" 0 "FLAG_UNPARSEABLE" blocked_decision "" ""
 check "unreadable dependency has its own skip verdict" 0 "SKIP_UNREADABLE_DEPENDENCY" \
   blocked_decision "12" "UNKNOWN"
+# D1's failed-read boundary is load-bearing independently of D2's defensive
+# verdict. Restoring the old `|| echo UNKNOWN` degradation must red here even
+# though the payload-shape guard would still skip before the decision (#345).
+check "a failed dependency read cannot degrade into UNKNOWN decision input" 1 "" \
+  grep -qF UNKNOWN <<<"$(declare -f reference_states)"
 check "an open blocker still wins beside an unreadable dependency" 0 "KEEP" \
   blocked_decision "12" $'OPEN\nUNKNOWN'
 check "cross-repo-only blocker is flagged distinctly" 0 "FLAG_CROSS_REPO" \
