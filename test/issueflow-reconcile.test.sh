@@ -2201,7 +2201,12 @@ check "the carrier number never contributes to its own WINDOW_GATE" 1 "" \
 # rows citing merged PRs and another repository, one row annotating an issue as
 # explicitly NOT a member, a verification lane that is not in the build queue,
 # and a "## Task list" progress view beside all of it.
-membership_set() { membership_references | tr '\n' ' '; }
+# Bracketed, so the assertion is the WHOLE set and not a prefix of it: a
+# substring match on a bare list would let an extra member in silently, which
+# is the one direction every mutation below travels.
+membership_set() { # release body on stdin -> its members as one bracketed line
+  printf '[%s]\n' "$(membership_references | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+}
 membership_body="$(printf '%s\n' \
   'The 0.6.0 window. Blocked by #249.' \
   'A quoted declaration in narration: "Blocked by #906" is what the epic says.' \
@@ -2220,7 +2225,7 @@ membership_body="$(printf '%s\n' \
   '' \
   '## Task list' \
   '- [ ] #281 — the progress view')"
-check "the record enrols exactly its rows' bare first tokens" 0 "249 253 257 264 " \
+check "the record enrols exactly its rows' bare first tokens" 0 "[249 253 257 264]" \
   membership_set <<<"$membership_body"
 # The heading is ANCHORED. crew#346 carries this exact narration heading, so a
 # substring or prefix match reads it as the record and enrols its rows.
