@@ -479,6 +479,11 @@ check "a release epic with every declared blocker closed announces init" 0 "" \
   grep -qF '<!-- issueflow:release-init-due -->' "$TMP/posted-53"
 check "the init announce names all five steps" 0 "5" \
   grep -cE '^[1-5]\. ' "$TMP/posted-53"
+# D6's other string: release-init is where the membership record is first
+# written, so step 3 names it beside the waves and the progress task list.
+# shellcheck disable=SC2016 # backticks are the comment body's own Markdown
+check "step 3 names the membership record it first writes" 0 "" \
+  grep -qF '3. Write ordered waves, the `## Members` record' "$TMP/posted-53"
 # shellcheck disable=SC2016 # backticks are the literal portable doctrine citation
 check "the init announce cites the portable vendored doctrine path" 0 "" \
   grep -qF 'See `.ceremony/RELEASES.md`.' "$TMP/posted-53"
@@ -2189,6 +2194,192 @@ check "the carrier number never contributes to its own WINDOW_GATE" 1 "" \
   awk -F '\t' '$2 == 163 { found = 1 } END { exit !found }' \
   < <(release_window_gate 163 $'163\n164' <<<"$mixed_gate_body")
 
+# -- the membership record, read by heading (#343 D2) -----------------------
+# The record is a machine record with one shape, and every case below is a
+# shape a real release body already carries. The corpus is heavy-duty/crew#346
+# — 21 members, a literal "## The members, in claim order" narration heading,
+# rows citing merged PRs and another repository, one row annotating an issue as
+# explicitly NOT a member, a verification lane that is not in the build queue,
+# and a "## Task list" progress view beside all of it.
+# Bracketed, so the assertion is the WHOLE set and not a prefix of it: a
+# substring match on a bare list would let an extra member in silently, which
+# is the one direction every mutation below travels.
+membership_set() { # release body on stdin -> its members as one bracketed line
+  printf '[%s]\n' "$(membership_references | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+}
+membership_body="$(printf '%s\n' \
+  'The 0.6.0 window. Blocked by #249.' \
+  'A quoted declaration in narration: "Blocked by #906" is what the epic says.' \
+  '' \
+  '## The members, in claim order' \
+  '- #900 — a narration heading, not the record' \
+  '' \
+  '## Members' \
+  '- [ ] #253 — landed as #901, ports heavy-duty/crew#346, and #902 is not a member' \
+  '- #257' \
+  '- [x] #264 — landed' \
+  '- crew#348 — a parallel track in another repository' \
+  '- #266, #276 — two references on one row' \
+  '- the verification lane, not in the build queue' \
+  '- #249 — the sink itself' \
+  '' \
+  '## Task list' \
+  '- [ ] #281 — the progress view')"
+check "the record enrols exactly its rows' bare first tokens" 0 "[249 253 257 264]" \
+  membership_set <<<"$membership_body"
+# The heading is ANCHORED. crew#346 carries this exact narration heading, so a
+# substring or prefix match reads it as the record and enrols its rows.
+check "a narrated members heading is not the record" 1 "" \
+  grep -qx 900 < <(membership_references <<<"$membership_body")
+# The row's FIRST token, not every reference in it. epic_references prints the
+# whole row and takes them all, which is right for a progress view and wrong
+# here: these three are a merged PR, a sibling repository, and an issue the row
+# itself names as a non-member.
+check "a row's prose PR reference is not a member" 1 "" \
+  grep -qx 901 < <(membership_references <<<"$membership_body")
+check "...nor an issue the row names as explicitly not a member" 1 "" \
+  grep -qx 902 < <(membership_references <<<"$membership_body")
+check "...nor a qualified reference in the prose" 1 "" \
+  grep -qx 346 < <(membership_references <<<"$membership_body")
+# Silence, not a guess: a first token that is not a bare local reference
+# contributes nothing, whether it is qualified, punctuated, or prose.
+check "a qualified first token contributes no member" 1 "" \
+  grep -qx 348 < <(membership_references <<<"$membership_body")
+check "a punctuated first token contributes no member" 1 "" \
+  grep -qx 266 < <(membership_references <<<"$membership_body")
+check "...and the second reference on that row contributes none either" 1 "" \
+  grep -qx 276 < <(membership_references <<<"$membership_body")
+# The record ends at the next heading, so the progress view beside it is not
+# membership — that separation is the whole reason the two lists are distinct.
+check "a task-list reference is not a member" 1 "" \
+  grep -qx 281 < <(membership_references <<<"$membership_body")
+check "...nor a reference in narration outside the record" 1 "" \
+  grep -qx 906 < <(membership_references <<<"$membership_body")
+check "an unchecked row and a checked row enrol alike" 0 $'253\n264' \
+  membership_references <<<"$membership_body"
+check "a bare row with no checkbox enrols too" 0 "257" \
+  membership_references <<<"$membership_body"
+# Case-insensitive, trailing whitespace tolerated — the shape `## Task list`
+# already has, stated once in RELEASES.md and implemented once here.
+check "the heading matches case-insensitively with trailing whitespace" 0 "412" \
+  membership_references <<<"$(printf '%s\n' '##   MEMBERS   ' '- #412 — admitted')"
+# Every CommonMark list marker opens a row, and only those. A row is whatever a
+# reader sees as one, so a marker class narrower than the set Markdown renders
+# would drop a member a human wrote — and take the standing window down with
+# it, which is silence in the one place D2 does not want silence. A class WIDER
+# than it is the same error mirrored, and the more dangerous direction: a line
+# no renderer reads as a row becomes a member, and one phantom open member
+# keeps a window standing and suppresses its non-member flag. Only the first
+# token rule decides what a row MEANS; the marker class decides what a row IS.
+marker_body="$(printf '%s\n' \
+  '## Members' \
+  '- #412 — a hyphen row' \
+  '* #413 — an asterisk row' \
+  '+ #414 — a plus row' \
+  '1. #415 — an ordered row' \
+  '2) #416 — an ordered row, the paren form' \
+  '123456789. #419 — nine digits, the widest ordered marker there is' \
+  '1234567890. #420 — ten digits, which CommonMark does not render as a row' \
+  '  #417 — no marker at all, so not a row')"
+check "every Markdown list marker opens a member row" 0 \
+  "[412 413 414 415 416 419]" \
+  membership_set <<<"$marker_body"
+check "a plus row enrols its member" 0 "" \
+  grep -qx 414 < <(membership_references <<<"$marker_body")
+check "an ordered row enrols its member" 0 "" \
+  grep -qx 415 < <(membership_references <<<"$marker_body")
+check "...and so does its paren form" 0 "" \
+  grep -qx 416 < <(membership_references <<<"$marker_body")
+# The bound is CommonMark 5.2's: an ordered marker is 1 to 9 digits then `.` or
+# `)`. Both sides of it are asserted, because one alone is met by a class that
+# is merely different rather than right — the 9-digit row is the widest marker
+# a renderer accepts and must enrol, the 10-digit line is not a list row at all
+# and must contribute nothing. The bound is written twice in the parser, in the
+# row match and in the marker strip; a widening of either reds the pair.
+check "the widest ordered marker CommonMark allows enrols its member" 0 "" \
+  grep -qx 419 < <(membership_references <<<"$marker_body")
+check "a tenth digit is not an ordered marker, so the line is not a row" 1 "" \
+  grep -qx 420 < <(membership_references <<<"$marker_body")
+# The marker is what makes the line a row, so a bare reference on its own line
+# is narration inside the record, not a member. Indented deliberately: at
+# column 0 a `#` would end the record as a heading, and this assertion is about
+# the marker, not the terminator.
+check "a line with no list marker is not a row" 1 "" \
+  grep -qx 417 < <(membership_references <<<"$marker_body")
+# Indentation bounds the row the way the digit count bounds the marker, and both
+# sides are asserted for the same reason: a bound met on one side alone is a
+# class merely different rather than right. Three spaces still open a row —
+# CommonMark 4.4 allows up to three, and refusing them would drop a member a
+# human wrote and reads. A fourth does not, and what it means depends on context
+# the line itself does not carry: GitHub renders `    - #N` after `## Members`
+# as `<pre><code>`, and the same bytes under a `- #N` row as a nested `<li>`.
+# The record is FLAT, so both are silence: an indented code block is not a row at
+# all, and a sub-bullet annotating a member row is not a second member. Enrolling
+# either is the phantom-member direction — an open reference taken from non-row
+# content keeps a window standing and suppresses its non-member flag. A leading
+# tab is four columns wherever indentation decides block structure, so it falls
+# under the same bound.
+indent_body="$(printf '%s\n' \
+  '## Members' \
+  '- #421 — column zero' \
+  '   - #422 — three spaces, the deepest indentation that still opens a row' \
+  '    - #423 — four spaces: a sub-row here, an indented code block alone' \
+  $'\t- #424 — a tab, the same four columns, so neither is it')"
+check "the record admits exactly its unindented and shallowly indented rows" 0 \
+  "[421 422]" \
+  membership_set <<<"$indent_body"
+check "three spaces still open a row" 0 "" \
+  grep -qx 422 < <(membership_references <<<"$indent_body")
+check "a row indented past the bound is a sub-row, and not a second member" 1 "" \
+  grep -qx 423 < <(membership_references <<<"$indent_body")
+check "...and neither is the tab-indented one" 1 "" \
+  grep -qx 424 < <(membership_references <<<"$indent_body")
+# The same bytes with no row above them, which is the shape the panel found: no
+# list is open, so the renderer reads an indented code block and there is nothing
+# for the record to enrol. A body whose record is entirely non-rows enumerates
+# no membership, and D4 then applies to it like any other empty record.
+code_block_body="$(printf '%s\n' \
+  '## Members' \
+  '    - #425 — four spaces with no list open: an indented code block' \
+  $'\t- #426 — and a tab, the same block')"
+check "an indented code block inside the record enrols nobody" 0 "[]" \
+  membership_set <<<"$code_block_body"
+# The terminator itself, pinned where it can be seen: the record ends at the
+# next line starting with `#`, the shape `## Task list` already has. A bare
+# unindented reference is therefore the end of the record, not a member of it,
+# and the rows after it are outside.
+check "an unindented bare reference ends the record" 0 "[412]" \
+  membership_set <<<"$(printf '%s\n' '## Members' '- #412' '#417' '- #418')"
+
+# -- the carrier decision reads the record (#343 D3, D4, D5) ----------------
+check "an open member in the record makes the release issue a carrier" 0 \
+  $'249\t253\n249\t257' \
+  release_window_members 249 $'249\n253' \
+  <<<"$(printf '%s\n' '## Members' '- #253' '- #257')"
+# D4: no fallback. This is THE defect's own state — #317 from its mint until
+# #249 closed at 2026-08-05T11:12Z, and crew's fifteen version epics at 0.6.0
+# adoption: a version epic declaring its predecessor exactly as *Gates*
+# instructs and enumerating nothing. Falling back to the gate here restores
+# the reading that made a shut window stand.
+check "a declared open predecessor with no record is not a carrier (D4)" 1 "" \
+  grep -q . < <(release_window_members 317 $'249\n317\n343' <<<'Blocked by #249.')
+check "...and an empty record is not a carrier either" 1 "" \
+  grep -q . < <(release_window_members 249 $'249\n253' \
+    <<<"$(printf '%s\n' '## Members' '' '## Task list' '- [ ] #253')")
+check "...nor is a record whose every member has closed" 1 "" \
+  grep -q . < <(release_window_members 249 $'249\n264' \
+    <<<"$(printf '%s\n' '## Members' '- #218' '- #230')")
+# D5: #327's self-exclusion, inherited rather than re-decided. Both readings
+# share release_window_records, so the guard cannot hold on one side only.
+check "a membership row naming the carrier contributes no member (D5)" 1 "" \
+  grep -q . < <(release_window_members 249 $'249\n253' \
+    <<<"$(printf '%s\n' '## Members' '- #249 — the sink itself')")
+# shellcheck disable=SC2016 # awk fields belong to awk, not the shell
+check "...and never contributes to WINDOW_MEMBERS beside a real member" 1 "" \
+  awk -F '\t' '$2 == 249 { found = 1 } END { exit !found }' \
+  < <(release_window_members 249 $'249\n253' \
+    <<<"$(printf '%s\n' '## Members' '- #249' '- #253')")
+
 # The snapshot may nominate a flag before this issue's own queue branch runs;
 # the pure second gate reads the state that branch actually concluded.
 check "a pass concluding ready still permits both board flags" 0 "" \
@@ -2287,8 +2478,11 @@ board_run() {
 # #257 `ready` since the evening before, #284 minted `ready` into both of
 # them — six `ready` non-members against a standing gate, and one deliverable
 # carried three times in two spellings.
+# The declaration and the membership record side by side, which is the shape
+# every version epic now carries: the gate answers the predecessor and the
+# record answers the window (#343 D1, D3).
 board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
-  'Blocked by #253.'
+  "$(printf '%s\n' 'Blocked by #253.' '' '## Members' '- #253')"
 board_issue 253 claimed 'issueflow-reconcile — a release epic announces its own release-init' '' 1
 board_issue 257 ready 'actions/issueflow-reconcile — a failed board read sweeps an empty board'
 board_issue 264 ready 'TRIAGE.md — the no-assignee clause scopes to the flag'
@@ -2348,7 +2542,21 @@ check "the window comment names #292's invariant" 0 "" \
   grep -qF "#292's invariant" "$BOARD/edits"
 # shellcheck disable=SC2016 # backticks are the comment body's own Markdown
 check "...and states the subset rule with its exemptions" 0 "" \
-  grep -qF 'the `ready` set is a subset of the gate' "$BOARD/edits"
+  grep -qF 'the `ready` set is a subset of that' "$BOARD/edits"
+# D6: both sentences that used to send triage to the declaration now name the
+# record. The comment is the only place most consumers meet this rule, so a
+# comment still saying "gate" would teach the misreading the issue removes.
+# shellcheck disable=SC2016 # backticks are the comment body's own Markdown
+check "...and tells triage where membership is actually read from" 0 "" \
+  grep -qF 'Membership is read from the release issue'"'"'s own `## Members` record' \
+  "$BOARD/edits"
+# shellcheck disable=SC2016 # backticks are the comment body's own Markdown
+check "...and says what a release issue's Blocked by line does answer" 0 "" \
+  grep -qF 'answers its predecessor gate and never its membership' "$BOARD/edits"
+check "...and asks the third write for a row, not a declaration" 0 "" \
+  grep -qF 'the release issue gains a row for' "$BOARD/edits"
+check "no window comment sends triage to a Blocked by declaration" 1 "" \
+  grep -qF 'The gate is read from the release issue' "$BOARD/edits"
 check "both comments carry idempotency markers (D4)" 0 "" \
   grep -qF '<!-- issueflow:collision-' "$BOARD/edits"
 check "...the window one too" 0 "" grep -qF '<!-- issueflow:window-nonmember-' "$BOARD/edits"
@@ -2413,7 +2621,8 @@ check "...while every other collision on the board still speaks" 0 "2" \
 # oldest-first, the reconciler chain chained, and every one of them a gate
 # member. Every flag above must go quiet, or the flag is reporting the fix.
 board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
-  'Blocked by #253, #257, #264, #266, #276, #281, #282, #284.'
+  "$(printf '%s\n' 'Blocked by #253.' '' '## Members' \
+    '- #253' '- #257' '- #264' '- #266' '- #276' '- #281' '- #282' '- #284')"
 board_issue 253 claimed 'issueflow-reconcile — a release epic announces its own release-init' '' 1
 board_issue 257 blocked 'actions/issueflow-reconcile — a failed board read sweeps an empty board' \
   'Blocked by #253.'
@@ -2436,21 +2645,24 @@ check "...and no window flag either" 1 "" grep -qF ': window flag' <<<"$ruled_ou
 check "...and still reports a whole pass" 0 'issueflow: reconciled.' \
   printf '%s\n' "$ruled_out"
 
-# -- an emptied gate leaves the window flag dormant (test plan) -------------
-# A gate DECLARATION never empties: #249 names fifteen members and still names
-# fifteen after all fifteen close. So the precondition is the gate's OPEN
+# -- an emptied window leaves the flag dormant (test plan) ------------------
+# A membership RECORD never empties, exactly as the gate declaration it
+# replaced never did: #249 enumerates fifteen members and still enumerates
+# fifteen after all fifteen close. So the precondition is the record's OPEN
 # members, not its parse — read straight off the board, which already is the
-# open set. Under the declaration reading the release issue, now `ready`, is
-# itself an open unblocked non-`epic` non-member, and D3 would flag the sink
-# at the exact moment the window ends.
+# open set. Under the parse reading the release issue, now `ready`, is itself
+# an open unblocked non-`epic` non-member, and D3 would flag the sink at the
+# exact moment the window ends.
 board_issue 249 ready,release 'Release 0.6.0 — the board empties into the tag' \
-  'Blocked by #218, #230, #232, #236, #237, #238, #241, #242, #247, #248, #251, #252, #253, #254, #257.'
+  "$(printf '%s\n' 'Blocked by #217.' '' '## Members' \
+    '- #218' '- #230' '- #232' '- #236' '- #237' '- #238' '- #241' '- #242' \
+    '- #247' '- #248' '- #251' '- #252' '- #253' '- #254' '- #257')"
 board_issue 264 ready 'TRIAGE.md — the no-assignee clause scopes to the flag'
 # shellcheck disable=SC2016 # the backticks are the real issue title's Markdown
 board_issue 266 ready 'TRIAGE.md — the epic task-list heading is literally `## Task list`'
 board_assemble 249 264 266
 empty_gate_out="$(board_run)"
-check "a fifteen-member declaration with every member closed leaves D3 dormant" 1 "" \
+check "a fifteen-member record with every member closed leaves D3 dormant" 1 "" \
   grep -qF ': window flag' <<<"$empty_gate_out"
 check "...and the release issue is never flagged as its own non-member" 1 "" \
   grep -qF 'issueflow: #249' <<<"$empty_gate_out"
@@ -2497,7 +2709,7 @@ printf '%s\n' \
   '{"data":{"repository":{"pullRequests":{"nodes":[{"number":403,"body":"","closingIssuesReferences":{"nodes":[{"number":402}]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
   >"$BOARD/graphql-open.json"
 board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
-  'Blocked by #253.'
+  "$(printf '%s\n' 'Blocked by #253.' '' '## Members' '- #253')"
 board_issue 253 claimed 'issueflow-reconcile — a member holding the window open' '' 1
 board_issue 402 claimed 'REVIEWER.md — a non-member with a builder and a round' '' 1
 board_assemble 249 253 402
@@ -2545,7 +2757,7 @@ printf '%s\n' \
   '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
   >"$BOARD/graphql-open.json"
 board_issue 249 blocked,release 'Release 0.6.0 — the board empties into the tag' \
-  'Blocked by #293, #307.'
+  "$(printf '%s\n' 'Blocked by #307.' '' '## Members' '- #293' '- #307')"
 board_issue 293 claimed 'issueflow-reconcile — the sweep flags what the window and collision rules forbid' '' 1
 board_issue 307 blocked 'test/issueflow-reconcile.test.sh — the ruling pre-read is unpinned' \
   'Blocked by #293.'
@@ -2557,6 +2769,45 @@ check "...and no window flag: the claimed member is a member" 1 "" \
   grep -qF ': window flag' <<<"$today_out"
 check "...and still reports a whole pass" 0 'issueflow: reconciled.' \
   printf '%s\n' "$today_out"
+
+# -- the defect's own board (#343): the shut window that read as standing ----
+# #317 as it stood from its mint until #249 closed at 2026-08-05T11:12Z, and
+# the shape crew's fifteen version epics were in at 0.6.0 adoption: a version
+# epic declaring its predecessor exactly as *Gates* instructs and enumerating
+# no members. Read as a gate that made the sink a carrier, THIS is a standing
+# window — for precisely the interval in which the window is shut — and every
+# `ready` issue the documented procedure had just admitted is told it is
+# illegitimate. Read as a membership record it is what it is: nothing.
+board_issue 317 epic,release '0.7.0 — rc becomes native' 'Blocked by #249.'
+board_issue 249 epic,release 'Release 0.6.0 — the predecessor, still open' ''
+board_issue 343 ready 'RELEASES.md + TRIAGE.md — membership gets its own record'
+board_issue 345 ready 'actions/issueflow-reconcile — a failed dependency read'
+board_assemble 317 249 343 345
+shut_window_out="$(board_run)"
+check "the shut window's board replays green" 0 "" test $? -eq 0
+check "an epic declaring an open predecessor stands no window" 1 "" \
+  grep -qF ': window flag' <<<"$shut_window_out"
+check "...so the ready issues it would have accused are left alone" 1 "" \
+  grep -qE '#(343|345): window flag' <<<"$shut_window_out"
+check "...and no window state naming it is ever rendered" 1 "" \
+  grep -qF 'under #317' <<<"$shut_window_out"
+check "...and the board is still swept whole" 0 'issueflow: reconciled.' \
+  printf '%s\n' "$shut_window_out"
+# The over-correction guard, on the same board: the moment that epic
+# enumerates an open member, the window stands and the non-member flags. A
+# change that merely suppressed window detection would pass every assertion
+# above and destroy the guard #292 exists for.
+board_issue 317 epic,release '0.7.0 — rc becomes native' \
+  "$(printf '%s\n' 'Blocked by #249.' '' '## Members' '- #343 — the first member')"
+board_assemble 317 249 343 345
+opened_window_out="$(board_run)"
+check "the same epic enumerating an open member does stand a window" 0 \
+  'issueflow: #345: window flag — an unblocked non-member under #317' \
+  printf '%s\n' "$opened_window_out"
+check "...and its enumerated member is not flagged" 1 "" \
+  grep -qF 'issueflow: #343: window flag' <<<"$opened_window_out"
+check "...one window flag on that board, and only one" 0 "1" \
+  flag_count window "$opened_window_out"
 
 # -- the invariant is enforced at the source, not remembered ----------------
 # Staging only holds while every mutation goes through run(). A future call

@@ -40,6 +40,59 @@ decision during release-init. The double gate on
 out-of-chain track on [heavy-duty/crew#348](https://github.com/heavy-duty/crew/issues/348)
 are worked examples of exceptions declared where they apply.
 
+## The membership record
+
+A release issue's `Blocked by` line answers the predecessor gate above and
+nothing else. Which issues are *in* the release is a separate record on the
+same issue, and the sweep reads it by heading (#343):
+
+- the heading is literally `## Members`, matched case-insensitively, tolerant
+  of any run of whitespace between the `##` and the word and of trailing
+  whitespace after it, and the record runs to the next heading — the same
+  shape `## Task list` already has;
+- one member per list row, under any Markdown list marker and only those:
+  `-`, `*`, `+`, and 1 to 9 digits followed by `.` or `)` all open a row,
+  because a row is whatever a reader sees as one — and a tenth digit opens
+  nothing, CommonMark's ordered marker being at most nine digits, so
+  `1234567890. #412` is narration and enrols no member. Indentation is bounded
+  the same way: up to three spaces still open a row, four or more open nothing,
+  a leading tab counting as four. The record is **flat** — one member per
+  top-level row — and past that bound a line is not one: standing alone it is
+  an indented code block, and under a row it is a sub-bullet annotating that
+  member, and neither is a member itself. Below the bound it enrols, an
+  indented row being the same bytes as a top-level one. The member is the
+  row's first token after the list marker and an optional checkbox, and it is
+  a bare local `#<number>`: `- #253` and `- [ ] #253` both enrol #253.
+  Everything after that token is prose and contributes nothing, so a row is
+  free to cite the PR that closed it, a sibling repository, or an issue it
+  names as explicitly *not* a member;
+- a row whose first token is anything else — a qualified `repo#N`, a number
+  with punctuation attached, or ordinary prose — contributes no member. The
+  parse stays silent rather than guessing;
+- a qualified reference is never a member: a window is one repository's DAG,
+  decided against one board read;
+- a row naming the release issue itself contributes no member. The sink is
+  never one of its own members;
+- **there is no fallback to the gate.** A release issue with no members
+  section enumerates no membership, is not a standing window, and draws no
+  window flag. A repository whose epics predate this record gets silence,
+  never a false flag, until its next release-init writes one.
+
+Why a heading and not a marker phrase: the `Blocked by` parse unions every
+occurrence of its marker and runs each clause to a sentence terminator, which
+is the right error direction for a `blocked` issue and the wrong one for a
+release body that is mostly narration *about* its members. Why the first token
+and not every reference in the row: a real member row cites merged PRs, other
+repositories and explicit non-members, and reading the whole row enrols all of
+them.
+
+The cost is named rather than hidden: a version epic maintains two lists — the
+`## Members` record and the `## Task list` progress view — and triage writes
+both in the same flip. The purchase is that the progress view stays a progress
+view, prose-rich and free to carry several issues in one row or to omit a
+member that is not in the build queue, while membership is a machine record
+with exactly one shape.
+
 ## Release-init
 
 The predecessor closing and clearing the next epic's declared gate is the
@@ -54,7 +107,9 @@ steps:
    written. Each member initially declares `Blocked by <the epic>`.
 2. Graph hard `Blocked by` edges and same-file clusters on the epic.
 3. Write the waves into the epic body as checklists in claim order, with a
-   separate verification lane and the progress view under `## Task list`.
+   separate verification lane and the progress view under `## Task list`, and
+   write the window's membership under `## Members` — release-init is where
+   that record is first written, and until it exists no window stands.
 4. Ask the operator to bless the order, then have triage open the first wave
    by applying the flip mechanics below. The operator's blessing is the one
    step this chain never automates.
@@ -74,16 +129,17 @@ interleaving unrelated windows blurs both the release story and the evidence
 behind it. Gates open windows; they do not silently admit members, so builders
 still see one deliberately ordered queue.
 
-While a window stands — an open release-labeled issue with a non-empty
-enumerated gate — its members form a DAG whose sink is the release issue.
-Every member reaches that sink. Members declare only their immediate
-predecessors; ordering edges live on members, while the sink records membership
-only; and the `ready` set is exactly the graph's current sources. Every close
+While a window stands — an open release-labeled issue whose membership record
+holds at least one open member — its members form a DAG whose sink is the
+release issue. Every member reaches that sink. Members declare only their
+immediate predecessors; ordering edges live on members, while the sink records
+membership only, in the record above and nowhere else; and the `ready` set is
+exactly the graph's current sources. Every close
 releases exactly its declared successors, and that whole set is concurrently
 claimable: a member may have multiple successors, while the collision rule
 already orders any that share a deliverable. Insertion re-points downstream
 edges rather than merely appending membership at the sink. It follows that
-every `ready` issue is a gate member. `epic` and `post-merge` issues are exempt
+every `ready` issue is a member. `epic` and `post-merge` issues are exempt
 because neither is claimable (#292).
 
 A member that lands `post-merge` releases nothing: that exemption is about
@@ -134,6 +190,13 @@ negating the marker phrase — the parser unions declarations even when prose
 says they no longer apply. Preserve the history only after rewriting the
 marker into non-parseable prose, then verify that the parser returns an empty
 set for the release gate.
+
+**The same flip adds the member's row to the release issue's membership
+record.** That write is not bookkeeping to catch up on later: the record is
+the only thing that makes the window stand, so a member flipped `ready`
+without a row is, to the sweep, an unblocked non-member — the exact state the
+window flag exists to report. Verify the flip by reading the record back and
+finding the new member's row in it (#343).
 
 Release membership is a decision, never a sweep default. Triage performs each
 flip only after the operator blesses the wave; the issue-flow sweep may resolve

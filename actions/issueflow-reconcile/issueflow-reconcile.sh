@@ -563,13 +563,13 @@ collision_flags() { # key index on stdin -> "number<TAB>key=carrier[,key=carrier
       '
 }
 
-window_flags() { # $1 gate members, $2 window carriers; records on stdin -> numbers
-  local n labels title gate="$1" carriers="$2"
+window_flags() { # $1 window members, $2 window carriers; records on stdin -> numbers
+  local n labels title members="$1" carriers="$2"
   [ -n "$carriers" ] || return 0
   while IFS=$'\t' read -r n labels title; do
     [ -n "$n" ] || continue
     window_in_scope "$labels" || continue
-    grep -qxF "$n" <<<"$gate" && continue
+    grep -qxF "$n" <<<"$members" && continue
     # The carrier is the graph's SINK, so the flag excludes it explicitly;
     # membership parsing is a separate decision and cannot prove this guard.
     grep -qxF "$n" <<<"$carriers" && continue
@@ -577,17 +577,98 @@ window_flags() { # $1 gate members, $2 window carriers; records on stdin -> numb
   done
 }
 
-release_window_gate() { # $1 carrier, $2 open issue numbers; body on stdin -> carrier<TAB>member
-  # A carrier is never a member of its own gate (#327 D1). Remove it before
-  # deciding whether any open member makes the window stand, and before
-  # returning every non-self parsed member that contributes to WINDOW_GATE.
-  local carrier="$1" open_numbers="$2" gate member
-  gate="$(blocked_references | awk -v carrier="$carrier" '$0 != carrier')"
-  [ -n "$gate" ] || return 0
-  grep -qxF -f <(printf '%s\n' "$open_numbers") <<<"$gate" || return 0
+membership_references() { # release body on stdin -> its enumerated members
+  # The membership record (#343 D2), read by HEADING and never by a marker
+  # phrase. `blocked_reference_records` unions every occurrence of its marker
+  # and runs each clause to its own sentence terminator — deliberate, and the
+  # right error direction for a `blocked` issue, but the wrong one here: a
+  # release body is mostly narration ABOUT its members, so a phrase parser
+  # takes references out of the prose. That is the mechanism that put
+  # heavy-duty/crew's `0.2.0` epic inside its own gate. The heading match is
+  # anchored for the same reason: crew#346 carries a literal
+  # `## The members, in claim order` heading, which a substring match reads as
+  # the record and an anchored one does not.
+  #
+  # One member per row, and it is the row's FIRST token after the list marker
+  # and an optional checkbox. `epic_references` prints the whole row and takes
+  # every local reference in it, which is right for a progress view and wrong
+  # here — measured on crew#346, whose member rows carry merged PR numbers,
+  # another repository's issues, and one issue annotated in its own row as
+  # explicitly NOT a member of the window. A first token that is not a bare
+  # local `#<number>` contributes nothing: silence, not a guess. A qualified
+  # reference is never a member either, because a window is one repository's
+  # DAG decided against one board read.
+  #
+  # A row is any Markdown list row, so the marker class is the whole CommonMark
+  # set and exactly it — `-`, `*`, `+`, and 1 to 9 digits then `.` or `)`
+  # (CommonMark 5.2). Recognising only some of them would drop a row a human
+  # wrote, and reads, as a member: silence is the correct answer to a row whose
+  # first token is not a bare local reference, and the wrong one to a member
+  # enumerated under a marker this parse did not know. Recognising MORE than
+  # them is the same error mirrored: `1234567890. #412` is not a list row to
+  # any renderer, so reading it as one takes a member out of narration, and one
+  # phantom open member keeps a window standing and suppresses its non-member
+  # flag. The bound is written twice, in the row match and in the strip, and
+  # both are pinned. `epic_references` matches a narrower class; it is a
+  # progress view with its own fixtures and is byte-unchanged here (#343 D7).
+  #
+  # Indentation is bounded the same way and for the same reason: at most three
+  # spaces open a row (CommonMark 4.4), and a leading tab is four columns of it
+  # wherever indentation decides block structure. Past that bound the line is
+  # not a top-level row, and which non-row it is depends on context this parse
+  # does not carry — GitHub renders `    - #412` after `## Members` as
+  # `<pre><code>` and the same bytes under a `- #N` row as a nested `<li>`. The
+  # record is FLAT, so both are silence: an indented code block is not a row at
+  # all, a sub-bullet annotating a member row is not a second member, and
+  # enrolling either is the tenth digit's phantom-member direction one axis
+  # over. Below the bound the answer goes the other way for the same reason: one
+  # to three spaces is byte-identical to a top-level row a human indented, so it
+  # enrols, and the sub-row that shape can also be is the price (#348).
+  awk '
+    tolower($0) ~ /^##[[:space:]]+members[[:space:]]*$/ { in_record = 1; next }
+    in_record && /^#/ { exit }
+    in_record && /^ {0,3}([-*+]|[0-9]{1,9}[.)])[[:space:]]+/ {
+      row = $0
+      sub(/^ {0,3}([-*+]|[0-9]{1,9}[.)])[[:space:]]+/, "", row)
+      sub(/^\[[ xX]\][[:space:]]+/, "", row)
+      split(row, token, "[[:space:]]+")
+      if (token[1] ~ /^#[0-9]+$/) print substr(token[1], 2)
+    }
+  ' | sort -nu
+}
+
+release_window_records() { # $1 carrier, $2 open numbers; refs on stdin -> carrier<TAB>member
+  # A carrier is never a member of its own window (#327 D1, which #343 D5
+  # inherits rather than re-decides). Remove it before deciding whether any
+  # open member makes the window stand, and before returning every non-self
+  # reference that contributes to WINDOW_MEMBERS. One function, so the two
+  # readings below can never drift apart on that guard.
+  local carrier="$1" open_numbers="$2" members member
+  members="$(awk -v carrier="$carrier" '$0 != carrier')"
+  [ -n "$members" ] || return 0
+  grep -qxF -f <(printf '%s\n' "$open_numbers") <<<"$members" || return 0
   while IFS= read -r member; do
     [ -n "$member" ] && printf '%s\t%s\n' "$carrier" "$member"
-  done <<<"$gate"
+  done <<<"$members"
+}
+
+release_window_gate() { # $1 carrier, $2 open issue numbers; body on stdin -> carrier<TAB>member
+  # #327 D1's reading of a release issue's `Blocked by` set, kept whole and
+  # kept driven. The window stopped consuming it at #343 D3 — a release
+  # epic's declaration answers its predecessor gate and nothing else — so
+  # what this keeps standing is the self-exclusion guard's other half: the
+  # gate side and the membership side share release_window_records, and this
+  # is where a change to it that only the gate could see reds.
+  blocked_references | release_window_records "$1" "$2"
+}
+
+release_window_members() { # $1 carrier, $2 open issue numbers; body on stdin -> carrier<TAB>member
+  # What the carrier decision reads (#343 D3). No fallback to the gate when
+  # the record is absent (#343 D4): a release issue enumerating no membership
+  # is not a carrier, and the board draws no window flag. A fallback would
+  # reinstate the misreading for precisely the bodies that have not been
+  # migrated, which is where it does its damage.
+  membership_references | release_window_records "$1" "$2"
 }
 
 window_state() { # $1 = window carriers -> the rendered state, "#249" | "#249, #250"
@@ -793,20 +874,22 @@ marker carries the collision itself, so an unchanged one never re-posts.*" >/dev
     if state_echo_needed "$n" window-nonmember "$marker"; then
       run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 A release window is standing ($state) and this issue is neither one of its
-gate members nor an \`epic\` or \`post-merge\` issue.
+members nor an \`epic\` or \`post-merge\` issue.
 
 #292's invariant: during a standing window — an open \`release\`-labeled issue
-with a non-empty gate — the \`ready\` set is a subset of the gate, \`epic\` and
-\`post-merge\` exempt. Every mint during a window is a membership call, binary,
-made at mint time: **behind the gate**, this issue's own Dependencies declare
-the release issue as a blocker and the sweep releases it when the release
-closes; or **into the graph**, three writes in one tick — this issue declares
-its immediate predecessors, every member whose immediate predecessor it
-becomes re-points to it, and the release issue gains \`Blocked by #N\`, which
-records membership and nothing else. Silence is not a state.
+with a non-empty membership record — the \`ready\` set is a subset of that
+record, \`epic\` and \`post-merge\` exempt. Every mint during a window is a
+membership call, binary, made at mint time: **behind the gate**, this issue's
+own Dependencies declare the release issue as a blocker and the sweep releases
+it when the release closes; or **into the graph**, three writes in one tick —
+this issue declares its immediate predecessors, every member whose immediate
+predecessor it becomes re-points to it, and the release issue gains a row for
+this issue in its membership record. Silence is not a state.
 
-The gate is read from the release issue's own \`Blocked by\` declarations — the
-same parse every \`blocked\` issue is gated on, echoed on that issue.
+Membership is read from the release issue's own \`## Members\` record: the rows
+under that heading, one member each, the row's first token a bare \`#N\` and
+everything after it prose. A \`Blocked by\` declaration on a release issue
+answers its predecessor gate and never its membership (#343).
 
 *Comment only: nothing on this path writes a label or changes a state. The
 marker carries the window itself, so an unchanged one never re-posts.*" >/dev/null
@@ -1052,7 +1135,7 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
 
 1. Mint the window's members.
 2. Graph hard dependencies and same-file clusters.
-3. Write ordered waves and the progress task list.
+3. Write ordered waves, the \`## Members\` record, and the progress task list.
 4. Ask the operator to bless the order, then open the first wave.
 5. Ship the release, close this epic, and trigger the next window.
 
@@ -1225,7 +1308,7 @@ main() {
         done < <(refs_references <<<"$body")
       done)"
 
-  local n tail_line issue_numbers board_json release_bodies rn rbody window_records
+  local n tail_line issue_numbers board_json release_numbers rn window_records
   local window_rendered=""
   SKIPPED_COUNT=0
   SKIPPED_ISSUES=""
@@ -1249,33 +1332,42 @@ main() {
     | @tsv' \
     <<<"$board_json")"
   issue_numbers="$(cut -f1 <<<"$BOARD_RECORDS")"
-  # A standing window is an open `release`-labeled issue whose gate still
-  # holds an OPEN member (#292 D1). The board read IS the open set, so
-  # membership decides openness with no extra call — and an all-closed gate
-  # is exactly the emptied gate the release's own `blocked` -> `ready`
-  # promotion answers, which is why a `ready` release leaves the flag
-  # dormant rather than flagging the whole board.
-  release_bodies="$(jq -r '.[] | select(has("pull_request") | not)
+  # A standing window is an open `release`-labeled issue whose MEMBERSHIP
+  # RECORD still holds an OPEN member (#292 D1 as #343 D3 re-reads it). The
+  # board read IS the open set, so membership decides openness with no extra
+  # call — and an all-closed record is exactly the emptied window the
+  # release's own `blocked` -> `ready` promotion answers, which is why a
+  # `ready` release leaves the flag dormant rather than flagging the whole
+  # board.
+  #
+  # The record is read by heading, so each body must reach the parse with its
+  # LINE STRUCTURE INTACT: the flattened `number<TAB>body` record this loop
+  # carried before could not hold one, which is why the body is taken from
+  # the board payload per release issue rather than projected into a TSV
+  # column (#343 D2). It is the same board read either way — the payload is
+  # already in hand, and a second pagination would be a second board.
+  release_numbers="$(jq -r '.[] | select(has("pull_request") | not)
     | select((.labels // []) | map(.name) | index("release"))
-    | [(.number | tostring), ((.body // "") | gsub("[\t\r\n]"; " "))] | @tsv' \
-    <<<"$board_json")"
+    | .number' <<<"$board_json")"
   WINDOW_CARRIERS=""
-  WINDOW_GATE=""
+  WINDOW_MEMBERS=""
   if [ -n "$issue_numbers" ]; then
     window_records="$(
-      while IFS=$'\t' read -r rn rbody; do
+      while IFS= read -r rn; do
         [ -n "$rn" ] || continue
-        release_window_gate "$rn" "$issue_numbers" <<<"$rbody"
-      done <<<"$release_bodies"
+        jq -r --argjson n "$rn" '.[] | select(has("pull_request") | not)
+          | select(.number == $n) | .body // ""' <<<"$board_json" \
+          | release_window_members "$rn" "$issue_numbers"
+      done <<<"$release_numbers"
     )"
-    # One record per parsed non-self gate member keeps the carrier decision
-    # and its WINDOW_GATE contribution coupled to the extracted function.
+    # One record per parsed non-self member keeps the carrier decision and
+    # its WINDOW_MEMBERS contribution coupled to the extracted function.
     WINDOW_CARRIERS="$(cut -f1 <<<"$window_records" | awk 'NF' | sort -nu)"
-    WINDOW_GATE="$(cut -f2 <<<"$window_records" | awk 'NF' | sort -nu)"
+    WINDOW_MEMBERS="$(cut -f2 <<<"$window_records" | awk 'NF' | sort -nu)"
   fi
   [ -z "$WINDOW_CARRIERS" ] || window_rendered="$(window_state "$WINDOW_CARRIERS")"
   COLLISION_FLAGS="$(collision_key_index <<<"$BOARD_RECORDS" | collision_flags)"
-  WINDOW_FLAGS="$(window_flags "$WINDOW_GATE" "$WINDOW_CARRIERS" <<<"$BOARD_RECORDS" \
+  WINDOW_FLAGS="$(window_flags "$WINDOW_MEMBERS" "$WINDOW_CARRIERS" <<<"$BOARD_RECORDS" \
     | awk -v state="$window_rendered" 'NF { print $1 "\t" state }')"
   if [ -z "$issue_numbers" ]; then
     log "no open issues."
