@@ -396,7 +396,7 @@ blocked_decision() { # $1 local refs, $2 OPEN/CLOSED states, $3 cross-repo refs
   if [ -n "$cross_refs" ]; then echo FLAG_CROSS_REPO
   elif [ -z "$refs" ]; then echo FLAG_UNPARSEABLE
   elif grep -qxF OPEN <<<"$states"; then echo KEEP
-  elif grep -qxF UNKNOWN <<<"$states"; then echo FLAG_UNPARSEABLE
+  elif grep -qxF UNKNOWN <<<"$states"; then echo SKIP_UNREADABLE_DEPENDENCY
   else echo READY
   fi
 }
@@ -744,13 +744,21 @@ issue_comment_has_marker() { # $1 issue, $2 marker → 0 found, 1 genuinely abse
   grep -qF "<!-- issueflow:$2 -->" <<<"$bodies"
 }
 
-reference_states() {
-  local ref state
+reference_states() { # $1 issue, $2 output variable; refs on stdin
+  local issue="$1" states_var="$2" ref state collected=""
   while IFS= read -r ref; do
     [ -n "$ref" ] || continue
-    state="$(gh api "repos/$REPO/issues/$ref" --jq '.state' 2>/dev/null || echo UNKNOWN)"
-    case "$state" in open) echo OPEN ;; closed) echo CLOSED ;; *) echo UNKNOWN ;; esac
+    guarded_read state gh api "repos/$REPO/issues/$ref" --jq '.state' \
+      || skip_issue "$issue" \
+        "could not read dependency #$ref: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    case "$state" in
+      open) collected="${collected:+$collected$'\n'}OPEN" ;;
+      closed) collected="${collected:+$collected$'\n'}CLOSED" ;;
+      *) skip_issue "$issue" \
+        "dependency #$ref answered a state other than open or closed" ;;
+    esac
   done
+  printf -v "$states_var" '%s' "$collected"
 }
 
 offsite_pr_states() {
@@ -1105,7 +1113,7 @@ correction.
 itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
     fi
     log "#$n: blocked declarations parse to $parsed_set"
-    states="$(reference_states <<<"$refs")"
+    reference_states "$n" states <<<"$refs"
     decision="$(blocked_decision "$refs" "$states" "$cross_refs")"
     case "$decision" in
       FLAG_CROSS_REPO)
@@ -1114,6 +1122,8 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
       FLAG_UNPARSEABLE)
         ensure_comment "$n" blocked-unparseable \
           'This issue is `blocked`, but its body has no parseable `Blocked by #N` declaration. The sweep will not guess the dependency.' ;;
+      SKIP_UNREADABLE_DEPENDENCY)
+        skip_issue "$n" "a dependency state was unreadable" ;;
       READY)
         ensure_comment "$n" blockers-cleared \
           'Every issue named by `Blocked by` is closed. The sweep is moving this issue to `ready`.'
@@ -1128,7 +1138,7 @@ itself, so a parse unchanged since the last echo never re-posts.*" >/dev/null
       [ "$REPO" != heavy-duty/ceremony ] || release_doctrine_path=RELEASES.md
       refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
       cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
-      states="$(reference_states <<<"$refs")"
+      reference_states "$n" states <<<"$refs"
       if [ "$(blocked_decision "$refs" "$states" "$cross_refs")" = READY ]; then
         ensure_comment "$n" release-init-due \
           "This release epic's declared gate is open. Release initialization is due:
@@ -1144,7 +1154,7 @@ See \`$release_doctrine_path\`. The operator blessing the order is the one step 
       fi
     fi
     refs="$(epic_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
-    states="$(reference_states <<<"$refs")"
+    reference_states "$n" states <<<"$refs"
     if [ "$(epic_decision "$refs" "$states")" = NUDGE ]; then
       ensure_comment "$n" epic-complete \
         "Every issue referenced by this epic's task list is closed. Please close the epic or extend its task list."
