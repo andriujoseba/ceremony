@@ -50,13 +50,16 @@ same issue, and the sweep reads it by heading (#343):
   of any run of whitespace between the `##` and the word and of trailing
   whitespace after it, and the record runs to the next heading — the same
   shape `## Task list` already has;
-- one member per list row, under any Markdown list marker: `-`, `*`, `+`,
-  `<n>.` or `<n>)` all open a row, because a row is whatever a reader sees as
-  one. The member is the row's first token after the list marker and an
-  optional checkbox, and it is a bare local `#<number>`: `- #253`
-  and `- [ ] #253` both enrol #253. Everything after that token is prose and
-  contributes nothing, so a row is free to cite the PR that closed it, a
-  sibling repository, or an issue it names as explicitly *not* a member;
+- one member per list row, under any Markdown list marker and only those:
+  `-`, `*`, `+`, and 1 to 9 digits followed by `.` or `)` all open a row,
+  because a row is whatever a reader sees as one — and a tenth digit opens
+  nothing, CommonMark's ordered marker being at most nine digits, so
+  `1234567890. #412` is narration and enrols no member. The member is the
+  row's first token after the list marker and an optional checkbox, and it is
+  a bare local `#<number>`: `- #253` and `- [ ] #253` both enrol #253.
+  Everything after that token is prose and contributes nothing, so a row is
+  free to cite the PR that closed it, a sibling repository, or an issue it
+  names as explicitly *not* a member;
 - a row whose first token is anything else — a qualified `repo#N`, a number
   with punctuation attached, or ordinary prose — contributes no member. The
   parse stays silent rather than guessing;

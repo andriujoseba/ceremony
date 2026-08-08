@@ -2263,11 +2263,14 @@ check "a bare row with no checkbox enrols too" 0 "257" \
 # already has, stated once in RELEASES.md and implemented once here.
 check "the heading matches case-insensitively with trailing whitespace" 0 "412" \
   membership_references <<<"$(printf '%s\n' '##   MEMBERS   ' '- #412 — admitted')"
-# Every CommonMark list marker opens a row. A row is whatever a reader sees as
-# one, so a marker class narrower than the set Markdown renders would drop a
-# member a human wrote — and take the standing window down with it, which is
-# silence in the one place D2 does not want silence. Only the first token rule
-# decides what a row MEANS; the marker class decides what a row IS.
+# Every CommonMark list marker opens a row, and only those. A row is whatever a
+# reader sees as one, so a marker class narrower than the set Markdown renders
+# would drop a member a human wrote — and take the standing window down with
+# it, which is silence in the one place D2 does not want silence. A class WIDER
+# than it is the same error mirrored, and the more dangerous direction: a line
+# no renderer reads as a row becomes a member, and one phantom open member
+# keeps a window standing and suppresses its non-member flag. Only the first
+# token rule decides what a row MEANS; the marker class decides what a row IS.
 marker_body="$(printf '%s\n' \
   '## Members' \
   '- #412 — a hyphen row' \
@@ -2275,8 +2278,11 @@ marker_body="$(printf '%s\n' \
   '+ #414 — a plus row' \
   '1. #415 — an ordered row' \
   '2) #416 — an ordered row, the paren form' \
+  '123456789. #419 — nine digits, the widest ordered marker there is' \
+  '1234567890. #420 — ten digits, which CommonMark does not render as a row' \
   '  #417 — no marker at all, so not a row')"
-check "every Markdown list marker opens a member row" 0 "[412 413 414 415 416]" \
+check "every Markdown list marker opens a member row" 0 \
+  "[412 413 414 415 416 419]" \
   membership_set <<<"$marker_body"
 check "a plus row enrols its member" 0 "" \
   grep -qx 414 < <(membership_references <<<"$marker_body")
@@ -2284,6 +2290,16 @@ check "an ordered row enrols its member" 0 "" \
   grep -qx 415 < <(membership_references <<<"$marker_body")
 check "...and so does its paren form" 0 "" \
   grep -qx 416 < <(membership_references <<<"$marker_body")
+# The bound is CommonMark 5.2's: an ordered marker is 1 to 9 digits then `.` or
+# `)`. Both sides of it are asserted, because one alone is met by a class that
+# is merely different rather than right — the 9-digit row is the widest marker
+# a renderer accepts and must enrol, the 10-digit line is not a list row at all
+# and must contribute nothing. The bound is written twice in the parser, in the
+# row match and in the marker strip; a widening of either reds the pair.
+check "the widest ordered marker CommonMark allows enrols its member" 0 "" \
+  grep -qx 419 < <(membership_references <<<"$marker_body")
+check "a tenth digit is not an ordered marker, so the line is not a row" 1 "" \
+  grep -qx 420 < <(membership_references <<<"$marker_body")
 # The marker is what makes the line a row, so a bare reference on its own line
 # is narration inside the record, not a member. Indented deliberately: at
 # column 0 a `#` would end the record as a heading, and this assertion is about

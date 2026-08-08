@@ -600,18 +600,23 @@ membership_references() { # release body on stdin -> its enumerated members
   # DAG decided against one board read.
   #
   # A row is any Markdown list row, so the marker class is the whole CommonMark
-  # set — `-`, `*`, `+`, `<n>.` and `<n>)`. Recognising only some of them would
-  # drop a row a human wrote, and reads, as a member: silence is the correct
-  # answer to a row whose first token is not a bare local reference, and the
-  # wrong one to a member enumerated under a marker this parse did not know.
-  # `epic_references` matches a narrower class; it is a progress view with its
-  # own fixtures and is byte-unchanged here (#343 D7).
+  # set and exactly it — `-`, `*`, `+`, and 1 to 9 digits then `.` or `)`
+  # (CommonMark 5.2). Recognising only some of them would drop a row a human
+  # wrote, and reads, as a member: silence is the correct answer to a row whose
+  # first token is not a bare local reference, and the wrong one to a member
+  # enumerated under a marker this parse did not know. Recognising MORE than
+  # them is the same error mirrored: `1234567890. #412` is not a list row to
+  # any renderer, so reading it as one takes a member out of narration, and one
+  # phantom open member keeps a window standing and suppresses its non-member
+  # flag. The bound is written twice, in the row match and in the strip, and
+  # both are pinned. `epic_references` matches a narrower class; it is a
+  # progress view with its own fixtures and is byte-unchanged here (#343 D7).
   awk '
     tolower($0) ~ /^##[[:space:]]+members[[:space:]]*$/ { in_record = 1; next }
     in_record && /^#/ { exit }
-    in_record && /^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/ {
+    in_record && /^[[:space:]]*([-*+]|[0-9]{1,9}[.)])[[:space:]]+/ {
       row = $0
-      sub(/^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+/, "", row)
+      sub(/^[[:space:]]*([-*+]|[0-9]{1,9}[.)])[[:space:]]+/, "", row)
       sub(/^\[[ xX]\][[:space:]]+/, "", row)
       split(row, token, "[[:space:]]+")
       if (token[1] ~ /^#[0-9]+$/) print substr(token[1], 2)
