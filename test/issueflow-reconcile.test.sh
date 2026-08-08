@@ -2184,6 +2184,7 @@ mixed_gate_body='Blocked by #163, #164, #165.'
 check "an open non-self member still makes the release issue a carrier" 0 \
   $'163\t164\n163\t165' \
   release_window_gate 163 $'163\n164' <<<"$mixed_gate_body"
+# shellcheck disable=SC2016 # awk fields belong to awk, not the shell
 check "the carrier number never contributes to its own WINDOW_GATE" 1 "" \
   awk -F '\t' '$2 == 163 { found = 1 } END { exit !found }' \
   < <(release_window_gate 163 $'163\n164' <<<"$mixed_gate_body")
