@@ -526,8 +526,7 @@ board_flags_in_scope() { # $1 = queue state concluded by this issue's pass
   # speaks only about the queue state it leaves behind (#327 D2). A derived
   # claimed -> post-merge transition therefore cannot post the snapshot's
   # now-false claim that the issue is still unblocked and claimable.
-  case "$1" in ready|claimed) return 0 ;; esac
-  return 1
+  unblocked_claimable "$1"
 }
 
 collision_key_index() { # board records on stdin -> "key<TAB>number" in scope
