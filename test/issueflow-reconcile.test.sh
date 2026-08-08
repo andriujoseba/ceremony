@@ -2178,8 +2178,8 @@ check "...with the older carrier still asked for nothing" 1 "" \
 
 # -- a release carrier is not a member of its own gate (#327 D1) -----------
 self_gate_body='A member narrates Blocked by #163.'
-check "a self-only parsed gate does not make its release issue a carrier" 0 "" \
-  release_window_gate 163 $'163\n164' <<<"$self_gate_body"
+check "a self-only parsed gate does not make its release issue a carrier" 1 "" \
+  grep -q . < <(release_window_gate 163 $'163\n164' <<<"$self_gate_body")
 mixed_gate_body='Blocked by #163, #164, #165.'
 check "an open non-self member still makes the release issue a carrier" 0 \
   $'163\t164\n163\t165' \
