@@ -122,6 +122,28 @@ rm "$TMP/ordinary-del/changelog.d/12.md"
 commit_head ordinary-del
 check "-dev PR even deleting a fragment: green NOTICE" 0 "NOTICE" run ordinary-del base
 
+# RC cuts invert the bare ceremony assertion: fragments and changelog both
+# survive unchanged because an rc is tag-only (#317 D1).
+seed_flat rc-unchanged
+printf '0.2.0-rc1\n' >"$TMP/rc-unchanged/VERSION"
+commit_head rc-unchanged
+check "rc PR leaving fragments and changelog alone passes" 0 \
+  "consumed no fragments" run rc-unchanged base
+
+seed_flat rc-deleted-fragment
+printf '0.2.0-rc1\n' >"$TMP/rc-deleted-fragment/VERSION"
+rm "$TMP/rc-deleted-fragment/changelog.d/9.md"
+commit_head rc-deleted-fragment
+check "rc PR deleting a fragment fails" 1 \
+  "changelog.d/9.md" run rc-deleted-fragment base
+
+seed_flat rc-touched-changelog
+printf '0.2.0-rc1\n' >"$TMP/rc-touched-changelog/VERSION"
+printf '\nTouched during rc.\n' >>"$TMP/rc-touched-changelog/CHANGELOG.md"
+commit_head rc-touched-changelog
+check "rc PR touching CHANGELOG.md fails" 1 \
+  "must remain byte-identical" run rc-touched-changelog base
+
 # Legacy mode: no changelog.d/ at the merge base — always a NOTICE, even on
 # a release tree, because the mid-adoption ceremony edits the changelog by
 # hand and there is no fragment set for its section to answer to.
