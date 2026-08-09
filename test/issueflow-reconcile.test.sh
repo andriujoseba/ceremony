@@ -2324,7 +2324,7 @@ marker_body="$(printf '%s\n' \
   '2) #416 — an ordered row, the paren form' \
   '123456789. #419 — nine digits, the widest ordered marker there is' \
   '1234567890. #420 — ten digits, which CommonMark does not render as a row' \
-  '  #417 — no marker at all, so not a row')"
+  '    #417 — no marker at all, so not a row')"
 check "every Markdown list marker opens a member row" 0 \
   "[412 413 414 415 416 419]" \
   membership_set <<<"$marker_body"
@@ -2345,9 +2345,12 @@ check "the widest ordered marker CommonMark allows enrols its member" 0 "" \
 check "a tenth digit is not an ordered marker, so the line is not a row" 1 "" \
   grep -qx 420 < <(membership_references <<<"$marker_body")
 # The marker is what makes the line a row, so a bare reference on its own line
-# is narration inside the record, not a member. Indented deliberately: at
-# column 0 a `#` would end the record as a heading, and this assertion is about
-# the marker, not the terminator.
+# is narration inside the record, not a member. Indented deliberately: a `#`
+# the terminator can reach would end the record, and this assertion is about
+# the marker, not the terminator. FOUR spaces, not two, since #349 D8 gave the
+# terminator the same three-column latitude a row has — at two it would be the
+# terminator excluding this line, and the assertion would pass having tested
+# nothing about the marker class.
 check "a line with no list marker is not a row" 1 "" \
   grep -qx 417 < <(membership_references <<<"$marker_body")
 # Indentation bounds the row the way the digit count bounds the marker, and both
@@ -2472,14 +2475,18 @@ check "the ordered marker's digit bound is the same in both records" 0 \
   '123456789. %C#106 — nine digits, the widest ordered marker there is' \
   '1234567890. %C#107 — ten digits, which no renderer reads as a row'
 # Where the two records deliberately differ, asserted on the epic side alone.
-# `## Task list` is a *task* list: a row with no checkbox is prose under it,
-# and the marker-less line is indented so that the `#` terminator cannot be
-# what excludes it — the trap #347's own first cut fell into.
+# `## Task list` is a *task* list, so a row with no checkbox is prose under it,
+# and `#114` is what pins that: drop the checkbox requirement and it enrols.
+# The marker-less line is indented past FOUR columns so the terminator cannot
+# be what excludes it — the trap #347's own first cut fell into, and D8 moved
+# where its floor sits: the terminator now reaches three columns like a row,
+# so at two spaces this line would end the section, #114 would never be read,
+# and the whole assertion would pass having tested neither rule.
 check "a task list admits only checkbox rows under a list marker" 0 "[112]" \
   epic_set <<<"$(printf '%s\n' \
     '## Task list' \
     '- [ ] #112 — a task row' \
-    '  #113 — no marker, indented so the terminator is not what excludes it' \
+    '    #113 — no marker, and past the terminator, so the marker is what excludes it' \
     '- #114 — a marker but no checkbox, so prose under a task list')"
 check "an unchecked row and a checked row enrol alike under one task list" 0 \
   "[110 111]" \
