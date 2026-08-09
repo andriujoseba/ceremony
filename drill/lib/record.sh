@@ -126,6 +126,98 @@ record_unrun() {
   printf '%s\n' "${out# }"
 }
 
+# The doors, as the probe numbers that exercise them. Two sentences in the
+# record are claims about the doors rather than about a probe, and both the
+# renderer and the shape check have to split the rows the same way or they
+# will disagree about a record neither of them wrote.
+DRILL_MERGE_PROBES='1 2 3 4'
+DRILL_TAG_PROBES='5 6'
+
+# record_ran <probes-tsv> — the probe numbers whose row was written from a run.
+# The complement of record_unrun, and the measurement the door sentence stands
+# on: a door ran iff at least one of its probes reached a run.
+record_ran() {
+  local probes="${1:?}" n row run out=""
+  for n in 1 2 3 4 5 6; do
+    row="$(awk -F'\t' -v n="$n" '$1 == n { print; exit }' "$probes")"
+    [ -n "$row" ] || continue
+    run="$(cut -f3 <<<"$row")"
+    case "$run" in
+      '' | '—') ;;
+      *) out="$out $n" ;;
+    esac
+  done
+  printf '%s\n' "${out# }"
+}
+
+# record_door_ran <ran-list> <probe>… — 0 when any of the named probes ran.
+record_door_ran() {
+  local ran=" ${1-} " n
+  shift
+  for n in "$@"; do
+    case "$ran" in
+      *" $n "*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# record_doors <probes-tsv> <version> — the opening of `## What the rehearsal
+# establishes`, measured per door.
+#
+# "Both doors ran live" was a constant, and the abort guard makes it false the
+# moment every probe of one door misses its run: the record would then assert
+# an execution its own rows deny, in the failed-drill shape #313 asks to stay
+# honest (@codex-bot-andresmgsl, round 3). Same fix as the preamble's, one
+# level up — a door that reached no run is stated as no-evidence, never as a
+# door that ran.
+record_doors() {
+  local probes="${1:?}" ver="${2:?}" ran merge=0 tag=0
+  ran="$(record_ran "$probes")"
+  # shellcheck disable=SC2086 # the door lists are probe numbers, split on purpose
+  record_door_ran "$ran" $DRILL_MERGE_PROBES && merge=1
+  # shellcheck disable=SC2086
+  record_door_ran "$ran" $DRILL_TAG_PROBES && tag=1
+  if [ "$merge" = 1 ] && [ "$tag" = 1 ]; then
+    cat <<EOF
+Both doors ran live against the $ver candidate's own machinery, driven by
+\`drill/rehearsal.sh\` rather than by hand. Each line below is one probe's,
+and it is printed as a claim only where that probe passed: what stands here
+is a measurement in the table above, never a sentence written from an
+intention.
+EOF
+  elif [ "$merge" = 1 ]; then
+    cat <<EOF
+The merge door ran live against the $ver candidate's own machinery, driven by
+\`drill/rehearsal.sh\` rather than by hand. **The tag door reached no run at
+all** (probes ${DRILL_TAG_PROBES// /, } never got one), so nothing below is
+claimed for it and this record is no evidence about that door either way.
+Each line below is one probe's, and it is printed as a claim only where that
+probe passed: what stands here is a measurement in the table above, never a
+sentence written from an intention.
+EOF
+  elif [ "$tag" = 1 ]; then
+    cat <<EOF
+The tag door ran live against the $ver candidate's own machinery, driven by
+\`drill/rehearsal.sh\` rather than by hand. **The merge door reached no run at
+all** (probes ${DRILL_MERGE_PROBES// /, } never got one), so nothing below is
+claimed for it and this record is no evidence about that door either way.
+Each line below is one probe's, and it is printed as a claim only where that
+probe passed: what stands here is a measurement in the table above, never a
+sentence written from an intention.
+EOF
+  else
+    cat <<EOF
+**Neither door reached a run at all**: no probe below got one, so this record
+is no evidence about the $ver candidate's doors and claims nothing for
+either. The rows above are the aborts themselves. Each line below is one
+probe's, and it is printed as a claim only where that probe passed: what
+stands here is a measurement in the table above, never a sentence written
+from an intention.
+EOF
+  fi
+}
+
 # record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
 record_render() {
   local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
@@ -215,8 +307,19 @@ at the ref after the rewrite and all agree; all runtime machinery in every
 probe below was therefore fetched from the $ver candidate tree.
 
 ## Probes
+EOF
 
-One row per probe, in doctrine order, each written from its own run. Runs are
+  # The same claim as the preamble's, one section down, and it was a constant
+  # too: the abort fixture rendered a dashed row under a sentence saying every
+  # row came from its own run (@codex-bot-andresmgsl, round 3).
+  if [ "$unrun_count" = 0 ]; then
+    printf '\nOne row per probe, in doctrine order, each written from its own run. Runs are\n'
+  else
+    printf '\nOne row per probe, in doctrine order. %s of them (probe %s) never reached a\nrun: those rows are written from the abort itself and show a dash where the\nrun link would be, and every other row was written from its own run. Runs are\n' \
+      "$unrun_count" "${unrun// /, }"
+  fi
+
+  cat <<EOF
 in \`$scratch\`. The two count columns are the measurement every refusal
 probe is asserted on: a refusal that leaves a tag or a release behind is a
 failed probe, and the assertion is these numbers, not the prose beside them.
@@ -237,17 +340,13 @@ EOF
     printf 'None: every run on the scratch repo is a probe row above.\n'
   fi
 
-  cat <<EOF
+  cat <<'EOF'
 
 ## What the rehearsal establishes
 
-Both doors ran live against the $ver candidate's own machinery, driven by
-\`drill/rehearsal.sh\` rather than by hand. Each line below is one probe's,
-and it is printed as a claim only where that probe passed: what stands here
-is a measurement in the table above, never a sentence written from an
-intention.
-
 EOF
+  record_doors "$probes" "$ver"
+  printf '\n'
   record_establishes "$probes" "$ver"
 
   if [ "$unestablished" = 0 ]; then
@@ -274,7 +373,7 @@ EOF
 # is checked rather than trusted — the script is the record's only author now,
 # so nothing else will notice.
 record_check() {
-  local file="${1:?record_check: file required}" rows problems="" exempt=0
+  local file="${1:?record_check: file required}" rows problems="" exempt=0 ran=""
   rows="$(awk -F'|' '/^\| [1-6] \|/ { print }' "$file")"
   local count
   count="$(printf '%s\n' "$rows" | awk 'NF' | wc -l | tr -d ' ')"
@@ -297,8 +396,11 @@ record_check() {
       exempt=$((exempt + 1))
       continue
     fi
-    printf '%s' "$row" | grep -qE '/actions/runs/[0-9]+' ||
+    if printf '%s' "$row" | grep -qE '/actions/runs/[0-9]+'; then
+      ran="$ran $n"
+    else
       problems="$problems; probe $n has no run ID"
+    fi
     printf '%s' "$row" | grep -qE '[0-9]+ → [0-9]+ \|[^|]*[0-9]+ → [0-9]+' ||
       problems="$problems; probe $n has no before/after counts"
   done
@@ -311,6 +413,44 @@ record_check() {
     problems="$problems; the conclusion has $claims probe lines, expected 6"
   grep -qF 'pending the operator' "$file" ||
     problems="$problems; the record does not state the disposal as pending the operator's delete"
+  # The prose that talks about the runs is graded against the rows too. It was
+  # the one part of the record nothing checked, and `record_render` measuring
+  # it is only a guarantee while `record_render` is the sole author
+  # (@claude-bot-andresmgsl, round 3): a hand-touched record, or a second
+  # renderer, gets the same grading the table has always had.
+  local claimed
+  if grep -qF 'All six probes ran' "$file"; then
+    claimed=0
+  else
+    claimed="$(sed -n 's/^\*\*\([0-9][0-9]*\) of the six probes never reached a run\*\*.*/\1/p' \
+      "$file" | head -n 1)"
+  fi
+  if [ -z "$claimed" ]; then
+    problems="$problems; the record's preamble does not say how many probes reached a run"
+  elif [ "$claimed" != "$exempt" ]; then
+    problems="$problems; the preamble says $claimed probe(s) never reached a run, the table shows $exempt"
+  fi
+  if [ "$exempt" != 0 ] &&
+    grep -qF 'in doctrine order, each written from its own run' "$file"; then
+    problems="$problems; $exempt row(s) reached no run, but the probe table says every row was written from its own run"
+  fi
+  # Which doors the rows say ran, and the sentence the conclusion owes for it.
+  local merge=0 tag=0 doors
+  # shellcheck disable=SC2086 # the door lists are probe numbers, split on purpose
+  record_door_ran "${ran# }" $DRILL_MERGE_PROBES && merge=1
+  # shellcheck disable=SC2086
+  record_door_ran "${ran# }" $DRILL_TAG_PROBES && tag=1
+  if [ "$merge" = 1 ] && [ "$tag" = 1 ]; then
+    doors='Both doors ran live against the'
+  elif [ "$merge" = 1 ]; then
+    doors='**The tag door reached no run at'
+  elif [ "$tag" = 1 ]; then
+    doors='**The merge door reached no run at'
+  else
+    doors='**Neither door reached a run at all**'
+  fi
+  grep -qF "$doors" "$file" ||
+    problems="$problems; the rows measure merge-door-ran=$merge tag-door-ran=$tag, but the conclusion does not say so (expected \"$doors\")"
   if [ -n "$problems" ]; then
     echo "record_check: ${problems#; }" >&2
     return 1
@@ -321,6 +461,10 @@ record_check() {
   if [ "$exempt" = 0 ]; then
     echo "record_check: six probe rows, each with a run ID and its before/after counts, and a conclusion that claims only what they measured."
   else
-    echo "record_check: six probe rows — $exempt aborted before reaching a run and carry the aborted mark in place of a run ID, the rest carry a run ID and their before/after counts — and a conclusion that claims only what they measured."
+    # The sentence counts rows, so it agrees with the count it just printed
+    # (@claude-bot-andresmgsl, round 3).
+    local carries='carry'
+    [ "$exempt" != 1 ] || carries='carries'
+    echo "record_check: six probe rows — $exempt aborted before reaching a run and $carries the aborted mark in place of a run ID, the rest carry a run ID and their before/after counts — and a conclusion that claims only what they measured."
   fi
 }

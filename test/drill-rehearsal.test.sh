@@ -111,16 +111,22 @@ check "the probe names are the doctrine's six" 0 "" \
 # The record's shape check — the script runs it on its own emission, because
 # the script is now the record's only author and nothing else will notice.
 # ---------------------------------------------------------------------------
-record_fixture() { # <run-cell-for-probe-3>
+record_fixture() { # <run-cell-for-probe-3> [preamble] [result-cell-for-probe-3]
   local three="$1"
+  local preamble="${2:-All six probes ran; every row was written from its own run.}"
+  local three_result="${3:-✅ ok}"
   cat <<EOF
 # 0.7.0 — drill record
+
+$preamble
+
+Both doors ran live against the 0.7.0 candidate's own machinery.
 
 | # | probe | run | tags | releases | result |
 |---|---|---|---|---|---|
 | 1 | merge-door ceremony | [1001](https://github.com/o/n/actions/runs/1001) | 0 → 1 | 0 → 1 | ✅ ok |
 | 2 | mislabeled ordinary PR | [1002](https://github.com/o/n/actions/runs/1002) | 1 → 1 | 1 → 1 | ✅ ok |
-| 3 | bare-version PR | $three | 1 → 1 | 1 → 1 | ✅ ok |
+| 3 | bare-version PR | $three | 1 → 1 | 1 → 1 | $three_result |
 | 4 | re-run of the completed ceremony | [1004](https://github.com/o/n/actions/runs/1004) | 1 → 1 | 1 → 1 | ✅ ok |
 | 5 | tag-door release from a manual tag | [1005](https://github.com/o/n/actions/runs/1005) | 1 → 2 | 1 → 2 | ✅ ok |
 | 6 | mismatched tag | [1006](https://github.com/o/n/actions/runs/1006) | 2 → 2 | 2 → 2 | ✅ ok |
@@ -154,9 +160,10 @@ sed 's#| \[1003\](https://github.com/o/n/actions/runs/1003) |#| — |#' \
   "$TMP/record-good.md" >"$TMP/record-dash-pass.md"
 check "a dash run cell on a passing row still reds the shape check" 1 \
   "probe 3 has no run ID" record_check "$TMP/record-dash-pass.md"
-sed -e 's#| \[1003\](https://github.com/o/n/actions/runs/1003) |#| — |#' \
-  -e '/| — |/ s/| ✅ ok |/| ❌ aborted before it reached a verdict |/' \
-  "$TMP/record-good.md" >"$TMP/record-aborted.md"
+ABORTED_PREAMBLE='**1 of the six probes never reached a run** (probe 3): that row is written
+from the abort itself.'
+record_fixture "—" "$ABORTED_PREAMBLE" "❌ aborted before it reached a verdict" \
+  >"$TMP/record-aborted.md"
 check "a probe that aborted before any run is the one row exempt" 0 \
   "six probe rows" record_check "$TMP/record-aborted.md"
 head -n 8 "$TMP/record-good.md" >"$TMP/record-short.md"
@@ -300,6 +307,108 @@ check "a duplicated probe row never renders a negative count" 1 "" \
   grep -qE 'Not established: -' "$TMP/seven.md"
 check "the duplicated row is still what reds the shape check" 1 \
   "the probe table has 7 rows, expected 6" record_check "$TMP/seven.md"
+
+# ---------------------------------------------------------------------------
+# Round 2 measured the top preamble and stopped there, and two sentences below
+# it went on asserting the same execution in different words: the probe
+# table's `each written from its own run`, and the conclusion's `Both doors
+# ran live` (@codex-bot-andresmgsl, round 3). The first was already false in
+# the fixture right above — an aborted row sat dashed under it. The second is
+# false whenever every probe of one door misses its run. Both are measured
+# now, and both are graded by the shape check so they cannot come back.
+# ---------------------------------------------------------------------------
+abort_probes() { # <merge|tag|all> — that door's probes never reached a run
+  awk -F'\t' -v OFS='\t' -v door="$1" \
+    '(door == "all") || (door == "tag" && $1 >= 5) || (door == "merge" && $1 <= 4) {
+       $3 = "—"; $4 = 1; $5 = "FAIL"
+       $10 = "aborted before it reached a verdict (exit 1)"
+     } { print }' "$TMP/probes.tsv"
+}
+
+# The probe table's own preamble.
+check "a clean run's probe table says every row came from its own run" 0 \
+  "in doctrine order, each written from its own run" cat "$TMP/rendered.md"
+check "an aborted row withdraws the probe table's every-row claim" 1 "" \
+  grep -qF 'in doctrine order, each written from its own run' "$TMP/one-aborted.md"
+check "the probe table names the rows written from the abort instead" 0 \
+  "1 of them (probe 6) never reached a" cat "$TMP/one-aborted.md"
+check "the probe table still stands behind the rows that did run" 0 \
+  "every other row was written from its own run" cat "$TMP/one-aborted.md"
+check "two aborted rows are both named in the probe table" 0 \
+  "2 of them (probe 3, 6) never reached a" \
+  record_render "$TMP/ctx.tsv" "$TMP/two-aborted.tsv" "$TMP/setup.tsv"
+
+# The conclusion's door sentence, in all four states the rows can measure.
+# 1–4 are the merge door, 5–6 the tag door, and a door ran iff one of its
+# probes reached a run.
+abort_probes tag >"$TMP/tag-aborted.tsv"
+abort_probes merge >"$TMP/merge-aborted.tsv"
+abort_probes all >"$TMP/all-aborted.tsv"
+record_render "$TMP/ctx.tsv" "$TMP/tag-aborted.tsv" "$TMP/setup.tsv" >"$TMP/tag-aborted.md"
+record_render "$TMP/ctx.tsv" "$TMP/merge-aborted.tsv" "$TMP/setup.tsv" >"$TMP/merge-aborted.md"
+record_render "$TMP/ctx.tsv" "$TMP/all-aborted.tsv" "$TMP/setup.tsv" >"$TMP/all-aborted.md"
+check "both doors ran is still what a clean record says" 0 \
+  "Both doors ran live against the 0.7.0 candidate's own machinery" cat "$TMP/rendered.md"
+check "one aborted probe does not cost its door the claim" 0 \
+  "Both doors ran live against the 0.7.0 candidate's own machinery" \
+  cat "$TMP/one-aborted.md"
+check "a door whose every probe aborted is not said to have run" 1 "" \
+  grep -qF 'Both doors ran live' "$TMP/tag-aborted.md"
+check "the door that did run is still claimed" 0 \
+  "The merge door ran live against the 0.7.0 candidate's own machinery" \
+  cat "$TMP/tag-aborted.md"
+check "the door that did not run is stated as no evidence" 0 \
+  "this record is no evidence about that door either way" cat "$TMP/tag-aborted.md"
+check "the unrun door names the probes that never got a run" 0 \
+  "(probes 5, 6 never got one)" cat "$TMP/tag-aborted.md"
+check "the same holds with the doors the other way round" 0 \
+  "The tag door ran live against the 0.7.0 candidate's own machinery" \
+  cat "$TMP/merge-aborted.md"
+check "the unrun merge door names all four of its probes" 0 \
+  "(probes 1, 2, 3, 4 never got one)" cat "$TMP/merge-aborted.md"
+check "a record where nothing ran claims neither door" 0 \
+  "**Neither door reached a run at all**" cat "$TMP/all-aborted.md"
+check "a record where nothing ran claims no door ran live" 1 "" \
+  grep -qF 'ran live against the' "$TMP/all-aborted.md"
+check "a record where nothing ran establishes nothing" 0 \
+  "Not established: 6 of the six" cat "$TMP/all-aborted.md"
+
+# The shape check grades both sentences, so a renderer that stopped measuring
+# them — or a hand-touched record — reds rather than shipping.
+check "a record with a whole door unrun still passes the shape check" 0 \
+  "2 aborted before reaching a run and carry the aborted mark" \
+  record_check "$TMP/tag-aborted.md"
+check "a record where nothing ran at all is still a valid record" 0 \
+  "6 aborted before reaching a run and carry the aborted mark" \
+  record_check "$TMP/all-aborted.md"
+check "the excused-row count agrees in number at one row" 0 \
+  "1 aborted before reaching a run and carries the aborted mark" \
+  record_check "$TMP/one-aborted.md"
+record_fixture "[1003](https://github.com/o/n/actions/runs/1003)" \
+  '**2 of the six probes never reached a run** (probe 5, 6): those rows are
+written from the abort itself.' |
+  sed -e 's#\[1005\](https://github.com/o/n/actions/runs/1005)#—#' \
+    -e 's#\[1006\](https://github.com/o/n/actions/runs/1006)#—#' \
+    -e '/| — |/ s/| ✅ ok |/| ❌ aborted before it reached a verdict |/' \
+    >"$TMP/record-door-lie.md"
+check "a record claiming both doors ran when a whole door aborted reds" 1 \
+  "the rows measure merge-door-ran=1 tag-door-ran=0, but the conclusion does not say so" \
+  record_check "$TMP/record-door-lie.md"
+record_fixture "—" "All six probes ran; every row was written from its own run." \
+  "❌ aborted before it reached a verdict" >"$TMP/record-preamble-lie.md"
+check "a preamble that undercounts the rows that never ran reds" 1 \
+  "the preamble says 0 probe(s) never reached a run, the table shows 1" \
+  record_check "$TMP/record-preamble-lie.md"
+grep -vF 'All six probes ran' "$TMP/record-good.md" >"$TMP/record-no-preamble.md"
+check "a record with no preamble at all reds" 1 \
+  "record's preamble does not say how many probes reached a run" \
+  record_check "$TMP/record-no-preamble.md"
+record_fixture "—" "$ABORTED_PREAMBLE" "❌ aborted before it reached a verdict" |
+  sed 's/^Both doors ran live.*/One row per probe, in doctrine order, each written from its own run. Both doors ran live against the 0.7.0 candidate./' \
+    >"$TMP/record-table-lie.md"
+check "an aborted record keeping the every-row claim reds" 1 \
+  "1 row(s) reached no run, but the probe table says every row was written from its own run" \
+  record_check "$TMP/record-table-lie.md"
 
 # ---------------------------------------------------------------------------
 # `probe_counts` refuses a count that did not read (round 1). An API error
