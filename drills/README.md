@@ -63,10 +63,25 @@ two judgement shapes below stay hand-written (#313).
    3. a bare-version PR without the `release` label refuses;
    4. a re-run of the completed ceremony refuses;
    5. a tag-door release from a manual tag;
-   6. a mismatched tag refuses.
+   6. a mismatched tag refuses;
+   7. an rc cut publishes a prerelease and stamps nothing;
+   8. the promotion after it ships the final version.
 
    Every refusal must refuse **creating nothing** — a probe that leaves a
    tag or a release behind on a refusal path is a failed probe.
+
+   The last two are the rc ladder, and they run one rung further along it
+   than the probes above them: a labeled ceremony PR bumping to
+   `X.Y.Z-rc1` must publish a release marked prerelease, leave
+   `CHANGELOG.md` byte-identical, leave every fragment where it is, and
+   re-arm main to `X.Y.Z-rc2-dev`; the ceremony PR to bare `X.Y.Z` after it
+   must publish a full release whose `## X.Y.Z` section is the body those
+   fragments assemble to, consume them, and leave the candidate's own
+   release still marked prerelease — **a promotion never relabels the
+   candidate it came from**. An rc that ships carries its own record at
+   `drills/X.Y.Z-rcN.md`, and the rc cut's ceremony PR is what carries it.
+   The untouched-changelog claim is a byte comparison, never prose, for the
+   reason the counts either side of a refusal are numbers.
 
 ## The record
 

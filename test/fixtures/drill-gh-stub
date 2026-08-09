@@ -10,9 +10,13 @@
 #
 #     <conclusion><TAB><effects>
 #
-# with effects a comma-separated list of `release:<tag>`, `tag:<name>`,
-# `rearm:<version>` or `none`. That is what lets the suite drive a full
-# green sequence, and equally a refusal probe whose after-count grew.
+# with effects a comma-separated list of `release:<tag>`,
+# `prerelease:<tag>`, `relabel:<tag>`, `tag:<name>`, `rearm:<version>`,
+# `edit:<path>` or `none`. That is what lets the suite drive a full green sequence, and
+# equally a refusal probe whose after-count grew. `prerelease:` is the rc
+# door's publish and `relabel:` clears a published prerelease flag — a thing
+# no door should ever do, which is exactly why the promotion probe's
+# must-fail case needs the stub to be able to do it (#321).
 #
 # Every invocation is appended to `$DRILL_STUB_STATE/calls`, which is how the
 # suite asserts that the repo-delete endpoint is never reached.
@@ -132,7 +136,7 @@ tree_of_ref() { # <ref-name e.g. heads/main> -> tree id
 
 # fire <head-sha> — one door event, if the tree at that head carries a caller.
 fire() {
-  local head="$1" tree line conclusion effects run e
+  local head="$1" tree line conclusion effects run e publish flag
   tree="$(cat "$R/commit/$head" 2>/dev/null || true)"
   [ -n "$tree" ] || return 0
   grep -q '^\.github/workflows/release\.yml	' "$R/tree/$tree" || return 0
@@ -146,14 +150,27 @@ fire() {
   printf '%s\t%s\t1\t%s\n' "$run" "$head" "$conclusion" >>"$R/runs"
   for e in ${effects//,/ }; do
     case "$e" in
-      release:*)
-        printf '%s\n' "${e#release:}" >>"$R/releases"
+      release:* | prerelease:*)
+        # A release row is `<tag><TAB><prerelease>`: the flag is a
+        # measurement the rc legs are asserted on, so the stub carries it
+        # rather than leaving it to be inferred from the tag's spelling.
+        case "$e" in
+          prerelease:*) publish="${e#prerelease:}" flag=true ;;
+          *) publish="${e#release:}" flag=false ;;
+        esac
+        printf '%s\t%s\n' "$publish" "$flag" >>"$R/releases"
         # The merge door creates its own tag; the tag door's already exists,
         # created by the probe as the operator would.
-        grep -qxF "${e#release:}" "$R/tags" || printf '%s\n' "${e#release:}" >>"$R/tags"
+        grep -qxF "$publish" "$R/tags" || printf '%s\n' "$publish" >>"$R/tags"
+        ;;
+      relabel:*)
+        awk -F'\t' -v t="${e#relabel:}" 'BEGIN { OFS = "\t" }
+          $1 == t { $2 = "false" } { print }' "$R/releases" >"$R/releases.tmp"
+        mv "$R/releases.tmp" "$R/releases"
         ;;
       tag:*) printf '%s\n' "${e#tag:}" >>"$R/tags" ;;
       rearm:*) set_main_version "${e#rearm:}" ;;
+      edit:*) main_edit "${e#edit:}" ;;
       none | '') ;;
     esac
   done
@@ -167,6 +184,25 @@ set_main_version() { # the door's own re-arm commit
   newtree="$(next_id)"
   awk -F'\t' -v b="$blob" 'BEGIN{OFS="\t"} $1 == "VERSION" { $2 = b } { print }' \
     "$R/tree/$tree" >"$R/tree/$newtree"
+  newcommit="$(next_id)"
+  printf '%s\n' "$newtree" >"$R/commit/$newcommit"
+  printf '%s\n' "$newcommit" >"$R/refs/$(san heads/main)"
+}
+
+# main_edit <path> — one byte appended to a file on main. No door does this;
+# it is the smallest difference a byte comparison has to catch, which is why
+# the rc cut's must-fail case asks the stub for it (#321).
+main_edit() {
+  local path="$1" tree old newblob newtree newcommit
+  tree="$(tree_of_ref heads/main)" || return 0
+  old="$(awk -F'\t' -v p="$path" '$1 == p { print $2; exit }' "$R/tree/$tree")"
+  [ -n "$old" ] || return 0
+  newblob="$(next_id)"
+  cp "$R/blob/$old" "$R/blob/$newblob"
+  printf '\n' >>"$R/blob/$newblob"
+  newtree="$(next_id)"
+  awk -F'\t' -v p="$path" -v b="$newblob" 'BEGIN { OFS = "\t" }
+    $1 == p { $2 = b } { print }' "$R/tree/$tree" >"$R/tree/$newtree"
   newcommit="$(next_id)"
   printf '%s\n' "$newtree" >"$R/commit/$newcommit"
   printf '%s\n' "$newcommit" >"$R/refs/$(san heads/main)"
@@ -332,7 +368,8 @@ case "$rest" in
     out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | {name: .})' <"$R/tags")"
     ;;
   releases)
-    out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | {tag_name: .})' <"$R/releases")"
+    out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t")
+      | {tag_name: .[0], prerelease: (.[1] == "true")})' <"$R/releases")"
     ;;
   actions/runs)
     head="$(qval head_sha)"
@@ -353,8 +390,12 @@ case "$rest" in
     for e in ${effects//,/ }; do
       case "$e" in
         release:*)
-          printf '%s\n' "${e#release:}" >>"$R/releases"
+          printf '%s\tfalse\n' "${e#release:}" >>"$R/releases"
           printf '%s\n' "${e#release:}" >>"$R/tags"
+          ;;
+        prerelease:*)
+          printf '%s\ttrue\n' "${e#prerelease:}" >>"$R/releases"
+          printf '%s\n' "${e#prerelease:}" >>"$R/tags"
           ;;
         tag:*) printf '%s\n' "${e#tag:}" >>"$R/tags" ;;
       esac
