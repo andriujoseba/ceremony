@@ -336,6 +336,8 @@ jobs:
           grep -F 'The candidate entry survives until promotion' "$EXERCISE_RELEASES/$VER.notes"
           next="$(version_next_dev "$VER")"
           [ "$next" = 0.7.1-dev ]
+          version_write file "$next"
+          [ "$(cat VERSION)" = 0.7.1-dev ]
 
           # The tag door takes the same rc notes/flag branch and never calls
           # the bump: VERSION remains byte-identical after publication.
@@ -344,11 +346,12 @@ jobs:
           cd "$tag_fixture"
           VER=0.8.0-rc2
           before_version="$(cat VERSION)"
+          expected_notes="$(bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" --check)"
           bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" --check > "$RUNNER_TEMP/notes.md"
           git tag "$VER"
           publish_fixture
           grep -Fx 'isPrerelease=true' "$EXERCISE_RELEASES/$VER.meta"
-          grep -F 'The candidate entry survives until promotion' "$EXERCISE_RELEASES/$VER.notes"
+          printf '%s\n' "$expected_notes" | diff -u - "$EXERCISE_RELEASES/$VER.notes"
           [ "$(cat VERSION)" = "$before_version" ]
           echo "rc replay ($CEREMONY_DIR): merge/tag prereleases and final promotion carried real release facts"
 
