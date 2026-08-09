@@ -77,17 +77,39 @@ check "read: unknown backend refused" 1 "unknown backend" version_read carrier-p
 # --- version_is_dev ----------------------------------------------------------
 
 check "is_dev: 1.2.3-dev yes" 0 "" version_is_dev 1.2.3-dev
+check "is_dev: 0.7.0-rc2-dev yes" 0 "" version_is_dev 0.7.0-rc2-dev
 check "is_dev: 1.2.3 no" 1 "" version_is_dev 1.2.3
 check "is_dev: 1.2.3-rc1 no" 1 "" version_is_dev 1.2.3-rc1
 
+# --- version_is_rc -----------------------------------------------------------
+
+check "is_rc: 1.2.3-rc1 yes" 0 "" version_is_rc 1.2.3-rc1
+check "is_rc: 1.2.3-rc10 yes" 0 "" version_is_rc 1.2.3-rc10
+check "is_rc: 1.2.3-rc2-dev no" 1 "" version_is_rc 1.2.3-rc2-dev
+check "is_rc: 1.2.3-rc no" 1 "" version_is_rc 1.2.3-rc
+check "is_rc: 1.2.3 no" 1 "" version_is_rc 1.2.3
+check "is_rc: 1.2.3-dev no" 1 "" version_is_rc 1.2.3-dev
+check "is_rc: 1.2.3-alpha1 no" 1 "" version_is_rc 1.2.3-alpha1
+
 # --- version_next_dev --------------------------------------------------------
 
+check "next_dev: 1.2.3 -> 1.2.4-dev" 0 "" eq "1.2.4-dev" version_next_dev 1.2.3
 check "next_dev: 0.9.0 -> 0.9.1-dev" 0 "" eq "0.9.1-dev" version_next_dev 0.9.0
 check "next_dev: 0.9.9 -> 0.9.10-dev (no decimal snapping)" 0 "" \
   eq "0.9.10-dev" version_next_dev 0.9.9
-check "next_dev: -dev input refused" 1 "refusing" version_next_dev 1.2.3-dev
-check "next_dev: -rc1 input refused" 1 "refusing" version_next_dev 1.2.3-rc1
-check "next_dev: garbage refused" 1 "refusing" version_next_dev garbage
+check "next_dev: 1.2.3-rc1 -> 1.2.3-rc2-dev" 0 "" \
+  eq "1.2.3-rc2-dev" version_next_dev 1.2.3-rc1
+check "next_dev: 1.2.3-rc9 -> 1.2.3-rc10-dev" 0 "" \
+  eq "1.2.3-rc10-dev" version_next_dev 1.2.3-rc9
+check "next_dev: 1.2.3-rc09 -> 1.2.3-rc10-dev (base 10)" 0 "" \
+  eq "1.2.3-rc10-dev" version_next_dev 1.2.3-rc09
+check "next_dev: -dev input refused and named" 1 "1.2.3-dev" \
+  version_next_dev 1.2.3-dev
+check "next_dev: malformed rc input refused and named" 1 "1.2.3-rc" \
+  version_next_dev 1.2.3-rc
+check "next_dev: non-rc identifier refused and named" 1 "1.2.3-alpha1" \
+  version_next_dev 1.2.3-alpha1
+check "next_dev: garbage refused and named" 1 "garbage" version_next_dev garbage
 
 # --- version_write, file backend ---------------------------------------------
 
