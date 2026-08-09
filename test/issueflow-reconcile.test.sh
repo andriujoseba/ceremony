@@ -2578,6 +2578,20 @@ check "a tilde line does not close a backtick fence" 0 \
   '- %C#206 — still inside the backtick fence' \
   '```' \
   '- %C#257'
+# And the converse, which is not the same assertion: the rule is written as one
+# comparison against the character that OPENED the fence, so a fix that special-
+# cased backticks would pass the case above and fail this one.
+check "...and a backtick line does not close a tilde fence" 0 \
+  "epic [253 257] membership [253 257]" \
+  both_parsers \
+  '%H' \
+  '- %C#253' \
+  '~~~' \
+  '```' \
+  '%H' \
+  '- %C#208 — still inside the tilde fence' \
+  '~~~' \
+  '- %C#257'
 # Decided behavior, not an oversight (#349 D3): an unclosed fence consumes the
 # rest of the body, and GitHub renders that body exactly the same way — as one
 # open code block. Under-reading a body a reader also sees as quoted is the
