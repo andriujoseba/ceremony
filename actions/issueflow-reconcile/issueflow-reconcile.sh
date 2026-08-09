@@ -402,10 +402,63 @@ blocked_decision() { # $1 local refs, $2 OPEN/CLOSED states, $3 cross-repo refs
 }
 
 epic_references() { # markdown task-list issue references from body on stdin
+  # The progress view, read by HEADING like `membership_references` reads
+  # `## Members`. The two parses stay separate rather than sharing a helper
+  # (#349 D5): this one requires a checkbox — `## Task list` is a *task* list,
+  # so an unchecked bullet under it is prose — and prints the WHOLE row, taking
+  # every local reference in it, which is right for a progress view and wrong
+  # for the membership record (#343 D2). A helper would have to parameterize
+  # both differences, and the contrast is the thing worth writing down.
+  #
+  # What the two DO share is three rules — the marker class, the indentation
+  # bound and the fence — stated identically here and there, and pinned to each
+  # other by one test rather than to two transcribed literals (#349 D4, D6).
+  #
+  # A row is any Markdown list row, so the marker class is the whole CommonMark
+  # set and exactly it — `-`, `*`, `+`, and 1 to 9 digits then `.` or `)`
+  # (CommonMark 5.2). Recognising only `-` and `*` dropped three rows of five,
+  # and the failure was silent at both ends: GitHub renders all five rows
+  # identically, so nothing in the rendered issue tells a human their row is
+  # invisible, and an empty reference set is indistinguishable from an
+  # incomplete epic — `epic_decision "" ""` is `KEEP` — so an epic enumerated
+  # under `+` sits complete and unannounced forever (#349).
+  #
+  # Indentation is bounded the same way and for the same reason: at most three
+  # spaces open a row (CommonMark 4.4), and a leading tab is four columns of it
+  # wherever indentation decides block structure. Past that bound the line is
+  # not a top-level row — GitHub renders `    - [ ] #900` after `## Task list`
+  # as `<pre><code>` — and enrolling one is a phantom child that holds the epic
+  # at `KEEP` forever, the mirror of the phantom member that keeps a window
+  # standing (#348, #349 D4). The heading takes the same bound, in BOTH the
+  # positions a heading is read: `   ## Task list` is an `h2` to GitHub, so it
+  # opens, and `   ## Dependencies` closes — an indented terminator used to run
+  # the parse on into the next section and enrol its rows, which is the unsafe
+  # direction of the pair (#349 D8).
+  #
+  # The fence rule is shared with `membership_references` verbatim (#349 D2,
+  # D3), because the parse must agree with what GitHub renders: a heading
+  # inside a code fence used to open the section, and a later real heading
+  # re-opened it, so the two sets unioned and an example record quoted in a
+  # fence enrolled its rows as real ones. A delimiter is `^ {0,3}` then a
+  # backtick or tilde run — four columns, tab included, is an indented code
+  # block and not a fence. The first delimiter opens; the next one whose
+  # leading character matches closes, so a tilde line does not close a backtick
+  # fence. Info strings are ignored and run length is not tracked, so a longer
+  # inner run closes an outer fence: a bounded, documented approximation. An
+  # unclosed fence therefore consumes the rest of the body — which is exactly
+  # what GitHub renders too, and under-reading a body shown as one open code
+  # block is the correct direction of error.
   awk '
-    tolower($0) ~ /^##[[:space:]]+task list[[:space:]]*$/ { in_list = 1; next }
-    in_list && /^#/ { exit }
-    in_list && /^[[:space:]]*[-*][[:space:]]+\[[ xX]\]/ { print }
+    /^ {0,3}(```|~~~)/ {
+      delim = $0; sub(/^ {0,3}/, "", delim); char = substr(delim, 1, 1)
+      if (!in_fence) { in_fence = 1; fence_char = char }
+      else if (char == fence_char) { in_fence = 0 }
+      next
+    }
+    in_fence { next }
+    tolower($0) ~ /^ {0,3}##[[:space:]]+task list[[:space:]]*$/ { in_list = 1; next }
+    in_list && /^ {0,3}#/ { exit }
+    in_list && /^ {0,3}([-*+]|[0-9]{1,9}[.)])[[:space:]]+\[[ xX]\]/ { print }
   ' | issue_references \
     | awk -F '\t' '$1 == "LOCAL" { print $2 }' | sort -nu
 }
@@ -609,8 +662,12 @@ membership_references() { # release body on stdin -> its enumerated members
   # any renderer, so reading it as one takes a member out of narration, and one
   # phantom open member keeps a window standing and suppresses its non-member
   # flag. The bound is written twice, in the row match and in the strip, and
-  # both are pinned. `epic_references` matches a narrower class; it is a
-  # progress view with its own fixtures and is byte-unchanged here (#343 D7).
+  # both are pinned. `epic_references` matches the same class and the same
+  # bound: #343 D7 held it byte-unchanged here, and #349 closed that gap on
+  # the epic side, so the two records are now described by the same three
+  # rules — marker class, indentation bound, fence — in the same words. What
+  # still differs is the checkbox and row-vs-first-token, which is why there
+  # is no shared helper (#349 D5).
   #
   # Indentation is bounded the same way and for the same reason: at most three
   # spaces open a row (CommonMark 4.4), and a leading tab is four columns of it
@@ -624,9 +681,40 @@ membership_references() { # release body on stdin -> its enumerated members
   # over. Below the bound the answer goes the other way for the same reason: one
   # to three spaces is byte-identical to a top-level row a human indented, so it
   # enrols, and the sub-row that shape can also be is the price (#348).
+  #
+  # The HEADING takes that same bound, in both the positions a heading is read
+  # (#349 D8). `   ## Members` is an `h2` to GitHub, so it opens the record;
+  # `   ## Gate` closes it. The two positions failed in opposite directions and
+  # the terminator's was the unsafe one — an indented terminator did not close
+  # the record, so the parse ran into the next section and enrolled its rows,
+  # standing a window over a board of non-members.
+  #
+  # The fence rule is shared with `epic_references` verbatim (#349 D2, D3),
+  # because the parse must agree with what GitHub renders: a `## Members`
+  # heading inside a code fence used to open the record, and a later real
+  # heading re-opened it, so the two sets unioned and an example record quoted
+  # in a fence enrolled its rows as real members. The body most likely to quote
+  # the record's own form in a fence is exactly the one triage writes, so a
+  # warning sentence was the weakest remedy available (#349 D2). A delimiter is
+  # `^ {0,3}` then a backtick or tilde run — four columns, tab included, is an
+  # indented code block and not a fence. The first delimiter opens; the next
+  # one whose leading character matches closes, so a tilde line does not close
+  # a backtick fence. Info strings are ignored and run length is not tracked,
+  # so a longer inner run closes an outer fence: a bounded, documented
+  # approximation. An unclosed fence consumes the rest of the body, which is
+  # what GitHub renders too — under-reading a body shown as one open code block
+  # is the correct direction of error, the same direction the marker gap and
+  # the indentation bound already fail in.
   awk '
-    tolower($0) ~ /^##[[:space:]]+members[[:space:]]*$/ { in_record = 1; next }
-    in_record && /^#/ { exit }
+    /^ {0,3}(```|~~~)/ {
+      delim = $0; sub(/^ {0,3}/, "", delim); char = substr(delim, 1, 1)
+      if (!in_fence) { in_fence = 1; fence_char = char }
+      else if (char == fence_char) { in_fence = 0 }
+      next
+    }
+    in_fence { next }
+    tolower($0) ~ /^ {0,3}##[[:space:]]+members[[:space:]]*$/ { in_record = 1; next }
+    in_record && /^ {0,3}#/ { exit }
     in_record && /^ {0,3}([-*+]|[0-9]{1,9}[.)])[[:space:]]+/ {
       row = $0
       sub(/^ {0,3}([-*+]|[0-9]{1,9}[.)])[[:space:]]+/, "", row)
