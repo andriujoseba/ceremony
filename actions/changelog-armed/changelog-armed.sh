@@ -36,6 +36,7 @@ set -euo pipefail
 # per version-source), because the two states are genuinely different:
 #
 #   version ends in -dev  ->  the top section MUST be '## Unreleased'
+#   version is an rc      ->  fragment mode stays armed; fragments survive
 #   version is bare       ->  the top section may be '## Unreleased' (armed,
 #                             the ceremony's own re-arm) or the stamped
 #                             section for exactly that version — AND the
@@ -101,8 +102,24 @@ if [ -d "$fragments_dir" ]; then
     exit 1
   fi
 
+  # RC cuts are tag-only (#317 D1): they neither consume fragments nor stamp
+  # CHANGELOG.md. Refuse a newly stamped candidate section even if the rest of
+  # the fragment tree is coherent; older rc headings deeper in history remain
+  # changelog-monotonic's concern.
+  top="$(grep -m1 '^## ' "$changelog" || true)"
+  top_ver="$(printf '%s\n' "$top" | awk '{ print $2 }')"
+  if [ -n "$top_ver" ] && version_is_rc "$top_ver"; then
+    echo "changelog-armed: the top section '$top_ver' is an rc stamp, but rc cuts are tag-only (#317 D1); leave $changelog untouched" >&2
+    exit 1
+  fi
+
   if version_is_dev "$ver"; then
     echo "changelog-armed: version '$ver' agrees with fragment mode ($fragments_dir)"
+    exit 0
+  fi
+
+  if version_is_rc "$ver"; then
+    echo "changelog-armed: version '$ver' agrees with the rc fragment-mode state ($fragments_dir; fragments survive)"
     exit 0
   fi
 
@@ -115,7 +132,6 @@ if [ -d "$fragments_dir" ]; then
     exit 1
   fi
 
-  top="$(grep -m1 '^## ' "$changelog" || true)"
   [ -n "$top" ] || {
     echo "changelog-armed: $changelog has no '## ' section at all — the release stamp for '$ver' is missing" >&2
     exit 1
@@ -125,7 +141,6 @@ if [ -d "$fragments_dir" ]; then
       "$ver" "$diagnosis" >&2
     exit 1
   fi
-  top_ver="$(printf '%s\n' "$top" | awk '{ print $2 }')"
   if [ "$top_ver" != "$ver" ]; then
     cat >&2 <<EOF
 changelog-armed: the version is '$ver' but the top section of $changelog is:
@@ -146,18 +161,30 @@ fi
 # The TOP section: the first '## ' heading in the file. Everything above it is
 # the changelog's own preamble and belongs to no section.
 top="$(grep -m1 '^## ' "$changelog" || true)"
-[ -n "$top" ] || {
-  echo "changelog-armed: $changelog has no '## ' section at all — nothing for a PR entry to land under" >&2
-  exit 1
-}
-
 # '## 0.7.0 — 2026-07-19' -> '0.7.0'. Split on whitespace, the same shape
 # changelog_section matches on, so the two cannot disagree about what a
 # section header is.
 top_ver="$(printf '%s\n' "$top" | awk '{ print $2 }')"
 
+# A stamped rc top section is drift in every mode: candidates are tag-only
+# under #317 D1. Deeper rc headings are historical and deliberately ignored.
+if [ -n "$top_ver" ] && version_is_rc "$top_ver"; then
+  echo "changelog-armed: the top section '$top_ver' is an rc stamp, but rc cuts are tag-only (#317 D1); leave $changelog untouched" >&2
+  exit 1
+fi
+
+if version_is_rc "$ver"; then
+  echo "changelog-armed: version '$ver' is an rc tree, but rc is fragment-mode only (#317 D4); adopt changelog fragments first" >&2
+  exit 1
+fi
+
+[ -n "$top" ] || {
+  echo "changelog-armed: $changelog has no '## ' section at all — nothing for a PR entry to land under" >&2
+  exit 1
+}
+
 # version_is_dev is the single definition of the -dev special case (#3): an
-# rc is a pre-release, not a dev tree, and keys on the bare rules below.
+# rc is a pre-release, not a dev tree; its fragment-only refusal is above.
 if version_is_dev "$ver"; then
   if [ "$top_ver" != "Unreleased" ]; then
     cat >&2 <<EOF

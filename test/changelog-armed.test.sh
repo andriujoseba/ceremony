@@ -186,18 +186,35 @@ EOF
 check "bare: an rc section never satisfies the bare version" 1 "HALF-DONE ceremony" \
   in_tree bare-rc-only
 
-# An rc is a pre-release, not a dev tree (#3's version_is_dev): it keys on
-# the bare rules, so a stamped rc section of its own is shippable.
+# An rc is tag-only: a stamped rc section at the top is always drift.
 tree rc-stamped 2.0.0-rc1 <<'EOF'
 # Changelog
-
-## Unreleased
 
 ## 2.0.0-rc1 — 2026-07-20
 
 - The candidate's entry.
 EOF
-check "rc keys as bare, own stamped section passes" 0 "agrees" in_tree rc-stamped
+check "heading mode: stamped rc top section fails as tag-only drift" 1 \
+  "tag-only (#317 D1)" in_tree rc-stamped
+
+tree rc-heading-mode 2.0.0-rc1 <<'EOF'
+# Changelog
+
+## 1.9.0 — 2026-07-20
+
+- The prior release.
+EOF
+check "rc tree refuses heading mode and teaches fragment adoption" 1 \
+  "fragment-mode only (#317 D4); adopt changelog fragments" in_tree rc-heading-mode
+
+tree rc-heading-mode-no-sections 2.0.0-rc1 <<'EOF'
+# Changelog
+
+Preamble only.
+EOF
+check "rc heading-mode refusal outranks the generic missing-section diagnosis" 1 \
+  "fragment-mode only (#317 D4); adopt changelog fragments" \
+  in_tree rc-heading-mode-no-sections
 
 # --- degenerate trees --------------------------------------------------------
 
@@ -208,6 +225,11 @@ Only preamble prose, no sections.
 EOF
 check "changelog with no '## ' at all fails" 1 "nothing for a PR entry to land under" \
   in_tree no-sections
+
+printf '%s\n' '# Changelog' '' '## ' '' 'Section without a version.' | \
+  tree empty-section-version 1.2.4-dev
+check "empty section version retains the development-tree diagnosis" 1 \
+  "development tree" in_tree empty-section-version
 
 mkdir -p "$TMP/no-changelog"
 printf '1.2.3\n' >"$TMP/no-changelog/VERSION"
@@ -268,6 +290,11 @@ EOF
 check "fragment -dev + marker + no fragments passes" 0 "fragment mode" \
   in_tree fragments-dev-empty
 
+printf '%s\n' '# Changelog' '' '## ' '' 'Section without a version.' | \
+  fragment_tree fragments-dev-empty-section-version 1.2.4-dev
+check "fragment mode ignores an empty section version" 0 "agrees with fragment mode" \
+  in_tree fragments-dev-empty-section-version
+
 fragment_tree fragments-dev-flat 1.2.4-dev <<'EOF'
 # Changelog
 
@@ -278,6 +305,28 @@ EOF
 printf '%s\n' "- Added fragment mode (#115)." >"$TMP/fragments-dev-flat/changelog.d/115.md"
 check "fragment -dev + well-formed flat fragment passes" 0 "fragment mode" \
   in_tree fragments-dev-flat
+
+fragment_tree fragments-rc-survivor 2.0.0-rc1 <<'EOF'
+# Changelog
+
+## 1.9.0 — 2026-07-20
+
+- The prior release.
+EOF
+printf '%s\n' "- Candidate entry survives (#319)." \
+  >"$TMP/fragments-rc-survivor/changelog.d/319.md"
+check "fragment rc + surviving publishable fragment passes explicitly as rc" 0 \
+  "rc fragment-mode state" in_tree fragments-rc-survivor
+
+fragment_tree fragments-rc-stamped 2.0.0-rc1 <<'EOF'
+# Changelog
+
+## 2.0.0-rc1 — 2026-07-20
+
+- Candidate entry that should not have been stamped.
+EOF
+check "fragment rc refuses a stamped rc top section as tag-only drift" 1 \
+  "tag-only (#317 D1)" in_tree fragments-rc-stamped
 
 # The entry length bound (#167) reds the PR that writes the fragment, with
 # the shared changelog_fragment_problem diagnosis.
