@@ -143,6 +143,22 @@ check "a whole record passes the shape check" 0 "six probe rows" \
   record_check "$TMP/record-good.md"
 check "a probe row with no run ID reds the shape check" 1 "probe 3 has no run ID" \
   record_check "$TMP/record-no-run.md"
+# The diagnostic's own opening: `${problems#; }` strips the separator the
+# accumulator starts with, and the old `${problems# ; }` matched nothing.
+check "the diagnostic opens on the problem, not on its separator" 1 \
+  "record_check: probe 3 has no run ID" record_check "$TMP/record-no-run.md"
+# The dash exemption is for a probe that aborted before any run existed, and
+# for nothing else: a row that merely lost its run ID still reds, however it
+# is marked.
+sed 's#| \[1003\](https://github.com/o/n/actions/runs/1003) |#| — |#' \
+  "$TMP/record-good.md" >"$TMP/record-dash-pass.md"
+check "a dash run cell on a passing row still reds the shape check" 1 \
+  "probe 3 has no run ID" record_check "$TMP/record-dash-pass.md"
+sed -e 's#| \[1003\](https://github.com/o/n/actions/runs/1003) |#| — |#' \
+  -e '/| — |/ s/| ✅ ok |/| ❌ aborted before it reached a verdict |/' \
+  "$TMP/record-good.md" >"$TMP/record-aborted.md"
+check "a probe that aborted before any run is the one row exempt" 0 \
+  "six probe rows" record_check "$TMP/record-aborted.md"
 head -n 8 "$TMP/record-good.md" >"$TMP/record-short.md"
 printf 'It is **pending the operator'"'"'s delete**.\n' >>"$TMP/record-short.md"
 check "a record missing probes reds the shape check" 1 "probe 5 has no row" \
@@ -193,6 +209,68 @@ check "a failed probe is recorded as failed, not smoothed over" 0 "1 probe(s) fa
   bash -c 'sed "s/\tPASS\t1\t1\t1\t1\trefused at decide/\tFAIL\t1\t2\t1\t1\ttags moved 1→2/" "$2" >"$4/failed.tsv"
     source "$1/drill/lib/record.sh"; record_render "$3" "$4/failed.tsv" "$4/setup.tsv"' \
   _ "$ROOT" "$TMP/probes.tsv" "$TMP/ctx.tsv" "$TMP"
+
+# ---------------------------------------------------------------------------
+# The conclusion is evidence exactly as the table is, and round 1 caught it
+# not being: `## What the rehearsal establishes` was one unconditional
+# heredoc, so a record whose probes 3 and 6 failed emitted the honest banner
+# and the ❌ rows and then closed by asserting the two refusals that had just
+# failed. These cases sit here because that is precisely where the row
+# assertions above stopped.
+# ---------------------------------------------------------------------------
+sed -e 's/\tPASS\t1\t1\t1\t1\trefused at decide/\tFAIL\t1\t2\t1\t1\ttags moved 1→2, expected a delta of 0/' \
+  -e 's/\tPASS\t2\t2\t2\t2\trefused before publication/\tFAIL\t2\t2\t2\t3\treleases moved 2→3, expected a delta of 0/' \
+  "$TMP/probes.tsv" >"$TMP/two-failed.tsv"
+record_render "$TMP/ctx.tsv" "$TMP/two-failed.tsv" "$TMP/setup.tsv" >"$TMP/two-failed.md"
+check "a failed probe's claim does not survive into the conclusion" 1 "" \
+  grep -qF 'refused a bare version push' "$TMP/two-failed.md"
+check "the second failed probe's claim does not survive either" 1 "" \
+  grep -qF 'refused a mismatched tag before creating anything' "$TMP/two-failed.md"
+check "the failure takes the withdrawn claim's place" 0 \
+  "probe 3 (bare-version PR without \`release\`) failed: tags moved 1→2" \
+  cat "$TMP/two-failed.md"
+check "a passing probe's claim still stands beside the failures" 0 \
+  "✅ The merge door refused a re-run of its own completed ceremony." \
+  cat "$TMP/two-failed.md"
+check "the conclusion counts what the run did not establish" 0 \
+  "Not established: 2 of the six" cat "$TMP/two-failed.md"
+check "the clean-run closing sentence is not on a failed record" 1 "" \
+  grep -qF 'Every refusal claim above is asserted' "$TMP/two-failed.md"
+check "a two-failure record still passes the shape check" 0 "six probe rows" \
+  record_check "$TMP/two-failed.md"
+# A probe that never wrote a row establishes nothing either, and the
+# conclusion counts it with the failures rather than passing over it.
+grep -v '^6	' "$TMP/probes.tsv" >"$TMP/five.tsv"
+check "a probe that never ran is named, not skipped" 0 \
+  "probe 6 did not run, so this record makes no claim for it" \
+  record_render "$TMP/ctx.tsv" "$TMP/five.tsv" "$TMP/setup.tsv"
+# The shape check grades the conclusion too: a record whose claims were
+# trimmed is as unreadable as one whose rows were.
+grep -v '^- ✅ The tag door' "$TMP/rendered.md" >"$TMP/record-short-claims.md"
+check "a conclusion missing a probe line reds the shape check" 1 \
+  "the conclusion has 4 probe lines, expected 6" \
+  record_check "$TMP/record-short-claims.md"
+
+# ---------------------------------------------------------------------------
+# `probe_counts` refuses a count that did not read (round 1). An API error
+# prints nothing, and `$((after - before))` over an empty string is 0 — the
+# very delta a refusal probe is looking for, so the swallowed read would have
+# recorded a PASS on measurements nobody took.
+# ---------------------------------------------------------------------------
+check "a tag count that did not read is refused, never taken for zero" 1 \
+  "the tag count at some/repo did not read as a number" \
+  bash -c 'source "$1/drill/lib/scratch.sh"; source "$1/drill/lib/probes.sh"
+    scratch_tag_count() { printf ""; }; scratch_release_count() { printf "3\n"; }
+    probe_counts some/repo' _ "$ROOT"
+check "a release count that came back as prose is refused too" 1 \
+  "the release count at some/repo did not read as a number" \
+  bash -c 'source "$1/drill/lib/scratch.sh"; source "$1/drill/lib/probes.sh"
+    scratch_tag_count() { printf "2\n"; }; scratch_release_count() { printf "not found\n"; }
+    probe_counts some/repo' _ "$ROOT"
+check "two counts that did read are what probe_counts prints" 0 "2	3" \
+  bash -c 'source "$1/drill/lib/scratch.sh"; source "$1/drill/lib/probes.sh"
+    scratch_tag_count() { printf "2\n"; }; scratch_release_count() { printf "3\n"; }
+    probe_counts some/repo' _ "$ROOT"
 
 # ---------------------------------------------------------------------------
 # The stub, and the fixture-before-caller ordering it lets us drive.
@@ -250,6 +328,22 @@ ordering_probe() {
   )
 }
 mkdir -p "$TMP/caller-stage"
+# ---------------------------------------------------------------------------
+# "Verbatim but for the pin" is the caller stub's whole claim, so it is
+# measured against docs/CONSUMERS.md rather than asserted in a comment: the
+# doc's fenced block with its `uses:` line swapped for the fork pin is
+# byte-for-byte what the drill installs. Round 1 caught the stub quietly
+# dropping the block's trailing `# or: package-json`, found by diffing the two
+# by hand — which is the work this case exists to stop repeating.
+# ---------------------------------------------------------------------------
+caller_write "$TMP/stub" "$FORK" "$FORK_REF"
+awk '/^```yaml$/ { inblock = 1; next } /^```$/ { if (inblock) exit } inblock' \
+  "$ROOT/docs/CONSUMERS.md" |
+  sed "s#^    uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>\$#    uses: $FORK/.github/workflows/release.yml@$FORK_REF#" \
+    >"$TMP/caller.expected"
+check "the caller stub is CONSUMERS.md's block, verbatim but for the pin" 0 "" \
+  diff -u "$TMP/caller.expected" "$TMP/stub/.github/workflows/release.yml"
+
 check "the caller refuses to land on a tree with no armed fixture" 1 \
   "is missing the armed fixture: VERSION" ordering_probe "$UNSEEDED"
 check "the refusal names the lesson it enforces" 1 "the 0.4.0 setup lesson" \
@@ -358,6 +452,39 @@ check "the failed probe's row carries the failure mark" 0 "❌" \
 check "a failed drill is still a record" 0 "six probe rows" record_check "$TMP/leaky.md"
 check "a failed drill still says so at the top" 0 "1 probe(s) failed" cat "$TMP/leaky.md"
 check "a failed drill still archives the scratch repo" 0 "" \
+  grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
+
+# ---------------------------------------------------------------------------
+# A probe that aborts on infrastructure rather than on a door verdict. The
+# realistic shape is `scratch_run_for` exhausting its polls on a run that
+# never completes, which the stub reaches by running out of scenario: no run
+# is fired at that head at all. Called bare under `set -e` this aborted the
+# script before the archive and the record, and the EXIT trap took
+# `probes.tsv` with it — an unarchived scratch repo and no record, under a
+# header comment promising the record either way (round 1).
+# ---------------------------------------------------------------------------
+stub_reset
+green_scenario "$TMP/aborted.scenario"
+head -n 7 "$TMP/aborted.scenario" >"$TMP/aborted.tmp" &&
+  mv "$TMP/aborted.tmp" "$TMP/aborted.scenario"
+aborted_out="$(run_rehearsal "$TMP/aborted.scenario" --out "$TMP/aborted.md" 2>&1)"
+aborted_rc=$?
+check "an aborted probe does not abort the rehearsal" 0 "" test "$aborted_rc" -eq 0
+check "the aborted probe is reported as the one failure" 0 "probes passed 5/6, failed 1" \
+  printf '%s\n' "$aborted_out"
+check "the record exists at all after an abort" 0 "" test -s "$TMP/aborted.md"
+check "the aborted probe's row says it aborted" 0 "❌ aborted before it reached a verdict" \
+  bash -c 'awk "/^\\| 6 \\|/" "$1"' _ "$TMP/aborted.md"
+check "the aborted probe's row links no run it never had" 0 "| — |" \
+  bash -c 'awk "/^\\| 6 \\|/" "$1"' _ "$TMP/aborted.md"
+check "the record after an abort still passes the shape check" 0 "six probe rows" \
+  record_check "$TMP/aborted.md"
+check "the aborted probe establishes nothing in the conclusion" 1 "" \
+  grep -qF 'refused a mismatched tag before creating anything' "$TMP/aborted.md"
+check "the probes before the abort still stand" 0 \
+  "✅ The tag door published from a matching manual tag without touching main." \
+  cat "$TMP/aborted.md"
+check "an aborted probe still archives the scratch repo" 0 "" \
   grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
 
 # ---------------------------------------------------------------------------

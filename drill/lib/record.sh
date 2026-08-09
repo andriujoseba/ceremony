@@ -67,9 +67,9 @@ record_setup_rows() {
 # closing a two-failure run with the two refusals that had just failed.
 record_claim() {
   case "${1:?record_claim: n required}" in
-    1) printf 'The merge door published exactly one `%s` release from a labeled ceremony PR, tagged the reviewed merge commit, and re-armed main itself.' "${2:?record_claim: version required}" ;;
-    2) printf 'The merge door stayed a green no-op under a `release` label carried by ordinary work.' ;;
-    3) printf 'The merge door refused a bare version push without the `release` label.' ;;
+    1) printf "The merge door published exactly one \`%s\` release from a labeled ceremony PR, tagged the reviewed merge commit, and re-armed main itself." "${2:?record_claim: version required}" ;;
+    2) printf "The merge door stayed a green no-op under a \`release\` label carried by ordinary work." ;;
+    3) printf "The merge door refused a bare version push without the \`release\` label." ;;
     4) printf 'The merge door refused a re-run of its own completed ceremony.' ;;
     5) printf 'The tag door published from a matching manual tag without touching main.' ;;
     6) printf 'The tag door refused a mismatched tag before creating anything.' ;;
