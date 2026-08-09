@@ -161,12 +161,18 @@ jobs:
         run: |
           # shellcheck source=/dev/null
           . "$CEREMONY_DIR/lib/changelog.sh"
-          if ! diagnosis="$(changelog_section_problem CHANGELOG.md "$VER")"; then
-            echo "CHANGELOG.md has no '## $VER' section at the merge commit — the ceremony PR must stamp it; refusing to publish an empty release" >&2
-            printf '%s\n' "$diagnosis" >&2
-            exit 1
+          # shellcheck source=/dev/null
+          . "$CEREMONY_DIR/lib/version.sh"
+          if version_is_rc "$VER"; then
+            bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" --check > "$RUNNER_TEMP/notes.md"
+          else
+            if ! diagnosis="$(changelog_section_problem CHANGELOG.md "$VER")"; then
+              echo "CHANGELOG.md has no '## $VER' section at the merge commit — the ceremony PR must stamp it; refusing to publish an empty release" >&2
+              printf '%s\n' "$diagnosis" >&2
+              exit 1
+            fi
+            changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
           fi
-          changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
       - name: an entry-less stamped fixture is refused by the notes predicate
         working-directory: ${{ runner.temp }}/fixture

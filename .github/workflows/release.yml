@@ -198,12 +198,18 @@ jobs:
         run: |
           # shellcheck source=/dev/null
           . "$CEREMONY_DIR/lib/changelog.sh"
-          if ! diagnosis="$(changelog_section_problem CHANGELOG.md "$VER")"; then
-            echo "CHANGELOG.md has no '## $VER' section at the merge commit — the ceremony PR must stamp it; refusing to publish an empty release" >&2
-            printf '%s\n' "$diagnosis" >&2
-            exit 1
+          # shellcheck source=/dev/null
+          . "$CEREMONY_DIR/lib/version.sh"
+          if version_is_rc "$VER"; then
+            bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" --check > "$RUNNER_TEMP/notes.md"
+          else
+            if ! diagnosis="$(changelog_section_problem CHANGELOG.md "$VER")"; then
+              echo "CHANGELOG.md has no '## $VER' section at the merge commit — the ceremony PR must stamp it; refusing to publish an empty release" >&2
+              printf '%s\n' "$diagnosis" >&2
+              exit 1
+            fi
+            changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
           fi
-          changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
       - name: nothing may exist yet — no tag, no release (re-runs refuse loudly)
         if: steps.decide.outputs.ceremony == 'yes'
@@ -249,17 +255,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ steps.facts.outputs.ver }}
         run: |
+          # shellcheck source=/dev/null
+          . "$CEREMONY_DIR/lib/version.sh"
+          release_flags=()
+          if version_is_rc "$VER"; then
+            release_flags+=(--prerelease)
+          fi
           assets=()
           for f in "$RELEASE_ASSETS_DIR"/*; do
             if [ -e "$f" ]; then assets+=("$f"); fi
           done
           gh release create "$VER" --verify-tag --title "$VER" \
             --notes-file "$RUNNER_TEMP/notes.md" -R "$GITHUB_REPOSITORY" \
+            "${release_flags[@]}" \
             "${assets[@]}"
       # The post-release bump, folded into the release act (the sources'
       # operator decision: a mechanical one-liner deserves no PR of its
-      # own). X.Y.(Z+1)-dev is arithmetic, not judgment (version_next_dev
-      # refuses anything but bare X.Y.Z). A GITHUB_TOKEN push fires no
+      # own). X.Y.(Z+1)-dev and X.Y.Z-rc(N+1)-dev are arithmetic, not
+      # judgment (version_next_dev refuses every other shape). A GITHUB_TOKEN push fires no
       # workflows (anti-recursion), so the bump triggers neither this door
       # nor a red run; should branch protection refuse the direct push, the
       # step opens the bump PR itself and says so, loudly, instead of
@@ -289,7 +302,7 @@ jobs:
             file) git add VERSION ;;
             package-json) git add package.json package-lock.json ;;
           esac
-          git commit -m "chore: bump main to $next — a dev install must not impersonate $VER"
+          git commit -m "chore: bump main to $next — re-arm after publishing $VER"
           if ! git push origin main; then
             echo "direct push refused (branch protection?) — opening the bump PR instead" >&2
             git checkout -b "chore/bump-$next"
@@ -343,12 +356,18 @@ jobs:
         run: |
           # shellcheck source=/dev/null
           . "$CEREMONY_DIR/lib/changelog.sh"
-          if ! diagnosis="$(changelog_section_problem CHANGELOG.md "$VER")"; then
-            echo "CHANGELOG.md has no '## $VER' section — run changelog-assemble in the release PR before tagging; refusing to publish an empty release" >&2
-            printf '%s\n' "$diagnosis" >&2
-            exit 1
+          # shellcheck source=/dev/null
+          . "$CEREMONY_DIR/lib/version.sh"
+          if version_is_rc "$VER"; then
+            bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" --check > "$RUNNER_TEMP/notes.md"
+          else
+            if ! diagnosis="$(changelog_section_problem CHANGELOG.md "$VER")"; then
+              echo "CHANGELOG.md has no '## $VER' section — run changelog-assemble in the release PR before tagging; refusing to publish an empty release" >&2
+              printf '%s\n' "$diagnosis" >&2
+              exit 1
+            fi
+            changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
           fi
-          changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
       - name: artifact hook — the consumer's own release-artifact action
         # After the tag exists (it fired this door), before the publish —
@@ -362,10 +381,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ steps.assert.outputs.ver }}
         run: |
+          # shellcheck source=/dev/null
+          . "$CEREMONY_DIR/lib/version.sh"
+          release_flags=()
+          if version_is_rc "$VER"; then
+            release_flags+=(--prerelease)
+          fi
           assets=()
           for f in "$RELEASE_ASSETS_DIR"/*; do
             if [ -e "$f" ]; then assets+=("$f"); fi
           done
           gh release create "$VER" --verify-tag --title "$VER" \
             --notes-file "$RUNNER_TEMP/notes.md" -R "$GITHUB_REPOSITORY" \
+            "${release_flags[@]}" \
             "${assets[@]}"
