@@ -598,6 +598,10 @@ and is available at `0.6.0` and later: consumers add `.ceremony/RELEASES.md`
 only with the ordinary pin bump and re-sync, never by copying it ahead of
 their pinned doctrine set.
 
+Native release-candidate cuts and deterministic rc re-arming are available
+at `0.7.0` and later (#322). Adopt them with that ordinary pin bump and
+re-sync; earlier pins do not carry the rc release path.
+
 ### Read the manifest, never a copy of it
 
 Anything on the consumer's side that needs to know *which* documents are
