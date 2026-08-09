@@ -8,6 +8,21 @@ only ever run live: gating on a real push event, the tag create, the
 publish, the `-dev` re-arm (release.yml's "what is honestly untested"). The
 drill is where they run live *before* a version rests on them.
 
+## The instrument
+
+This directory is the record, not the instrument — the instrument is
+[`drill/rehearsal.sh`](../drill/rehearsal.sh). It drives the rehearsal below
+end to end against a disposable repo and emits the record, so a release owes
+a run rather than an hour of hand-steps: a manual hour loses to a waiver
+every time, and a script does not. The procedure that follows stays the
+normative text — it is the script's specification and the script implements
+it, doctrine first. Two of its refusals are the script's own rather than its
+operator's, because both are incidents: it archives and never deletes
+(#135), and it refuses to pin the caller stub at a tag-named ref on this
+repo (the 0.1.0 shadow-tag rule, step 2 below). A run with failed probes is
+still a record — the rehearsal shape simply has one producer now, while the
+two judgement shapes below stay hand-written (#313).
+
 ## The rehearsal
 
 1. Create a scratch **private** repo. It is disposable by design — but the
