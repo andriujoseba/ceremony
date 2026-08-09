@@ -12,7 +12,7 @@
 #
 # with effects a comma-separated list of `release:<tag>`,
 # `prerelease:<tag>`, `relabel:<tag>`, `tag:<name>`, `rearm:<version>`,
-# `edit:<path>` or `none`. That is what lets the suite drive a full green sequence, and
+# `edit:<path>`, `drop:<path>` or `none`. That is what lets the suite drive a full green sequence, and
 # equally a refusal probe whose after-count grew. `prerelease:` is the rc
 # door's publish and `relabel:` clears a published prerelease flag — a thing
 # no door should ever do, which is exactly why the promotion probe's
@@ -171,6 +171,7 @@ fire() {
       tag:*) printf '%s\n' "${e#tag:}" >>"$R/tags" ;;
       rearm:*) set_main_version "${e#rearm:}" ;;
       edit:*) main_edit "${e#edit:}" ;;
+      drop:*) main_drop "${e#drop:}" ;;
       none | '') ;;
     esac
   done
@@ -203,6 +204,19 @@ main_edit() {
   newtree="$(next_id)"
   awk -F'\t' -v p="$path" -v b="$newblob" 'BEGIN { OFS = "\t" }
     $1 == p { $2 = b } { print }' "$R/tree/$tree" >"$R/tree/$newtree"
+  newcommit="$(next_id)"
+  printf '%s\n' "$newtree" >"$R/commit/$newcommit"
+  printf '%s\n' "$newcommit" >"$R/refs/$(san heads/main)"
+}
+
+# main_drop <path> — a file removed from main. Another shape no door
+# produces: it is how the suite asks whether "every fragment survives" is a
+# measurement or a sentence (#321).
+main_drop() {
+  local path="$1" tree newtree newcommit
+  tree="$(tree_of_ref heads/main)" || return 0
+  newtree="$(next_id)"
+  grep -v "^$path	" "$R/tree/$tree" >"$R/tree/$newtree" || :
   newcommit="$(next_id)"
   printf '%s\n' "$newtree" >"$R/commit/$newcommit"
   printf '%s\n' "$newcommit" >"$R/refs/$(san heads/main)"

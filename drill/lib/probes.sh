@@ -35,6 +35,7 @@ promotion of the rc to the final version"
 # names rather than the rows it happens to have been handed, so the count
 # lives beside the names and nothing downstream repeats it as a literal —
 # the two rc legs arrived as one edit here (#321).
+# shellcheck disable=SC2034 # read by drill/lib/record.sh and rehearsal.sh
 DRILL_PROBE_COUNT="$(printf '%s\n' "$DRILL_PROBE_NAMES" | wc -l | tr -d ' ')"
 
 # probe_name <n>

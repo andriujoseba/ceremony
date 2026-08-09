@@ -104,8 +104,37 @@ check "a ceremony that published nothing reds its probe" 0 "releases moved 0→0
   probe_verdict success success 0 1 0 0 1 1
 check "a ceremony that published exactly one holds" 0 "" \
   test -z "$(probe_verdict success success 0 1 0 1 1 1)"
-check "the probe names are the doctrine's six" 0 "" \
+check "the probe names are the doctrine's eight" 0 "" \
   test "$(probe_name 4)" = "re-run of the completed ceremony"
+check "the rc cut is the seventh probe, in doctrine order" 0 "" \
+  test "$(probe_name 7)" = "rc cut, tag-only and marked prerelease"
+check "the promotion is the eighth" 0 "" \
+  test "$(probe_name 8)" = "promotion of the rc to the final version"
+check "the doctrine list is what the record counts" 0 "8" \
+  printf '%s\n' "$DRILL_PROBE_COUNT"
+
+# The rc legs' second measurement: a release's prerelease flag. A tag nobody
+# published answers with a refusal rather than an empty string, for the reason
+# `probe_counts` refuses a count that did not read.
+check "a published prerelease reads as true" 0 "true" \
+  bash -c 'source "$1/drill/lib/scratch.sh"
+    drill_gh() { printf "%s\t%s\n" 0.7.2-rc1 true; }
+    scratch_release_prerelease some/repo 0.7.2-rc1' _ "$ROOT"
+check "a full release reads as false" 0 "false" \
+  bash -c 'source "$1/drill/lib/scratch.sh"
+    drill_gh() { printf "%s\t%s\n" 0.7.2 false; }
+    scratch_release_prerelease some/repo 0.7.2' _ "$ROOT"
+check "a flag nobody published is refused, never taken for false" 1 \
+  "no release tagged '0.7.2-rc1' at some/repo answered with a prerelease flag" \
+  bash -c 'source "$1/drill/lib/scratch.sh"
+    drill_gh() { printf "%s\t%s\n" 0.7.2 false; }
+    scratch_release_prerelease some/repo 0.7.2-rc1' _ "$ROOT"
+
+# The promotion compares the stamped section against the assembled body, and
+# only the separator between a section and the next heading differs by shape.
+printf '%s\n' '- one' '' '- two' '' '' >"$TMP/trim.in"
+check "trailing blanks are dropped, inner ones are content" 0 $'- one\n\n- two' \
+  probe_trim_blank "$TMP/trim.in"
 
 # ---------------------------------------------------------------------------
 # The record's shape check — the script runs it on its own emission, because
@@ -219,6 +248,24 @@ check "the rendered record matches its golden shape" 0 "" \
   diff -u "$ROOT/test/fixtures/drill-record.golden.md" "$TMP/rendered.md"
 check "the rendered record passes its own shape check" 0 "eight probe rows" \
   record_check "$TMP/rendered.md"
+# "Removing either probe reds the golden-shape check" — both halves of it:
+# the emission stops matching the golden, and the shape check names the row
+# that went missing rather than passing a seven-row table.
+for leg in 7 8; do
+  grep -v "^$leg	" "$TMP/probes.tsv" >"$TMP/without-$leg.tsv"
+  record_render "$TMP/ctx.tsv" "$TMP/without-$leg.tsv" "$TMP/setup.tsv" >"$TMP/without-$leg.md"
+  check "a record missing probe $leg no longer matches the golden shape" 1 "" \
+    diff -q "$ROOT/test/fixtures/drill-record.golden.md" "$TMP/without-$leg.md"
+  check "a record missing probe $leg reds the shape check" 1 "probe $leg has no row" \
+    record_check "$TMP/without-$leg.md"
+done
+check "the rendered record names the rc version's own record path" 0 \
+  "drills/0.7.2-rc1.md" cat "$TMP/rendered.md"
+grep -vF 'drills/0.7.2-rc1.md' "$TMP/rendered.md" >"$TMP/record-no-rc-path.md"
+check "a record that never names it reds the shape check" 1 \
+  "does not name the rc version's own record path" \
+  record_check "$TMP/record-no-rc-path.md"
+
 check "probe 4's re-run is recorded as a later attempt of the same run" 0 \
   "actions/runs/1001) (attempt 2)" cat "$TMP/rendered.md"
 check "a failed probe is recorded as failed, not smoothed over" 0 "1 probe(s) failed" \
@@ -631,6 +678,73 @@ check "a failed drill is still a record" 0 "eight probe rows" record_check "$TMP
 check "a failed drill still says so at the top" 0 "1 probe(s) failed" cat "$TMP/leaky.md"
 check "a failed drill still archives the scratch repo" 0 "" \
   grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
+
+# ---------------------------------------------------------------------------
+# The rc legs' own must-fail cases. Each assertion in probes 7 and 8 is worth
+# only what it reds on, so the stub is asked to produce the states a door
+# must never reach: a changelog edited by one byte across a tag-only cut, a
+# fragment consumed by it, a candidate published as a full release, a tag left
+# behind, and a promotion reaching back to clear its candidate's prerelease
+# flag. None of these is a door behavior — that is the point of driving them
+# from the scenario rather than hoping for them.
+# ---------------------------------------------------------------------------
+rc_scenario() { # <file> <awk-line-number> <replacement-line>
+  green_scenario "$1"
+  awk -v n="$2" -v line="$3" 'NR == n { print line; next } { print }' "$1" \
+    >"$1.tmp" && mv "$1.tmp" "$1"
+}
+probe_row() { awk -F'|' -v n=" $2 " '$2 == n { print; exit }' "$1"; }
+
+stub_reset
+rc_scenario "$TMP/rc-stamped.scenario" 10 \
+  "success	prerelease:0.7.2-rc1,rearm:0.7.2-rc2-dev,edit:CHANGELOG.md"
+rc_stamped_out="$(run_rehearsal "$TMP/rc-stamped.scenario" --out "$TMP/rc-stamped.md" 2>&1)"
+check "a one-byte edit to CHANGELOG.md reds the rc cut" 0 \
+  "CHANGELOG.md is not byte-identical across the rc cut" \
+  probe_row "$TMP/rc-stamped.md" 7
+check "the changelog claim is the comparison, not the prose beside it" 0 \
+  "an rc is tag-only and stamps no section" probe_row "$TMP/rc-stamped.md" 7
+check "the run reports the rc cut as the one failure" 0 "probes passed 7/8, failed 1" \
+  printf '%s\n' "$rc_stamped_out"
+check "the record still emits, and says which leg failed" 0 \
+  "probe 7 (rc cut, tag-only and marked prerelease) failed" cat "$TMP/rc-stamped.md"
+check "a failed rc cut withdraws its claim from the conclusion" 1 "" \
+  grep -qF 'left `CHANGELOG.md` byte-identical' "$TMP/rc-stamped.md"
+
+stub_reset
+rc_scenario "$TMP/rc-final.scenario" 10 \
+  "success	release:0.7.2-rc1,rearm:0.7.2-rc2-dev,drop:changelog.d/9.md,tag:0.7.2-leak"
+rc_final_out="$(run_rehearsal "$TMP/rc-final.scenario" --out "$TMP/rc-final.md" 2>&1)"
+check "a candidate published as a full release reds the rc cut" 0 \
+  "reports isPrerelease: false, expected true" probe_row "$TMP/rc-final.md" 7
+check "a fragment consumed by the rc cut reds it too" 0 \
+  "the fragment set changed across the rc cut" probe_row "$TMP/rc-final.md" 7
+check "an rc cut that left a tag behind reds on the count" 0 \
+  "tags moved 2→4, expected a delta of 1" probe_row "$TMP/rc-final.md" 7
+# A candidate published as a full release is still a full release when the
+# promotion looks at it, so this run reds two legs rather than one. The
+# cascade is real and the record states it where it happened, which is the
+# shape a failed drill is supposed to have.
+check "the two legs it broke are both reported failed" 0 "probes passed 6/8, failed 2" \
+  printf '%s\n' "$rc_final_out"
+check "the promotion reds on a candidate that was never a prerelease" 0 \
+  "the '0.7.2-rc1' release reports isPrerelease: false after the promotion" \
+  probe_row "$TMP/rc-final.md" 8
+
+stub_reset
+rc_scenario "$TMP/promotion-relabel.scenario" 11 \
+  "success	release:0.7.2,rearm:0.7.3-dev,relabel:0.7.2-rc1"
+relabel_out="$(run_rehearsal "$TMP/promotion-relabel.scenario" --out "$TMP/relabel.md" 2>&1)"
+check "a promotion that relabels its candidate reds the promotion" 0 \
+  "promoting must not retroactively relabel the candidate" \
+  probe_row "$TMP/relabel.md" 8
+check "the rc cut before it still passed" 0 "✅" probe_row "$TMP/relabel.md" 7
+check "the run reports the promotion as the one failure" 0 "probes passed 7/8, failed 1" \
+  printf '%s\n' "$relabel_out"
+check "a failed promotion withdraws its claim from the conclusion" 1 "" \
+  grep -qF 'while the candidate stayed a prerelease' "$TMP/relabel.md"
+check "a failed rc leg is still a whole record" 0 "eight probe rows" \
+  record_check "$TMP/relabel.md"
 
 # ---------------------------------------------------------------------------
 # A probe that aborts on infrastructure rather than on a door verdict. The
