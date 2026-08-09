@@ -102,13 +102,13 @@ stamps:
 
 (This repo's own ceremony adds a fourth stamp: `CEREMONY_SELF_REF` — the ref
 consumers' runs fetch this repo at — moves to the version being released, in
-[release.yml](.github/workflows/release.yml#L123-L132) and every other
+[release.yml](.github/workflows/release.yml#L125-L134) and every other
 workflow that carries it.
 [self-ref-check.sh](.github/scripts/self-ref-check.sh) fails CI here, not a
 consumer's release, when it is stale.)
 
 **The merge is the ship decision; the tag is transcription.** After the
-merge, [release.yml](.github/workflows/release.yml#L136-L301) asserts its
+merge, [release.yml](.github/workflows/release.yml#L138-L316) asserts its
 way to certainty, tags the merge commit, publishes the GitHub release with
 curated changelog prose as the body, never the generated PR list. A final
 `X.Y.Z` reads its stamped section through
@@ -127,7 +127,7 @@ steps run past the tag, and what a failure at each leaves behind is what
 sorts them. Two fail before the release exists: the consumer's
 [artifact hook](docs/CONSUMERS.md#the-artifact-hook) sits between the tag and
 the publish, so its non-zero exit aborts, and the publish itself
-([`gh release create --verify-tag`](.github/workflows/release.yml#L246-L258))
+([`gh release create --verify-tag`](.github/workflows/release.yml#L254-L273))
 can fail on the API call or the assets. Either leaves the same state — a tag
 standing and no release — which the
 [nothing-exists assert](#the-merge-door-refused-releaseyml) names and the tag
@@ -141,18 +141,18 @@ refusal is the single failure in this file that leaves a real release behind.
   `release`-labeled PR whose version transitioned to bare is the ceremony,
   everything legitimate that isn't one is a green no-op, and every
   half-ceremony dies loudly
-  ([release.yml](.github/workflows/release.yml#L136-L301)). Use it for every
+  ([release.yml](.github/workflows/release.yml#L138-L316)). Use it for every
   normal release.
 
 - **The tag door — the fallback and the backfill.** A bare `X.Y.Z` tag push
   — **no `v` prefix**, box's 0.6.0 set the scheme
-  ([release.yml](.github/workflows/release.yml#L303-L371)) — publishes the
+  ([release.yml](.github/workflows/release.yml#L318-L399)) — publishes the
   same way. The tag is the operator's explicit act, so there is no decide
   and no label check — what is left is two asserts: **the tag names the
   tree's own version**
-  ([L328–L339](.github/workflows/release.yml#L328-L339)) and **the tagged
+  ([L343–L354](.github/workflows/release.yml#L343-L354)) and **the tagged
   tree carries a publishable `## X.Y.Z` section**
-  ([L340–L352](.github/workflows/release.yml#L340-L352)); either failing
+  ([L355–L373](.github/workflows/release.yml#L355-L373)); either failing
   refuses, creating nothing. No `-dev` bump either
   — the fallback does not rewrite main (cast's precedent). Use it when the
   merge path is red, for backfills, and for the
@@ -470,11 +470,11 @@ so this line can only appear when some *other* caller invokes `version_read`
 directly with a backend that is neither `file` nor `package-json`. Fix that
 caller.
 
-### The merge door refused ([release.yml](.github/workflows/release.yml#L136-L301))
+### The merge door refused ([release.yml](.github/workflows/release.yml#L138-L316))
 
 > CHANGELOG.md has no '## $VER' section at the merge commit — the ceremony PR must stamp it; refusing to publish an empty release
 
-[L202–L205](.github/workflows/release.yml#L202-L205): the ceremony merged
+[L208–L212](.github/workflows/release.yml#L208-L212): the ceremony merged
 without its final-release stamp (an rc takes the fragment-assembly branch
 instead). This is a state the
 [armed guard](#changelog-armed--main-never-sits-disarmed) already refuses on
@@ -484,7 +484,7 @@ then publish by the tag door.
 > tag '$VER' already exists — this release already happened, or a manual tag won the race; refusing to re-release, creating nothing.
 > release '$VER' already exists — refusing to re-release, creating nothing.
 
-[L208–L223](.github/workflows/release.yml#L208-L223), the nothing-exists
+[L216–L231](.github/workflows/release.yml#L216-L231), the nothing-exists
 assert — what makes a re-run of a completed ceremony refuse instead of
 clobber, and what catches a manual tag racing the merge. If the release
 truly exists, there is nothing to do: this red is the system declining to do
@@ -496,7 +496,7 @@ re-push the tag, or `gh release create` by hand from a fixed tree.
 
 > direct push refused (branch protection?) — opening the bump PR instead
 
-[L293–L301](.github/workflows/release.yml#L293-L301) — loud, but not a
+[L308–L316](.github/workflows/release.yml#L308-L316) — loud, but not a
 refusal: the post-release `-dev` bump could not push directly, so the run
 opened a `release`-labeled bump PR itself. Your move: merge it promptly —
 until it lands, main is sitting bare, where a dev install impersonates the
@@ -504,30 +504,30 @@ release and the
 [armed guard's window](#changelog-armed--main-never-sits-disarmed) stays
 open.
 
-### The tag door refused ([release.yml](.github/workflows/release.yml#L303-L371))
+### The tag door refused ([release.yml](.github/workflows/release.yml#L318-L399))
 
 > tag '$GITHUB_REF_NAME' does not match the tree's version '$ver' — creating nothing.
 > A release is a PR, then a tag: the release PR bumps the version and stamps the changelog; the tag goes on its MERGE commit. Delete this tag and re-tag the right commit.
 
-[L333–L337](.github/workflows/release.yml#L333-L337). The message is the
+[L349–L353](.github/workflows/release.yml#L349-L353). The message is the
 remedy.
 
 > CHANGELOG.md has no '## $VER' section — run changelog-assemble in the release PR before tagging; refusing to publish an empty release
 
-[L346–L349](.github/workflows/release.yml#L346-L349). The final-release
+[L366–L369](.github/workflows/release.yml#L366-L369). The final-release
 tagged tree was never stamped; an rc takes the fragment-assembly branch
 instead. Assemble the section
 ([docs/CONSUMERS.md](docs/CONSUMERS.md#assembling-a-release-section)), then
 delete and re-push the tag.
 
-### The re-arm refused ([release.yml](.github/workflows/release.yml#L267-L301))
+### The re-arm refused ([release.yml](.github/workflows/release.yml#L282-L316))
 
 The bump belongs to the merge door alone — the tag door deliberately does not
-rewrite main ([L303–L307](.github/workflows/release.yml#L303-L307)) — and it
+rewrite main ([L318–L322](.github/workflows/release.yml#L318-L322)) — and it
 runs *after* the tag, the notes and the publish. So a refusal here leaves a
 real release standing behind a main that never re-armed — the release exists,
 and main is left *armed to impersonate* it, still reading the version it just
-shipped ([L266](.github/workflows/release.yml#L266)). That is the one failure
+shipped ([L281](.github/workflows/release.yml#L281)). That is the one failure
 in this catalog whose remedy is a manual bump, not a re-run.
 
 > version_next_dev: refusing '$ver' — expected bare X.Y.Z or X.Y.Z-rcN
@@ -556,12 +556,13 @@ read — set up node/npm in the caller.
 backend`, and unreachable for the same reason — `VERSION_SOURCE` was validated
 before either was called. Fix the caller.
 
-In every case the remedy has the same shape — bump `VERSION` (or the
-`package.json` version field) by hand and push: `X.Y.(Z+1)-dev` where the
-shipped version was bare, and where it was an rc, whatever you have decided
-comes next. Note that a *push* refusal is not one of these — branch
+In every case the remedy has the same shape — write the next version that the
+release already computed to `VERSION` (or the `package.json` version field)
+and push: `X.Y.(Z+1)-dev` where the shipped version was bare, or
+`X.Y.Z-rc(N+1)-dev` where it was an rc. Note that a *push* refusal is not one
+of these — branch
 protection is expected, and the step opens the bump PR itself rather than
-failing ([L293–L301](.github/workflows/release.yml#L293-L301)).
+failing ([L308–L316](.github/workflows/release.yml#L308-L316)).
 
 ### Red main that is not the release workflow
 
