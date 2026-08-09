@@ -2395,6 +2395,230 @@ check "an indented code block inside the record enrols nobody" 0 "[]" \
 check "an unindented bare reference ends the record" 0 "[412]" \
   membership_set <<<"$(printf '%s\n' '## Members' '- #412' '#417' '- #418')"
 
+# -- the three rules the two section parsers share (#349) --------------------
+# `epic_references` and `membership_references` read two different records with
+# one shape, and #349 made the three rules that shape rests on identical in
+# both: the marker class, the indentation bound, and the fence. They are NOT a
+# shared helper (#349 D5) — the checkbox requirement and row-vs-first-token
+# would both have to be parameterized, and the contrast is worth writing down —
+# so each rule is written twice in the tree, and every case below that can be
+# runs through BOTH parsers in one check. That is the point: a ladder asserted
+# against one parser cannot catch the two drifting apart, which is the failure
+# this whole section exists to prevent.
+#
+# The two bodies come from one template rather than two hand-written literals,
+# so "the same ladder through both" is a property of the fixture and not a
+# promise about typing. `%H` is the record heading, `%C` the checkbox the epic
+# row carries and the membership row does not, and `%I` the ladder's indent.
+bracket() { # references on stdin -> the whole set as one bracketed token
+  printf '[%s]' "$(tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+}
+epic_set() { # epic body on stdin -> its task-list references, bracketed
+  epic_references | bracket
+}
+render_body() { # $1 heading, $2 checkbox, $3 ladder indent, then template lines
+  local heading="$1" checkbox="$2" indent="$3" line
+  shift 3
+  for line in "$@"; do
+    line="${line//%H/$heading}"
+    line="${line//%C/$checkbox}"
+    line="${line//%I/$indent}"
+    printf '%s\n' "$line"
+  done
+}
+both_parsers() { # template lines -> both parsers' answer to the same body
+  printf 'epic %s membership %s\n' \
+    "$(render_body '## Task list' '[ ] ' '' "$@" | epic_references | bracket)" \
+    "$(render_body '## Members' '' '' "$@" | membership_references | bracket)"
+}
+# One line, never five: the harness matches a substring, and grep reads an
+# embedded newline as pattern alternation, so a multi-line expectation would
+# pass on any single rung. The whole ladder is one token for the same reason
+# membership_set brackets its set.
+both_parsers_ladder() { # template lines using %I -> both parsers' five rungs
+  local indent
+  printf 'epic '
+  for indent in '' '   ' '    ' '        ' "$(printf '\t')"; do
+    render_body '## Task list' '[ ] ' "$indent" "$@" | epic_references | bracket
+  done
+  printf ' membership '
+  for indent in '' '   ' '    ' '        ' "$(printf '\t')"; do
+    render_body '## Members' '' "$indent" "$@" | membership_references | bracket
+  done
+  printf '\n'
+}
+
+# The marker class, now the same set on both sides. `epic_references` knew `-`
+# and `*` only, so three rows of five dropped — and the drop was silent at both
+# ends: GitHub renders all five identically, so the rendered issue tells its
+# author nothing, and `epic_decision "" ""` is `KEEP`, so an empty reference set
+# and an incomplete epic are one state. An epic enumerated under `+` therefore
+# sat complete and unannounced forever, with nothing anywhere saying why.
+check "every Markdown list marker opens a row in both records" 0 \
+  "epic [101 102 103 104 105] membership [101 102 103 104 105]" \
+  both_parsers \
+  '%H' \
+  '- %C#101 — a hyphen row' \
+  '* %C#102 — an asterisk row' \
+  '+ %C#103 — a plus row' \
+  '1. %C#104 — an ordered row' \
+  '1) %C#105 — an ordered row, the paren form'
+# Both sides of CommonMark 5.2's bound, because one alone is met by a class
+# that is merely different rather than right.
+check "the ordered marker's digit bound is the same in both records" 0 \
+  "epic [106] membership [106]" \
+  both_parsers \
+  '%H' \
+  '123456789. %C#106 — nine digits, the widest ordered marker there is' \
+  '1234567890. %C#107 — ten digits, which no renderer reads as a row'
+# Where the two records deliberately differ, asserted on the epic side alone.
+# `## Task list` is a *task* list: a row with no checkbox is prose under it,
+# and the marker-less line is indented so that the `#` terminator cannot be
+# what excludes it — the trap #347's own first cut fell into.
+check "a task list admits only checkbox rows under a list marker" 0 "[112]" \
+  epic_set <<<"$(printf '%s\n' \
+    '## Task list' \
+    '- [ ] #112 — a task row' \
+    '  #113 — no marker, indented so the terminator is not what excludes it' \
+    '- #114 — a marker but no checkbox, so prose under a task list')"
+check "an unchecked row and a checked row enrol alike under one task list" 0 \
+  "[110 111]" \
+  epic_set <<<"$(printf '%s\n' \
+    '## Task list' '- [ ] #110 — open' '1) [x] #111 — done, the paren form')"
+
+# The fence. Both parsers reached their heading rule before their terminator,
+# so a heading inside a code fence opened the section and a later real heading
+# re-opened it: the two sets unioned, and an example record quoted in a fence
+# enrolled its rows as real ones. A phantom open member keeps a window standing
+# over a board of non-members; a phantom open child holds `epic_decision` at
+# KEEP forever. The remedy is fence-awareness rather than a warning sentence
+# because the parse must agree with what GitHub renders, and the divergence is
+# invisible from the rendered issue — it shows a code block and gives the
+# reader no signal that the sweep enrolled its rows (#349 D2).
+check "a heading inside a fence opens no section, in either record" 0 \
+  "epic [253 257] membership [253 257]" \
+  both_parsers \
+  'The record looks like this:' \
+  '```' \
+  '%H' \
+  '- %C#202 — one row per member' \
+  '```' \
+  '' \
+  '%H' \
+  '- %C#253' \
+  '- %C#257'
+check "a fenced row under a real heading enrols nothing" 0 \
+  "epic [253 257] membership [253 257]" \
+  both_parsers \
+  '%H' \
+  '- %C#253' \
+  '```' \
+  '- %C#204 — quoted, not enumerated' \
+  '```' \
+  '- %C#257'
+# The over-correction guard: a fence that opens and closes before the record
+# must leave the real heading readable. A toggle that never clears would pass
+# every case above and swallow the whole board.
+check "a fence closed before the record leaves the record readable" 0 \
+  "epic [253] membership [253]" \
+  both_parsers \
+  '```' \
+  '- %C#203 — a row inside a fence, before any heading' \
+  '```' \
+  '%H' \
+  '- %C#253'
+check "a tilde fence indented three spaces is still a fence" 0 \
+  "epic [253] membership [253]" \
+  both_parsers \
+  '   ~~~' \
+  '%H' \
+  '- %C#205 — inside a tilde fence indented three spaces' \
+  '   ~~~' \
+  '' \
+  '%H' \
+  '- %C#253'
+# The delimiter carries the row's indentation bound for the row's reason: four
+# columns is an indented code block, not a fence, so the backtick line is
+# ordinary content and the rows after it are still the record's. Asserted on
+# the space axis and the tab axis separately — the bound is one expression and
+# a fix that took only one of the two axes passes the other.
+check "a backtick line indented four spaces is not a fence delimiter" 0 \
+  "epic [253 257] membership [253 257]" \
+  both_parsers \
+  '%H' \
+  '- %C#253' \
+  '    ```' \
+  '- %C#257 — the rows after a four-space backtick line are still read'
+check "a tab-indented backtick line is not a fence delimiter either" 0 \
+  "epic [253 257] membership [253 257]" \
+  both_parsers \
+  '%H' \
+  '- %C#253' \
+  $'\t```' \
+  '- %C#257 — the rows after a tab-indented backtick line are still read'
+# A backtick run closes a backtick run and a tilde run closes a tilde run, so
+# the inner delimiter is content. Without the character match the fence would
+# close here, the next heading would re-open the section, and #206 would enrol
+# — the phantom this rule exists to refuse.
+check "a tilde line does not close a backtick fence" 0 \
+  "epic [253 257] membership [253 257]" \
+  both_parsers \
+  '%H' \
+  '- %C#253' \
+  '```' \
+  '~~~' \
+  '%H' \
+  '- %C#206 — still inside the backtick fence' \
+  '```' \
+  '- %C#257'
+# Decided behavior, not an oversight (#349 D3): an unclosed fence consumes the
+# rest of the body, and GitHub renders that body exactly the same way — as one
+# open code block. Under-reading a body a reader also sees as quoted is the
+# correct direction of error, and it is the direction the marker gap and the
+# indentation bound already fail in.
+check "an unclosed fence consumes the rest of the body, in both records" 0 \
+  "epic [] membership []" \
+  both_parsers \
+  '```' \
+  '%H' \
+  '- %C#207 — inside a fence nothing ever closes' \
+  '' \
+  '%H' \
+  '- %C#253'
+
+# The two ladders, both parsers, one check each. The bound is pinned on both
+# sides rather than transcribed twice, so a bound in one parser merely
+# DIFFERENT from the other's reds here rather than passing.
+check "one row-indentation ladder, both records, the same answer at every rung" 0 \
+  "epic [430 431][430 431][430][430][430] membership [430 431][430 431][430][430][430]" \
+  both_parsers_ladder \
+  '%H' \
+  '- %C#430 — the control row, at column zero' \
+  '%I- %C#431 — the rung'
+# The heading takes the same bound, and it is read in two positions. The
+# OPENER's failure is silent — `   ## Members` is an `h2` to GitHub but opened
+# nothing, which is the absent-record direction #343 D4 already accepts.
+check "one heading ladder in the opener position, both records, identical" 0 \
+  "epic [440][440][][][] membership [440][440][][][]" \
+  both_parsers_ladder \
+  '%I%H' \
+  '- %C#440'
+# The TERMINATOR's is the unsafe one, so it is asserted separately and never as
+# a rider on the opener: an indented heading did not close the record, so the
+# parse ran on into the next section and took its rows. Past the bound the
+# answer inverts for the same reason it does everywhere else — a four-space
+# `## Dependencies` is an indented code block to GitHub too, so the record has
+# not ended there and the row below it really is still the record's.
+check "one heading ladder in the terminator position, both records, identical" 0 \
+  "epic [441][441][441 442][441 442][441 442] membership [441][441][441 442][441 442][441 442]" \
+  both_parsers_ladder \
+  '%H' \
+  '- %C#441' \
+  '' \
+  '%I## Dependencies' \
+  '' \
+  '- %C#442'
+
 # -- the carrier decision reads the record (#343 D3, D4, D5) ----------------
 check "an open member in the record makes the release issue a carrier" 0 \
   $'249\t253\n249\t257' \
