@@ -31,6 +31,7 @@ EOF
     >"$dir/changelog.d/2.md"
   printf -- '- A third fragment, proving the whole directory is consumed (#313).\n' \
     >"$dir/changelog.d/3.md"
+  # shellcheck disable=SC2016 # backticks are the record's own Markdown
   printf '# %s — drill fixture record\n\nSeeded by `drill/rehearsal.sh` so the tree is not bare-version-without-a-record.\n' \
     "$ver" >"$dir/drills/$ver.md"
 }
@@ -92,7 +93,26 @@ fixture_assert_seeded() {
   fi
 }
 
-# ceremony_changelog_section <dir> <version> <date> — what the ceremony PR
+# caller_install <repo> <branch> <stage> <fork-repo> <fork-ref> <workdir>
+#
+# The one door into installing the caller, and the reason the ordering is
+# enforced rather than documented: the seeding assertion is inside this
+# function, so no reordering of the orchestration above can install a caller
+# onto an unseeded tree. Prints the commit SHA.
+caller_install() {
+  local repo="${1:?}" branch="${2:?}" stage="${3:?}"
+  local fork_repo="${4:?}" fork_ref="${5:?}" work="${6:?}" manifest
+  fixture_assert_seeded "$repo" "$branch" || return 1
+  caller_write "$stage" "$fork_repo" "$fork_ref"
+  manifest="$work/caller.manifest"
+  printf 'A\t.github/workflows/release.yml\t%s\n' \
+    "$stage/.github/workflows/release.yml" >"$manifest"
+  scratch_commit "$repo" "$branch" \
+    "install the docs/CONSUMERS.md release caller, pinned at $fork_repo@$fork_ref" \
+    "$manifest"
+}
+
+# ceremony_assemble <dir> <version> <date> <root> — what the ceremony PR
 # stamps, assembled by the candidate's own bin/changelog-assemble so the
 # probe consumes the release path's real assembler, not a drill-local copy.
 ceremony_assemble() {
