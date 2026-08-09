@@ -127,8 +127,14 @@ child checklist. Children reference the epic; that checklist is the progress
 view. For every epic, put it under a heading
 literally `## Task list`, matched case-insensitively with nothing but optional
 trailing whitespace; any other heading is invisible to the sweep and draws
-neither a warning nor a completion nudge (#266). Builders never pick the epic
-itself. Keep the checklist current — a stale epic misleads every scan.
+neither a warning nor a completion nudge (#266). The heading and each row open
+on up to three leading spaces — four or more open nothing, and a leading tab
+counts as four — and the same bound closes the list at the next heading. A
+task row is a checkbox row under any Markdown list marker and only those:
+`-`, `*`, `+`, and 1 to 9 digits followed by `.` or `)`. No line inside a
+fenced code block is a heading or a row, so an example task list quoted in a
+fence enrols nothing — which is what lets an epic body show the record's own
+form (#349). Builders never pick the epic itself. Keep the checklist current — a stale epic misleads every scan.
 Repositories that adopt version epics follow [RELEASES.md](RELEASES.md).
 
 ## Backlog hygiene

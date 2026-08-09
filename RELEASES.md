@@ -14,7 +14,13 @@ the ordered waves as checklists. Keep the machine-readable progress checklist
 under a heading matching `## Task list`, case-insensitively; the issue-flow
 sweep reads task rows there until the next heading when it decides whether to
 nudge triage about a completed epic. Other member or wave headings are not
-completion inputs.
+completion inputs. That heading, its rows and the fence obey the same three
+rules the membership record below does, in the same words (#349): the heading
+and each row open on up to three leading spaces, four or more open nothing and
+a leading tab counts as four; a task row is a checkbox row under any Markdown
+list marker and only those — `-`, `*`, `+`, and 1 to 9 digits followed by `.`
+or `)`; and no line inside a fenced code block is a heading or a row, so an
+example task list quoted in a fence enrols nothing.
 
 Keep a short repo-local roadmap beside the epics. The roadmap shows the whole
 ladder and points to each working surface; it does not duplicate the live
@@ -49,7 +55,19 @@ same issue, and the sweep reads it by heading (#343):
 - the heading is literally `## Members`, matched case-insensitively, tolerant
   of any run of whitespace between the `##` and the word and of trailing
   whitespace after it, and the record runs to the next heading — the same
-  shape `## Task list` already has;
+  shape `## Task list` already has, now in every particular (#349). The
+  heading itself is bounded the way a row is: up to three leading spaces still
+  open the record, four or more open nothing, a leading tab counting as four.
+  The bound holds in both directions — an indented `## Gate` **closes** the
+  record, so the parse never runs on into the next section and enrols its
+  rows;
+- no line inside a fenced code block is a heading, a terminator or a row, so
+  an example record quoted in a fence enrols nothing. A fence delimiter is a
+  run of backticks or tildes under the same three-space bound — four columns,
+  a tab included, is an indented code block and not a fence — and it is closed
+  by the next delimiter of the same character, so a tilde line does not close
+  a backtick fence. Delimiter run length is not tracked, and an unclosed fence
+  runs to the end of the body, which is what a reader sees too;
 - one member per list row, under any Markdown list marker and only those:
   `-`, `*`, `+`, and 1 to 9 digits followed by `.` or `)` all open a row,
   because a row is whatever a reader sees as one — and a tenth digit opens
