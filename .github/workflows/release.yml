@@ -30,11 +30,12 @@ name: release
 #   explicit act — and no bump: the fallback does not rewrite main (cast's
 #   precedent).
 #
-# Both doors publish the release body from the version's own CHANGELOG.md
-# section (lib/changelog.sh — the one canonical extractor): the curated
-# prose, never the generated PR list. Assets come only from the consumer's
-# optional artifact hook (below); with no hook, GitHub's source tarball for
-# the tag IS the package (box, rig).
+# Both doors publish curated changelog prose, never the generated PR list.
+# A final reads its stamped CHANGELOG.md section through lib/changelog.sh;
+# an rc assembles its surviving fragments through bin/changelog-assemble and
+# is marked as a prerelease. Assets come only from the consumer's optional
+# artifact hook (below); with no hook, GitHub's source tarball for the tag IS
+# the package (box, rig).
 #
 # ## The caller contract
 #
@@ -96,17 +97,18 @@ name: release
 #
 # Every decision this workflow takes lives in a tested script: version state
 # (lib/version.sh), the 5-state verdict (lib/decide.sh), fact gathering
-# (lib/facts.sh), notes extraction (lib/changelog.sh), and the facts →
-# decide → notes chain is rehearsed end-to-end against fixtures
-# (test/release-chain.test.sh). The merge door's early step sequence — both
-# checkout shapes, both branches of the self-consumption bypass, the
-# CEREMONY_DIR wiring, and the facts → decide → notes steps with their real
-# $GITHUB_OUTPUT plumbing — is executed against a fixture by
-# release-exercise.yml's step-replay job, on every PR via ci.yml. What
-# remains, honestly untested until it runs live: the doors themselves —
-# door gating on a real push event, tag create, publish, and bump. That gap
-# is closed by #11 (ceremony's own 0.1.0 release runs this exact workflow
-# via a local-path call) and by the #13 pilot's rehearsal.
+# (lib/facts.sh), final notes extraction (lib/changelog.sh), and rc fragment
+# assembly (bin/changelog-assemble). The facts → decide → final-notes chain
+# is rehearsed end-to-end against fixtures (test/release-chain.test.sh).
+# The merge door's early step sequence — both checkout shapes, both branches
+# of the self-consumption bypass, CEREMONY_DIR wiring, and facts → decide →
+# final-notes steps with real $GITHUB_OUTPUT plumbing — runs against a
+# fixture in release-exercise.yml's step-replay job on every PR via ci.yml.
+# A separate hand-driven fixture covers both rc notes/publish branches and
+# the merge-door re-arm arithmetic, but does not drift-check those copied
+# bodies against this file. What remains untested until a live rehearsal:
+# real push-event gating, tag creation, publication, and bump writes. #321
+# owns that rehearsal.
 
 on:
   workflow_call:
@@ -191,7 +193,7 @@ jobs:
           out="$(bash "$CEREMONY_DIR/lib/decide.sh")"
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep '^ceremony=' >> "$GITHUB_OUTPUT"
-      - name: release notes — the version's own changelog section
+      - name: release notes — final section or rc fragments
         if: steps.decide.outputs.ceremony == 'yes'
         env:
           VER: ${{ steps.facts.outputs.ver }}
@@ -272,11 +274,11 @@ jobs:
       # The post-release bump, folded into the release act (the sources'
       # operator decision: a mechanical one-liner deserves no PR of its
       # own). X.Y.(Z+1)-dev and X.Y.Z-rc(N+1)-dev are arithmetic, not
-      # judgment (version_next_dev refuses every other shape). A GITHUB_TOKEN push fires no
-      # workflows (anti-recursion), so the bump triggers neither this door
-      # nor a red run; should branch protection refuse the direct push, the
-      # step opens the bump PR itself and says so, loudly, instead of
-      # leaving main armed to impersonate the release.
+      # judgment (version_next_dev refuses every other shape). A GITHUB_TOKEN
+      # push fires no workflows (anti-recursion), so the bump triggers neither
+      # this door nor a red run; should branch protection refuse the direct
+      # push, the step opens the bump PR itself and says so, loudly, instead
+      # of leaving main armed to impersonate the release.
       - name: bump main to the next -dev — the release re-arms main itself
         if: steps.decide.outputs.ceremony == 'yes'
         env:
@@ -350,7 +352,7 @@ jobs:
             exit 1
           fi
           echo "ver=$ver" >> "$GITHUB_OUTPUT"
-      - name: release notes — the version's own changelog section
+      - name: release notes — final section or rc fragments
         env:
           VER: ${{ steps.assert.outputs.ver }}
         run: |

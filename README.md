@@ -110,14 +110,14 @@ consumer's release, when it is stale.)
 **The merge is the ship decision; the tag is transcription.** After the
 merge, [release.yml](.github/workflows/release.yml#L136-L301) asserts its
 way to certainty, tags the merge commit, publishes the GitHub release with
-the version's own changelog section as the body — the curated prose, never
-the generated PR list ([lib/changelog.sh](lib/changelog.sh) is the one
-canonical extractor, and [bin/changelog-section](bin/changelog-section) is
-its command-line face) — and, on the bare-`X.Y.Z` path, re-arms main by
-bumping to `X.Y.(Z+1)-dev`; the version is the only re-arm left, the
-changelog needs none (#112). An rc ships too, and its next version is a human
-decision rather than arithmetic, so the re-arm stops for you to make it
-([The re-arm refused](#the-re-arm-refused-releaseyml)). The machine does the
+curated changelog prose as the body, never the generated PR list. A final
+`X.Y.Z` reads its stamped section through
+[bin/changelog-section](bin/changelog-section); an `X.Y.Z-rcN` candidate
+assembles the fragments that deliberately survive until promotion through
+[bin/changelog-assemble](bin/changelog-assemble). The merge door then
+re-arms main arithmetically: finals become `X.Y.(Z+1)-dev`, while candidates
+become `X.Y.Z-rc(N+1)-dev`; the changelog itself needs no re-arm (#112,
+#320). The machine does the
 transcription because humans err silently and machines fail loudly:
 **everything asserts its way to certainty and fails loudly, creating
 nothing** — a wrong release is worse than a missing one, so every assert in
@@ -180,7 +180,7 @@ block *is* the spec, and the table is contract-tested offline by
 | 3 | version bare, unchanged, already released | green `NOTICE`, no-op | The post-release window: the ceremony landed, the `-dev` bump hasn't. Nothing to do. |
 | 4 | version bare, unchanged, **never released** | **red, nothing created** | The label says ship but this PR did not mint the version. Mislabeled → drop the label. Meant to release → it forgot the bump; re-do the ceremony PR. A repo whose first version never carried `-dev` ships its first release by the **tag door** — the known first-release edge (cast#111; [lib/decide.sh](lib/decide.sh#L70-L74)). |
 | 5 | version transitioned to bare, **no merged `release`-labeled PR** behind the commit | **red, nothing created** | A transition nobody declared — a release is a labeled ceremony PR, not a bare push. Label a proper ceremony PR and re-do it, or publish by the tag door if the tree is genuinely right. |
-| 6 | version transitioned to bare, merged `release`-labeled PR behind the commit | **the ceremony** | Tag → notes → publish → `-dev` re-arm. Your move afterwards: verify the release exists and main reads `X.Y.(Z+1)-dev`. **Read *bare* as decide reads it** — anything not `-dev` ([lib/decide.sh](lib/decide.sh#L108-L110)) — so an rc transition is a shippable ceremony here too, and the release lands but the re-arm stops for you to pick the next version ([The re-arm refused](#the-re-arm-refused-releaseyml)). |
+| 6 | version transitioned to bare, merged `release`-labeled PR behind the commit | **the ceremony** | Tag → notes → publish → `-dev` re-arm. **Read *bare* as decide reads it** — anything not `-dev` ([lib/decide.sh](lib/decide.sh#L108-L110)). A final publishes its stamped section and re-arms to `X.Y.(Z+1)-dev`; an rc publishes cumulative fragment-assembled notes as a prerelease and re-arms to `X.Y.Z-rc(N+1)-dev`. Your move afterwards: verify the release and matching next version. |
 
 The green rows are the point as much as the red ones: the machinery must be
 safe to work on, so every legitimate non-ceremony is a green `NOTICE` no-op,
@@ -475,7 +475,8 @@ caller.
 > CHANGELOG.md has no '## $VER' section at the merge commit — the ceremony PR must stamp it; refusing to publish an empty release
 
 [L202–L205](.github/workflows/release.yml#L202-L205): the ceremony merged
-without its stamp (a state the
+without its final-release stamp (an rc takes the fragment-assembly branch
+instead). This is a state the
 [armed guard](#changelog-armed--main-never-sits-disarmed) already refuses on
 the PR — red main here means it was overridden). Stamp the section on main,
 then publish by the tag door.
@@ -513,8 +514,9 @@ remedy.
 
 > CHANGELOG.md has no '## $VER' section — run changelog-assemble in the release PR before tagging; refusing to publish an empty release
 
-[L346–L349](.github/workflows/release.yml#L346-L349). The tagged tree was
-never stamped. Assemble the section
+[L346–L349](.github/workflows/release.yml#L346-L349). The final-release
+tagged tree was never stamped; an rc takes the fragment-assembly branch
+instead. Assemble the section
 ([docs/CONSUMERS.md](docs/CONSUMERS.md#assembling-a-release-section)), then
 delete and re-push the tag.
 
@@ -528,30 +530,16 @@ and main is left *armed to impersonate* it, still reading the version it just
 shipped ([L266](.github/workflows/release.yml#L266)). That is the one failure
 in this catalog whose remedy is a manual bump, not a re-run.
 
-> version_next_dev: refusing '$ver' — expected bare X.Y.Z
+> version_next_dev: refusing '$ver' — expected bare X.Y.Z or X.Y.Z-rcN
 
-[L86](lib/version.sh#L86): the version reaching the bump is not bare `X.Y.Z`.
-Two senses of *bare* meet here, and the gap between them is the **rc release
-path** — the way this refusal is actually reached, and designed behaviour
-rather than a decide bug. decide calls a version bare when it is not `-dev`
-([version_is_dev](lib/version.sh#L68-L76) matches that suffix and nothing
-else), so row 6 admits a transition to `1.2.3-rc1`, and a labeled rc ceremony
-is designed to ship ([lib/decide.sh](lib/decide.sh#L108-L110)).
-`version_next_dev` means `^[0-9]+\.[0-9]+\.[0-9]+$`. An rc sits between the
-two, and nothing filters it out on the way: the step's only gate is
-`ceremony == 'yes'` and its `VER` is the tree's version verbatim. So an rc
-ceremony tags, writes the notes, publishes — and *then* the re-arm refuses.
-That is the machine correctly declining to guess rather than a bug: an rc's
-next version "is a human decision, not arithmetic"
-([L78–L82](lib/version.sh#L78-L82)), so make the decision and bump main by
-hand to it. A `-dev` version reaching this line is the same refusal's other
-half, and *that* half is unreachable as the doors stand — rows 1–2 send `-dev`
-to a no-op, and the tag door never bumps. A malformed version is not: nothing
-upstream checks the shape ([version_read](lib/version.sh#L22-L33) checks only
-that a version is present and non-empty), so `banana` rides row 6 exactly as
-an rc does, and the same manual bump is the remedy. One note on work that has
-not landed: #317 would make rc cuts native and their re-arm deterministic, and
-if it lands only the malformed half still reaches this refusal.
+[L86](lib/version.sh#L86): the version reaching the bump is neither a final
+`X.Y.Z` nor an `X.Y.Z-rcN` candidate. Both supported shapes re-arm
+arithmetically: the final to `X.Y.(Z+1)-dev`, the candidate to
+`X.Y.Z-rc(N+1)-dev`. A `-dev` version cannot normally reach this line because
+rows 1–2 send it to a no-op, and the tag door never bumps. A malformed value
+can: [version_read](lib/version.sh#L22-L33) checks only that a version is
+present and non-empty, so `banana` can ride row 6. Inspect and repair the
+malformed version on main by hand; the release already exists.
 
 > version_write: npm is required for version-source: package-json
 

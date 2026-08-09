@@ -174,7 +174,7 @@ jobs:
           out="$(bash "$CEREMONY_DIR/lib/decide.sh")"
           printf '%s\n' "$out"
           printf '%s\n' "$out" | grep '^ceremony=' >> "$GITHUB_OUTPUT"
-      - name: release notes — the version's own changelog section
+      - name: release notes — final section or rc fragments
         if: steps.decide.outputs.ceremony == 'yes'
         working-directory: ${{ runner.temp }}/fixture
         env:
