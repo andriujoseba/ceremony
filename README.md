@@ -121,10 +121,11 @@ become `X.Y.Z-rc(N+1)-dev`; the changelog itself needs no re-arm (#112,
 arithmetic in the same way as a final's next patch number. The machine does
 the transcription because humans err silently and machines fail loudly:
 **every assert fires before its door creates anything** — a wrong release is
-worse than a missing one. An assert that refuses the merge door leaves zero
-artifacts of that run: no tag, no release, no bump. Three fallible operations
-run after those asserts and past the tag, and what a failure at each leaves
-behind is what sorts them. Two fail before the release exists: the consumer's
+worse than a missing one. An assert that refuses either door leaves zero
+artifacts of the run's own: no tag it made, no release, no bump. Three
+fallible operations run after those asserts and past the tag, and what a
+failure at each leaves behind is what sorts them. Two fail before the release
+exists: the consumer's
 [artifact hook](docs/CONSUMERS.md#the-artifact-hook) sits between the tag and
 the publish, so its non-zero exit aborts, and the publish itself
 ([`gh release create --verify-tag`](.github/workflows/release.yml#L254-L273))
@@ -532,7 +533,7 @@ in this catalog whose remedy is a manual bump, not a re-run.
 
 > version_next_dev: refusing '$ver' — expected bare X.Y.Z or X.Y.Z-rcN
 
-[L86](lib/version.sh#L86): the version reaching the bump is neither a final
+[L106](lib/version.sh#L106): the version reaching the bump is neither a final
 `X.Y.Z` nor an `X.Y.Z-rcN` candidate. Both supported shapes re-arm
 arithmetically: the final to `X.Y.(Z+1)-dev`, the candidate to
 `X.Y.Z-rc(N+1)-dev`. A `-dev` version cannot normally reach this line because
@@ -543,16 +544,16 @@ malformed version on main by hand; the release already exists.
 
 > version_write: npm is required for version-source: package-json
 
-[L106](lib/version.sh#L106): the package-json backend needs npm to write —
+[L121](lib/version.sh#L121): the package-json backend needs npm to write —
 `npm pkg set version=` plus a lockfile-only `npm install`
-([L114–L115](lib/version.sh#L114-L115)), never `npm version`, which would tag
+([L129–L130](lib/version.sh#L129-L130)), never `npm version`, which would tag
 — and the runner has none. The read path fails the same way one step earlier
 (`node is required…`, above), so a run reaching *this* message got past the
 read — set up node/npm in the caller.
 
 > version_write: unknown backend: $backend
 
-[L118](lib/version.sh#L118): the write-side twin of `version_read: unknown
+[L133](lib/version.sh#L133): the write-side twin of `version_read: unknown
 backend`, and unreachable for the same reason — `VERSION_SOURCE` was validated
 before either was called. Fix the caller.
 

@@ -55,7 +55,9 @@ migration exception. In legacy heading mode the ordinary
 refuses a surviving `## Unreleased`, so the next final cut is the adoption
 door. Deeper rc headings are harmless history: the guard reads only the top
 section. Spellings outside the declared `X.Y.Z-rcN` convention, such as
-`-rc.1`, `-RC1`, or `-beta1`, are not rc stamps to these guards (#322).
+`-rc.1`, `-RC1`, or `-beta1`, are not rc stamps to `changelog-armed`;
+`changelog-monotonic` still forbids deleting any version-shaped historical
+heading (#322).
 
 ## Gates
 
