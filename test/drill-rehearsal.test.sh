@@ -304,6 +304,16 @@ check "the baseline caller run is recorded as setup, not as a probe" 0 \
 check "probe 3's re-arm is recorded as setup too" 0 \
   "re-arming main to" cat "$TMP/emitted.md"
 
+# The empty-repo bootstrap: a freshly created repository refuses the git data
+# API with a 409, so the first file goes through the contents endpoint and
+# every later commit rides a tree. The live shakedown found this the hard way.
+check "the first file lands through the contents endpoint" 0 "" \
+  grep -qF "api repos/$SCRATCH/contents/VERSION --method PUT --input -" "$TMP/state/calls"
+check "the bootstrap precedes the first tree write" 0 "" bash -c '
+  seed=$(grep -n "contents/VERSION --method PUT" "$1" | head -n1 | cut -d: -f1)
+  tree=$(grep -n "git/trees --input" "$1" | head -n1 | cut -d: -f1)
+  [ -n "$seed" ] && [ -n "$tree" ] && [ "$seed" -lt "$tree" ]' _ "$TMP/state/calls"
+
 # The delete endpoint is never in the call log — the assertion D4 exists for.
 check "the drill archived the scratch repo" 0 "" \
   grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"

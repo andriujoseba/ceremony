@@ -112,6 +112,25 @@ scratch_commit() {
   local repo="${1:?}" branch="${2:?}" message="${3:?}" manifest="${4:?}"
   local base_sha base_tree="" entries="[]" op path file blob tree_sha commit_sha
   base_sha="$(scratch_ref_sha "$repo" "$branch")"
+  if [ -z "$base_sha" ]; then
+    # A freshly created repository refuses the git data API outright —
+    # `Git Repository is empty. (HTTP 409)`: blobs and trees need a first
+    # commit to hang from. The contents endpoint is the one door open there,
+    # so the first file lands through it and everything after rides a tree.
+    local seed_path seed_file
+    IFS=$'\t' read -r _ seed_path seed_file < <(awk -F'\t' '$1 == "A" { print; exit }' "$manifest")
+    if [ -z "${seed_path:-}" ]; then
+      echo "scratch_commit: $repo has no commits and the manifest adds no file — nothing to bootstrap from." >&2
+      return 1
+    fi
+    jq -n --arg m "$message" --arg b "$branch" \
+      --arg c "$(base64 <"$seed_file" | tr -d '\n')" \
+      '{message: $m, branch: $b, content: $c}' |
+      drill_gh api "repos/$repo/contents/$seed_path" --method PUT --input - >/dev/null || return 1
+    base_sha="$(scratch_ref_sha "$repo" "$branch")"
+    [ -n "$base_sha" ] ||
+      { echo "scratch_commit: the bootstrap commit left $repo@$branch with no head." >&2; return 1; }
+  fi
   if [ -n "$base_sha" ]; then
     base_tree="$(drill_gh api "repos/$repo/git/commits/$base_sha" --jq '.tree.sha')" || return 1
   fi

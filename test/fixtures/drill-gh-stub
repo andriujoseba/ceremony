@@ -172,6 +172,20 @@ set_main_version() { # the door's own re-arm commit
   printf '%s\n' "$newcommit" >"$R/refs/$(san heads/main)"
 }
 
+# A repository with no commits refuses the git data API — the 409 that
+# sends the first commit through the contents endpoint instead. Modelled,
+# because a stub that let blobs land on an empty repo would have hidden it.
+empty_repo_409() {
+  printf '{"message":"Git Repository is empty."}\n'
+  echo "gh: Git Repository is empty. (HTTP 409)" >&2
+  exit 1
+}
+case "$rest" in
+  git/blobs | git/trees | git/commits)
+    [ -n "$(ls -A "$R/refs" 2>/dev/null)" ] || empty_repo_409
+    ;;
+esac
+
 case "$rest" in
   '')
     if [ "$method" = PATCH ]; then
@@ -259,6 +273,24 @@ case "$rest" in
     ;;
   contents/*)
     p="${rest#contents/}"
+    if [ "$method" = PUT ]; then
+      # The bootstrap door: one file, one commit, and the branch created if
+      # it does not exist yet.
+      branch="$(jq -r '.branch' <<<"$body")"
+      blob="$(next_id)"
+      jq -r '.content' <<<"$body" | base64 -d >"$R/blob/$blob"
+      newtree="$(next_id)"
+      old="$(tree_of_ref "heads/$branch" || true)"
+      if [ -n "$old" ]; then grep -v "^$p	" "$R/tree/$old" >"$R/tree/$newtree" || :; else : >"$R/tree/$newtree"; fi
+      printf '%s\t%s\n' "$p" "$blob" >>"$R/tree/$newtree"
+      sort -o "$R/tree/$newtree" "$R/tree/$newtree"
+      newcommit="$(next_id)"
+      printf '%s\n' "$newtree" >"$R/commit/$newcommit"
+      jq -r '.message' <<<"$body" >>"$R/messages"
+      printf '%s\n' "$newcommit" >"$R/refs/$(san "heads/$branch")"
+      out "$(jq -n --arg s "$newcommit" '{commit: {sha: $s}}')"
+      exit 0
+    fi
     ref="$(qval ref)"
     [ -n "$ref" ] || ref=main
     t="$(tree_of_ref "heads/$ref")" || missing
