@@ -104,6 +104,21 @@ check "a ceremony that published nothing reds its probe" 0 "releases moved 0→0
   probe_verdict success success 0 1 0 0 1 1
 check "a ceremony that published exactly one holds" 0 "" \
   test -z "$(probe_verdict success success 0 1 0 1 1 1)"
+# D2, and #313 D7's discipline behind it: the procedure text in
+# drills/README.md IS the script's specification, so "byte-faithful" is a
+# diff here rather than a claim anybody has to eyeball (#321).
+awk '/^4\. Exercise both doors, one probe at a time:$/ { on = 1; next }
+     on && /^   Every refusal must refuse/ { exit }
+     on && NF { print }' "$ROOT/drills/README.md" >"$TMP/doctrine.list"
+awk '/^# The list is drills\/README\.md/ { on = 1; next }
+     on && /^# Every probe reads/ { exit }
+     on && /^#[[:space:]]/ { sub(/^#/, ""); print }' \
+  "$ROOT/drill/lib/probes.sh" >"$TMP/probes.list"
+check "the instrument's probe list is the doctrine's, byte-faithful" 0 "" \
+  diff -u "$TMP/doctrine.list" "$TMP/probes.list"
+check "and it is not an empty comparison" 0 "8" \
+  bash -c 'grep -c "^   [1-8]\." "$1"' _ "$TMP/doctrine.list"
+
 check "the probe names are the doctrine's eight" 0 "" \
   test "$(probe_name 4)" = "re-run of the completed ceremony"
 check "the rc cut is the seventh probe, in doctrine order" 0 "" \
@@ -627,6 +642,16 @@ check "the record states the disposal as observed, archived and pending" 0 \
 check "the probes ran in doctrine order" 0 $'1\n2\n3\n4\n5\n6\n7\n8' \
   bash -c 'awk -F"|" "/^\\| [1-8] \\|/ { gsub(/ /, \"\", \$2); print \$2 }" "$1"' \
   _ "$TMP/emitted.md"
+check "the rc cut's row links the run it was written from" 0 "" \
+  bash -c 'awk -F"|" "/^\\| 7 \\|/" "$1" | grep -qE "/actions/runs/[0-9]+"' \
+  _ "$TMP/emitted.md"
+check "the promotion's row links its own run too" 0 "" \
+  bash -c 'awk -F"|" "/^\\| 8 \\|/" "$1" | grep -qE "/actions/runs/[0-9]+"' \
+  _ "$TMP/emitted.md"
+check "the emitted record names the rc version's record path" 0 \
+  "drills/0.7.2-rc1.md" cat "$TMP/emitted.md"
+check "the rc ladder's arming run is recorded as setup, not as a probe" 0 \
+  "arming main at \`0.7.2-dev\` before the rc legs" cat "$TMP/emitted.md"
 check "the baseline caller run is recorded as setup, not as a probe" 0 \
   "the green baseline no-op" cat "$TMP/emitted.md"
 check "probe 3's re-arm is recorded as setup too" 0 \
