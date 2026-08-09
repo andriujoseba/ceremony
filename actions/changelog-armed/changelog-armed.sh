@@ -108,7 +108,7 @@ if [ -d "$fragments_dir" ]; then
   # changelog-monotonic's concern.
   top="$(grep -m1 '^## ' "$changelog" || true)"
   top_ver="$(printf '%s\n' "$top" | awk '{ print $2 }')"
-  if [ -n "$top" ] && version_is_rc "$top_ver"; then
+  if [ -n "$top_ver" ] && version_is_rc "$top_ver"; then
     echo "changelog-armed: the top section '$top_ver' is an rc stamp, but rc cuts are tag-only (#317 D1); leave $changelog untouched" >&2
     exit 1
   fi
@@ -132,7 +132,6 @@ if [ -d "$fragments_dir" ]; then
     exit 1
   fi
 
-  top="$(grep -m1 '^## ' "$changelog" || true)"
   [ -n "$top" ] || {
     echo "changelog-armed: $changelog has no '## ' section at all — the release stamp for '$ver' is missing" >&2
     exit 1
@@ -142,7 +141,6 @@ if [ -d "$fragments_dir" ]; then
       "$ver" "$diagnosis" >&2
     exit 1
   fi
-  top_ver="$(printf '%s\n' "$top" | awk '{ print $2 }')"
   if [ "$top_ver" != "$ver" ]; then
     cat >&2 <<EOF
 changelog-armed: the version is '$ver' but the top section of $changelog is:
@@ -170,7 +168,7 @@ top_ver="$(printf '%s\n' "$top" | awk '{ print $2 }')"
 
 # A stamped rc top section is drift in every mode: candidates are tag-only
 # under #317 D1. Deeper rc headings are historical and deliberately ignored.
-if [ -n "$top" ] && version_is_rc "$top_ver"; then
+if [ -n "$top_ver" ] && version_is_rc "$top_ver"; then
   echo "changelog-armed: the top section '$top_ver' is an rc stamp, but rc cuts are tag-only (#317 D1); leave $changelog untouched" >&2
   exit 1
 fi

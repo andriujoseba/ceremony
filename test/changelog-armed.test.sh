@@ -226,6 +226,11 @@ EOF
 check "changelog with no '## ' at all fails" 1 "nothing for a PR entry to land under" \
   in_tree no-sections
 
+printf '%s\n' '# Changelog' '' '## ' '' 'Section without a version.' | \
+  tree empty-section-version 1.2.4-dev
+check "empty section version retains the development-tree diagnosis" 1 \
+  "development tree" in_tree empty-section-version
+
 mkdir -p "$TMP/no-changelog"
 printf '1.2.3\n' >"$TMP/no-changelog/VERSION"
 check "missing changelog fails" 1 "no such file" in_tree no-changelog
@@ -284,6 +289,11 @@ fragment_tree fragments-dev-empty 1.2.4-dev <<'EOF'
 EOF
 check "fragment -dev + marker + no fragments passes" 0 "fragment mode" \
   in_tree fragments-dev-empty
+
+printf '%s\n' '# Changelog' '' '## ' '' 'Section without a version.' | \
+  fragment_tree fragments-dev-empty-section-version 1.2.4-dev
+check "fragment mode ignores an empty section version" 0 "agrees with fragment mode" \
+  in_tree fragments-dev-empty-section-version
 
 fragment_tree fragments-dev-flat 1.2.4-dev <<'EOF'
 # Changelog
