@@ -3,7 +3,7 @@
 #
 # `drills/` is the record, not the instrument; this is the instrument. It
 # automates drills/README.md's rehearsal end to end — scratch repo, armed
-# fixture, caller stub at a rewritten fork pin, the six probes in doctrine
+# fixture, caller stub at a rewritten fork pin, the eight probes in doctrine
 # order, the archive, and the record — because a manual hour of hand-steps
 # loses to a waiver every time and a script does not.
 #
@@ -25,6 +25,8 @@ set -euo pipefail
 DRILL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/version.sh
 source "$DRILL_ROOT/lib/version.sh"
+# shellcheck source=lib/changelog.sh
+source "$DRILL_ROOT/lib/changelog.sh"
 # shellcheck source=drill/lib/scratch.sh
 source "$DRILL_ROOT/drill/lib/scratch.sh"
 # shellcheck source=drill/lib/candidate.sh
@@ -94,7 +96,7 @@ done
 [ -n "$candidate_sha" ] || usage
 
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-  refuse "--version '$version' is not a bare X.Y.Z. The fixture arms X.Y.Z-dev and the ceremony probe ships X.Y.Z; an rc is #321's leg, not this one."
+  refuse "--version '$version' is not a bare X.Y.Z. The fixture arms X.Y.Z-dev and the ceremony probe ships X.Y.Z, and the rc legs run further along the ladder this script derives from it — an rc is never the candidate version here (#321)."
 case "$fork_spec" in
   */*@*) ;;
   *) refuse "--fork-ref '$fork_spec' is not 'owner/repo@ref'." ;;
@@ -115,6 +117,18 @@ done
 DRILL_V1="$version"
 DRILL_V2="$(version_next_dev "$version")"
 DRILL_V2="${DRILL_V2%-dev}"
+# The rc ladder runs one rung further along: the probes before it publish
+# DRILL_V1 through the merge door and DRILL_V2 through the tag door, and a
+# promotion needs a version nothing has released (#321). Its own arithmetic
+# is the candidate's — version_next_dev, twice for the ladder's foot and
+# once over the rc for the re-arm the rc cut owes.
+DRILL_V3="$(version_next_dev "$DRILL_V2")"
+DRILL_V3="${DRILL_V3%-dev}"
+DRILL_V4="$(version_next_dev "$DRILL_V3")"
+DRILL_V4="${DRILL_V4%-dev}"
+DRILL_RC1="$DRILL_V3-rc1"
+DRILL_RC2="$(version_next_dev "$DRILL_RC1")"
+DRILL_RC2="${DRILL_RC2%-dev}"
 DRILL_DATE="${stamp:-$(date -u +%Y-%m-%d)}"
 DRILL_REPO="$owner/${repo_name:-ceremony-drill-$version}"
 DRILL_WORK="$(mktemp -d)"
@@ -124,7 +138,8 @@ DRILL_SETUP="$DRILL_WORK/setup.tsv"
 out="${out:-$PWD/$version-drill.md}"
 : >"$DRILL_PROBES"
 : >"$DRILL_SETUP"
-export DRILL_ROOT DRILL_V1 DRILL_V2 DRILL_DATE DRILL_REPO DRILL_WORK DRILL_STAGE
+export DRILL_ROOT DRILL_V1 DRILL_V2 DRILL_V3 DRILL_V4 DRILL_RC1 DRILL_RC2
+export DRILL_DATE DRILL_REPO DRILL_WORK DRILL_STAGE
 export DRILL_PROBES DRILL_SETUP
 trap 'rm -rf "$DRILL_WORK"' EXIT
 
@@ -161,7 +176,7 @@ probe_setup_record "$baseline_run" "$baseline_conc" \
 # The guide's prerequisite: the label exists before the first ceremony PR.
 scratch_label_create "$DRILL_REPO" release
 
-# ---- the six probes, in doctrine order ------------------------------------
+# ---- the eight probes, in doctrine order -----------------------------------
 # Each through probe_run, so an abort inside one is that probe's failed row
 # rather than the end of the rehearsal: the archive and the record below are
 # what the header promises either way.
@@ -171,6 +186,8 @@ probe_run 3 probe_3_bare
 probe_run 4 probe_4_rerun
 probe_run 5 probe_5_tag
 probe_run 6 probe_6_mismatched_tag
+probe_run 7 probe_7_rc_cut
+probe_run 8 probe_8_promotion
 
 # ---- disposal: archive, observe, and stop ---------------------------------
 observed="$(scratch_archive "$DRILL_REPO")"
@@ -180,6 +197,7 @@ disposal="the repository is **archived** — \`PATCH /repos/$DRILL_REPO\` with \
 ctx="$DRILL_WORK/ctx.tsv"
 {
   printf 'version\t%s\n' "$DRILL_V1"
+  printf 'rc_version\t%s\n' "$DRILL_V3"
   printf 'scratch\t%s\n' "$DRILL_REPO"
   printf 'created\t%s\n' "$created"
   printf 'candidate_sha\t%s\n' "$candidate_sha"
@@ -200,7 +218,7 @@ failed="$(awk -F'\t' '$5 == "FAIL"' "$DRILL_PROBES" | wc -l | tr -d ' ')"
 cat >&2 <<EOF
 
 drill: record written to $out
-drill: probes passed $(($(wc -l <"$DRILL_PROBES") - failed))/6, failed $failed
+drill: probes passed $(($(wc -l <"$DRILL_PROBES") - failed))/$DRILL_PROBE_COUNT, failed $failed
 
 The scratch repo is archived and **pending your delete**. That step is
 yours — no fleet token holds delete_repo, and this script refuses to call

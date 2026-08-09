@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The six probes, in doctrine order (#313 D1, D3). Sourced, never run.
+# The eight probes, in doctrine order (#313 D1, D3; #321 D1). Sourced,
+# never run.
 #
 # The list is drills/README.md's, byte-faithful:
 #
@@ -9,14 +10,16 @@
 #   3. a bare-version PR without the `release` label refuses;
 #   4. a re-run of the completed ceremony refuses;
 #   5. a tag-door release from a manual tag;
-#   6. a mismatched tag refuses.
+#   6. a mismatched tag refuses;
+#   7. an rc cut publishes a prerelease and stamps nothing;
+#   8. the promotion after it ships the final version.
 #
 # Every probe reads the tag count and the release count before and after
 # itself. A refusal that leaves a tag or a release behind is a failed probe,
 # and that claim is these two measurements — never the prose beside them.
 #
 # A failed probe does not abort the rehearsal: a failed drill is a valid
-# record, and a record that stops at the first surprise hides the five
+# record, and a record that stops at the first surprise hides the seven
 # probes nobody then ran.
 
 DRILL_PROBE_NAMES="merge-door ceremony
@@ -24,7 +27,15 @@ mislabeled ordinary PR
 bare-version PR without \`release\`
 re-run of the completed ceremony
 tag-door release from a manual tag
-mismatched tag"
+mismatched tag
+rc cut, tag-only and marked prerelease
+promotion of the rc to the final version"
+
+# The doctrine list's length. The record grades every probe the doctrine
+# names rather than the rows it happens to have been handed, so the count
+# lives beside the names and nothing downstream repeats it as a literal —
+# the two rc legs arrived as one edit here (#321).
+DRILL_PROBE_COUNT="$(printf '%s\n' "$DRILL_PROBE_NAMES" | wc -l | tr -d ' ')"
 
 # probe_name <n>
 probe_name() { sed -n "${1:?probe_name: n required}p" <<<"$DRILL_PROBE_NAMES"; }
@@ -74,7 +85,7 @@ probe_record() {
 # and the EXIT trap then removes the work directory with `probes.tsv` in it —
 # an unarchived scratch repo and no record at all, under a header comment
 # promising the record either way. So the abort becomes what it is: this
-# probe's failed row, and five probes that still get asked their question.
+# probe's failed row, and seven probes that still get asked their question.
 probe_run() {
   local n="${1:?probe_run: n required}" fn="${2:?probe_run: probe required}"
   local rows_before rows_after counts status=0
@@ -140,6 +151,24 @@ probe_manifest() {
     printf 'A\t%s\t%s\n' "$path" "$stage/$path" >>"$manifest"
   done
   printf '%s\n' "$manifest"
+}
+
+# probe_trim_blank <file> — the file with its trailing blank lines dropped.
+#
+# `changelog_section` prints the blank line that separates a section from the
+# next heading and `changelog-assemble --check` does not, so the promotion's
+# "stamped with the assembled body" claim would fail on that separator alone.
+# Trailing blanks only: a blank line inside the body is content.
+probe_trim_blank() {
+  awk '{ lines[NR] = $0; if (NF) last = NR }
+       END { for (i = 1; i <= last; i++) print lines[i] }' "${1:?}"
+}
+
+# probe_fragment_paths <repo> <ref> <out-file> — the fragment directory's
+# paths at a ref, sorted. The rc leg's "every fragment survives" and the
+# promotion's "fragments consumed" are both this list, compared.
+probe_fragment_paths() {
+  scratch_paths "${1:?}" "${2:?}" | grep '^changelog\.d/' | sort >"${3:?}" || :
 }
 
 # probe_merge_and_wait <branch> <title> <label?> — PR, optional label, merge,
@@ -386,5 +415,171 @@ probe_6_mismatched_tag() {
       "refused before publication; no \`9.9.9\` release, and the probe tag was removed afterwards (its own ref is excluded from the after-count)"
   else
     probe_record 6 "$run" 1 FAIL "$tb" "$ta" "$rb" "$ra" "${problems#; }"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Probe 7 — the rc cut. A labeled ceremony PR bumping to `X.Y.Z-rc1` is a
+# shippable ceremony (only `-dev` is special-cased, so an rc transition
+# reaches decide's row 6), and what it ships is tag-only: the notes are
+# assembled from the fragments, which survive it, `CHANGELOG.md` is not
+# touched at all, the release is marked a prerelease, and the re-arm is
+# arithmetic here too — `X.Y.Z-rc(N+1)-dev`.
+#
+# The ladder starts from an armed `-dev` tree, and the probes above leave
+# main at `$DRILL_V2-dev` with `$DRILL_V2` already published by the tag door,
+# which touches main by design. So this probe arms main at `$DRILL_V3-dev`
+# first — the post-release bump nothing else makes — and seeds one more
+# fragment there, so "every fragment survives" is measured over a set rather
+# than over a file. That commit is setup, not a probe, and it gets its own
+# line in the record for the reason probe 3's re-arm does. The before-counts
+# are taken ahead of it, so a setup commit that somehow published lands in
+# this probe's own delta rather than beside it.
+# --------------------------------------------------------------------------
+probe_7_rc_cut() {
+  local before after stage manifest run conc tb ta rb ra problems=""
+  local arm_sha arm_run arm_conc prerelease armed
+  local changelog_before="$DRILL_WORK/probe7-changelog.before"
+  local changelog_after="$DRILL_WORK/probe7-changelog.after"
+  local frags_before="$DRILL_WORK/probe7-fragments.before"
+  local frags_after="$DRILL_WORK/probe7-fragments.after"
+  before="$(probe_counts "$DRILL_REPO")"
+  tb="$(cut -f1 <<<"$before")"
+  rb="$(cut -f2 <<<"$before")"
+
+  stage="$(probe_stage rc-arm)"
+  printf '%s-dev\n' "$DRILL_V3" >"$stage/VERSION"
+  printf -- '- A second fragment, so the rc legs prove a set survives rather than a file (#321).\n' \
+    >"$stage/changelog.d/10.md"
+  manifest="$(probe_manifest "$stage" VERSION changelog.d/10.md)"
+  arm_sha="$(scratch_commit "$DRILL_REPO" main \
+    "arm the rc ladder at $DRILL_V3-dev, with one more fragment for it to assemble" \
+    "$manifest")" || return 1
+  IFS=$'\t' read -r arm_run arm_conc < <(scratch_run_for "$DRILL_REPO" "$arm_sha") || return 1
+  probe_setup_record "$arm_run" "$arm_conc" \
+    "arming main at \`$DRILL_V3-dev\` before the rc legs and seeding a second fragment there — decide's row 2, a -dev tree that changed. \`$DRILL_V2\` was published by the tag door, which leaves main alone by design, so this is the post-release bump nothing else makes"
+  cp "$stage/VERSION" "$DRILL_STAGE/VERSION"
+  cp "$stage/changelog.d/10.md" "$DRILL_STAGE/changelog.d/10.md"
+
+  # The two states an rc must not disturb, read off main before the cut.
+  scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_before" || return 1
+  probe_fragment_paths "$DRILL_REPO" main "$frags_before"
+
+  probe_branch probe7-rc-cut "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  stage="$(probe_stage probe7)"
+  printf '%s\n' "$DRILL_RC1" >"$stage/VERSION"
+  # The version and the rc's own drill record, and nothing else: an rc stamps
+  # no section and consumes no fragment, so those are the only two files a
+  # ceremony PR cutting one has to carry. Every rc that ships carries its own
+  # record, which is why the emission names this path (#321 D4).
+  # shellcheck disable=SC2016 # backticks are the record's own Markdown
+  printf '# %s — drill record\n\nThe rc legs of `drill/rehearsal.sh`, run against this scratch repo.\n' \
+    "$DRILL_RC1" >"$stage/drills/$DRILL_RC1.md"
+  manifest="$(probe_manifest "$stage" VERSION "drills/$DRILL_RC1.md")"
+  scratch_commit "$DRILL_REPO" probe7-rc-cut \
+    "release $DRILL_RC1 — the rc ceremony PR bumps the version and nothing else" \
+    "$manifest" >/dev/null || return 1
+  IFS=$'\t' read -r run conc < <(probe_merge_and_wait probe7-rc-cut \
+    "release $DRILL_RC1" release) || return 1
+  after="$(probe_counts "$DRILL_REPO")"
+  ta="$(cut -f1 <<<"$after")"
+  ra="$(cut -f2 <<<"$after")"
+  problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
+  scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_RC1" ||
+    problems="$problems; no '$DRILL_RC1' release exists after the rc cut"
+  prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_RC1")" || prerelease="unread"
+  [ "$prerelease" = true ] ||
+    problems="$problems; the '$DRILL_RC1' release reports isPrerelease: $prerelease, expected true"
+  if scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_after"; then
+    cmp -s "$changelog_before" "$changelog_after" ||
+      problems="$problems; CHANGELOG.md is not byte-identical across the rc cut — an rc is tag-only and stamps no section"
+  else
+    problems="$problems; CHANGELOG.md did not read back after the rc cut, so the byte comparison was never taken"
+  fi
+  probe_fragment_paths "$DRILL_REPO" main "$frags_after"
+  cmp -s "$frags_before" "$frags_after" ||
+    problems="$problems; the fragment set changed across the rc cut ($(tr '\n' ' ' <"$frags_before")→ $(tr '\n' ' ' <"$frags_after")) — an rc assembles its notes and consumes nothing"
+  armed="$(scratch_version "$DRILL_REPO" main)"
+  [ "$armed" = "$DRILL_RC2-dev" ] ||
+    problems="$problems; main reads '$armed' after the rc cut, expected '$DRILL_RC2-dev'"
+  # The mirror follows what the door did to main, as probe 1's does.
+  printf '%s-dev\n' "$DRILL_RC2" >"$DRILL_STAGE/VERSION"
+  if [ -z "$problems" ]; then
+    probe_record 7 "$run" 1 PASS "$tb" "$ta" "$rb" "$ra" \
+      "\`$DRILL_RC1\` published as a prerelease; \`CHANGELOG.md\` byte-identical either side, every fragment still there, main re-armed to \`$DRILL_RC2-dev\`"
+  else
+    probe_record 7 "$run" 1 FAIL "$tb" "$ta" "$rb" "$ra" "${problems#; }"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Probe 8 — the promotion. A ceremony PR to bare `X.Y.Z` after the rc ships
+# the full release the candidates were rehearsing: the fragments the rc left
+# alone are consumed, `## X.Y.Z` carries the body they assemble to, and the
+# candidate keeps its prerelease mark — a promotion that relabels the rc it
+# came from rewrites published history, so that is a failed probe and not a
+# tidy-up.
+# --------------------------------------------------------------------------
+probe_8_promotion() {
+  local before after stage manifest run conc tb ta rb ra problems=""
+  local frag prerelease armed leftover
+  local expected="$DRILL_WORK/probe8-notes.expected"
+  local stamped="$DRILL_WORK/probe8-notes.stamped"
+  local changelog_after="$DRILL_WORK/probe8-changelog.after"
+  local frags_after="$DRILL_WORK/probe8-fragments.after"
+  before="$(probe_counts "$DRILL_REPO")"
+  tb="$(cut -f1 <<<"$before")"
+  rb="$(cut -f2 <<<"$before")"
+  probe_branch probe8-promotion "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  stage="$(probe_stage probe8)"
+  printf '%s\n' "$DRILL_V3" >"$stage/VERSION"
+  # Read before the assembler consumes anything: this is the body the rc
+  # published its own notes from, and the promotion's section must be it.
+  (cd "$stage" && "$DRILL_ROOT/bin/changelog-assemble" "$DRILL_V3" --check) \
+    >"$expected" || return 1
+  ceremony_assemble "$stage" "$DRILL_V3" "$DRILL_DATE" "$DRILL_ROOT" || return 1
+  manifest="$(probe_manifest "$stage" VERSION CHANGELOG.md)"
+  for frag in 9 10; do
+    [ -f "$stage/changelog.d/$frag.md" ] ||
+      printf 'D\tchangelog.d/%s.md\n' "$frag" >>"$manifest"
+  done
+  scratch_commit "$DRILL_REPO" probe8-promotion \
+    "release $DRILL_V3 — the promotion's own ceremony PR" "$manifest" >/dev/null || return 1
+  IFS=$'\t' read -r run conc < <(probe_merge_and_wait probe8-promotion \
+    "release $DRILL_V3" release) || return 1
+  after="$(probe_counts "$DRILL_REPO")"
+  ta="$(cut -f1 <<<"$after")"
+  ra="$(cut -f2 <<<"$after")"
+  problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
+  scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_V3" ||
+    problems="$problems; no '$DRILL_V3' release exists after the promotion"
+  prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_V3")" || prerelease="unread"
+  [ "$prerelease" = false ] ||
+    problems="$problems; the '$DRILL_V3' release reports isPrerelease: $prerelease, expected false — the promotion is the final version"
+  prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_RC1")" || prerelease="unread"
+  [ "$prerelease" = true ] ||
+    problems="$problems; the '$DRILL_RC1' release reports isPrerelease: $prerelease after the promotion — promoting must not retroactively relabel the candidate"
+  if scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_after"; then
+    changelog_section "$changelog_after" "$DRILL_V3" >"$stamped"
+    if ! cmp -s <(probe_trim_blank "$expected") <(probe_trim_blank "$stamped"); then
+      problems="$problems; the '## $DRILL_V3' section on main is not the body its fragments assemble to"
+    fi
+  else
+    problems="$problems; CHANGELOG.md did not read back after the promotion, so the stamped section was never compared"
+  fi
+  probe_fragment_paths "$DRILL_REPO" main "$frags_after"
+  grep -qxF changelog.d/README.md "$frags_after" ||
+    problems="$problems; changelog.d/README.md is gone after the promotion — the directory's marker survives the consumption"
+  leftover="$(grep -vxF changelog.d/README.md "$frags_after" | tr '\n' ' ')"
+  [ -z "$leftover" ] ||
+    problems="$problems; fragments survived the promotion ($leftover) — a final consumes them"
+  armed="$(scratch_version "$DRILL_REPO" main)"
+  [ "$armed" = "$DRILL_V4-dev" ] ||
+    problems="$problems; main reads '$armed' after the promotion, expected '$DRILL_V4-dev'"
+  if [ -z "$problems" ]; then
+    probe_record 8 "$run" 1 PASS "$tb" "$ta" "$rb" "$ra" \
+      "\`$DRILL_V3\` published as a full release from the body its fragments assemble to; they are consumed, \`$DRILL_RC1\` is still a prerelease, and main re-armed to \`$DRILL_V4-dev\`"
+  else
+    probe_record 8 "$run" 1 FAIL "$tb" "$ta" "$rb" "$ra" "${problems#; }"
   fi
 }

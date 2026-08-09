@@ -228,6 +228,45 @@ scratch_release_tags() {
   drill_gh api "repos/${1:?}/releases?per_page=100" --jq '.[].tag_name'
 }
 
+# scratch_release_prerelease <repo> <tag> — `true` or `false` for one release.
+#
+# The rc legs' whole claim is this flag (#321): a candidate published as a
+# full release, or retroactively relabeled by the promotion that followed it,
+# is a failed probe, and the flag is what says so rather than the prose beside
+# it. A tag nobody published is a refusal here rather than an empty string
+# downstream — the `probe_counts` lesson, applied to the other measurement the
+# rc probes are asserted on.
+scratch_release_prerelease() {
+  local repo="${1:?}" tag="${2:?}" flag
+  flag="$(drill_gh api "repos/$repo/releases?per_page=100" \
+    --jq '.[] | "\(.tag_name)\t\(.prerelease)"' |
+    awk -F'\t' -v t="$tag" '$1 == t { print $2; exit }')"
+  case "$flag" in
+    true | false) printf '%s\n' "$flag" ;;
+    *)
+      echo "scratch_release_prerelease: no release tagged '$tag' at $repo answered with a prerelease flag ('$flag') — a flag nobody read is not a measurement." >&2
+      return 1
+      ;;
+  esac
+}
+
+# scratch_file <repo> <ref> <path> <out-file> — the file's bytes at a ref,
+# put where a byte comparison can reach them.
+#
+# `scratch_version` below strips whitespace because a version is a token;
+# this one strips nothing, because the rc cut's changelog claim is `cmp` and
+# not prose (#321 D3): "byte-identical before and after" is only a
+# measurement if the bytes are what was compared.
+scratch_file() {
+  local repo="${1:?}" ref="${2:?}" path="${3:?}" out="${4:?}" encoded
+  encoded="$(drill_gh_soft api "repos/$repo/contents/$path?ref=$ref" --jq '.content')"
+  if [ -z "$encoded" ]; then
+    echo "scratch_file: $repo@$ref has no '$path' to read." >&2
+    return 1
+  fi
+  base64 -d <<<"$encoded" >"$out"
+}
+
 # scratch_version <repo> <ref> — the tree's VERSION at a ref, for the
 # re-arm assertions.
 scratch_version() {
