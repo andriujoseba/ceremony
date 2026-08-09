@@ -42,19 +42,20 @@ surviving fragments into cumulative notes, publish the candidate with
 `X.Y.Z-rc(N+1)-dev`. Repeat those steps for each candidate. Promotion to
 `X.Y.Z` is the ordinary final ceremony: assemble and stamp the final section,
 consume the fragments, publish the final release, and re-arm the next patch
-development version.
+development version (#322).
 
 This path is fragment-mode only. Before opening an rc window, inspect the
 first `## ` section of `CHANGELOG.md`: it must not be a stamped version that
 matches `X.Y.Z-rcN` exactly. `changelog-armed` refuses that top section in
 every mode and on every PR, while `changelog-monotonic` forbids deleting the
 historical version heading. Stamp the next final section above it instead;
-never delete the rc heading. In legacy heading mode the ordinary
+never delete the rc heading. That stamp is an ordinary ceremony PR, not a
+migration exception. In legacy heading mode the ordinary
 `## Unreleased` re-arm already puts a safe section above it. Fragment mode
 refuses a surviving `## Unreleased`, so the next final cut is the adoption
 door. Deeper rc headings are harmless history: the guard reads only the top
 section. Spellings outside the declared `X.Y.Z-rcN` convention, such as
-`-rc.1`, `-RC1`, or `-beta1`, are not rc stamps to these guards.
+`-rc.1`, `-RC1`, or `-beta1`, are not rc stamps to these guards (#322).
 
 ## Gates
 
