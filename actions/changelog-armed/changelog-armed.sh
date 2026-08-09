@@ -163,11 +163,6 @@ fi
 # The TOP section: the first '## ' heading in the file. Everything above it is
 # the changelog's own preamble and belongs to no section.
 top="$(grep -m1 '^## ' "$changelog" || true)"
-[ -n "$top" ] || {
-  echo "changelog-armed: $changelog has no '## ' section at all — nothing for a PR entry to land under" >&2
-  exit 1
-}
-
 # '## 0.7.0 — 2026-07-19' -> '0.7.0'. Split on whitespace, the same shape
 # changelog_section matches on, so the two cannot disagree about what a
 # section header is.
@@ -175,7 +170,7 @@ top_ver="$(printf '%s\n' "$top" | awk '{ print $2 }')"
 
 # A stamped rc top section is drift in every mode: candidates are tag-only
 # under #317 D1. Deeper rc headings are historical and deliberately ignored.
-if version_is_rc "$top_ver"; then
+if [ -n "$top" ] && version_is_rc "$top_ver"; then
   echo "changelog-armed: the top section '$top_ver' is an rc stamp, but rc cuts are tag-only (#317 D1); leave $changelog untouched" >&2
   exit 1
 fi
@@ -184,6 +179,11 @@ if version_is_rc "$ver"; then
   echo "changelog-armed: version '$ver' is an rc tree, but rc is fragment-mode only (#317 D4); adopt changelog fragments first" >&2
   exit 1
 fi
+
+[ -n "$top" ] || {
+  echo "changelog-armed: $changelog has no '## ' section at all — nothing for a PR entry to land under" >&2
+  exit 1
+}
 
 # version_is_dev is the single definition of the -dev special case (#3): an
 # rc is a pre-release, not a dev tree; its fragment-only refusal is above.

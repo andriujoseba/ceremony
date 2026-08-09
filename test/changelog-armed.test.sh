@@ -207,6 +207,15 @@ EOF
 check "rc tree refuses heading mode and teaches fragment adoption" 1 \
   "fragment-mode only (#317 D4); adopt changelog fragments" in_tree rc-heading-mode
 
+tree rc-heading-mode-no-sections 2.0.0-rc1 <<'EOF'
+# Changelog
+
+Preamble only.
+EOF
+check "rc heading-mode refusal outranks the generic missing-section diagnosis" 1 \
+  "fragment-mode only (#317 D4); adopt changelog fragments" \
+  in_tree rc-heading-mode-no-sections
+
 # --- degenerate trees --------------------------------------------------------
 
 tree no-sections 1.2.3-dev <<'EOF'
