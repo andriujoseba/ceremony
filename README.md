@@ -117,14 +117,14 @@ assembles the fragments that deliberately survive until promotion through
 [bin/changelog-assemble](bin/changelog-assemble). The merge door then
 re-arms main arithmetically: finals become `X.Y.(Z+1)-dev`, while candidates
 become `X.Y.Z-rc(N+1)-dev`; the changelog itself needs no re-arm (#112,
-#320). The machine does the
-transcription because humans err silently and machines fail loudly:
-**everything asserts its way to certainty and fails loudly, creating
-nothing** — a wrong release is worse than a missing one, so every assert in
-this file fires *before its door creates anything*, and one that fails leaves
-zero artifacts of the run's own: no tag it made, no release, no bump. Three
-steps run past the tag, and what a failure at each leaves behind is what
-sorts them. Two fail before the release exists: the consumer's
+#320). No operator chooses a candidate's next version; the rc number is
+arithmetic in the same way as a final's next patch number. The machine does
+the transcription because humans err silently and machines fail loudly:
+**every assert fires before its door creates anything** — a wrong release is
+worse than a missing one. An assert that refuses the merge door leaves zero
+artifacts of that run: no tag, no release, no bump. Three fallible operations
+run after those asserts and past the tag, and what a failure at each leaves
+behind is what sorts them. Two fail before the release exists: the consumer's
 [artifact hook](docs/CONSUMERS.md#the-artifact-hook) sits between the tag and
 the publish, so its non-zero exit aborts, and the publish itself
 ([`gh release create --verify-tag`](.github/workflows/release.yml#L254-L273))
@@ -556,13 +556,12 @@ read — set up node/npm in the caller.
 backend`, and unreachable for the same reason — `VERSION_SOURCE` was validated
 before either was called. Fix the caller.
 
-In every case the remedy has the same shape — write the next version that the
-release already computed to `VERSION` (or the `package.json` version field)
-and push: `X.Y.(Z+1)-dev` where the shipped version was bare, or
-`X.Y.Z-rc(N+1)-dev` where it was an rc. Note that a *push* refusal is not one
-of these — branch
-protection is expected, and the step opens the bump PR itself rather than
-failing ([L308–L316](.github/workflows/release.yml#L308-L316)).
+For either `version_write` failure, use the already-computed `next` value from
+the job log to finish the interrupted write and push it; re-running the
+release cannot help because the release now exists. This is recovery from a
+failed writer, not part of the normal release ladder. A *push* refusal is not
+one of these: branch protection is expected, and the step opens the bump PR
+itself rather than failing ([L308–L316](.github/workflows/release.yml#L308-L316)).
 
 ### Red main that is not the release workflow
 
