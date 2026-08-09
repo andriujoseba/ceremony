@@ -252,6 +252,56 @@ check "a conclusion missing a probe line reds the shape check" 1 \
   record_check "$TMP/record-short-claims.md"
 
 # ---------------------------------------------------------------------------
+# The preamble is a claim about the runs, so it is measured like one (round
+# 2). `All six probes ran; every row … was written from its own run` was
+# unconditional, and the abort guard from round 1 is what made it false: an
+# aborted row carries `—` for its run and says so, under a header asserting
+# otherwise. The record's own success line had the same shape — it announced
+# six run IDs one line after excusing a row that had none.
+# ---------------------------------------------------------------------------
+check "a clean run's preamble still claims all six ran" 0 "" \
+  grep -qF 'All six probes ran' "$TMP/rendered.md"
+sed 's/\t1006\t1\tPASS\t2\t2\t2\t2\trefused before publication/\t—\t1\tFAIL\t2\t2\t2\t2\taborted before it reached a verdict (exit 1)/' \
+  "$TMP/probes.tsv" >"$TMP/one-aborted.tsv"
+record_render "$TMP/ctx.tsv" "$TMP/one-aborted.tsv" "$TMP/setup.tsv" >"$TMP/one-aborted.md"
+check "an aborted probe withdraws the preamble's claim that all six ran" 1 "" \
+  grep -qF 'All six probes ran' "$TMP/one-aborted.md"
+check "the preamble counts the probes that never reached a run" 0 \
+  "**1 of the six probes never reached a run** (probe 6)" \
+  cat "$TMP/one-aborted.md"
+check "the preamble still stands behind the rows that did run" 0 \
+  "Every other row in the table was written" cat "$TMP/one-aborted.md"
+check "an aborted record still passes the shape check" 0 "six probe rows" \
+  record_check "$TMP/one-aborted.md"
+record_check "$TMP/one-aborted.md" >"$TMP/one-aborted.check"
+check "the shape check stops claiming a run ID for the row it excused" 1 "" \
+  grep -qF 'each with a run ID' "$TMP/one-aborted.check"
+check "the shape check says how many rows it excused" 0 \
+  "1 aborted before reaching a run" record_check "$TMP/one-aborted.md"
+check "a clean record's shape check does claim a run ID for every row" 0 \
+  "each with a run ID and its before/after counts" record_check "$TMP/rendered.md"
+# Two aborts are named individually: a reader who has to go and look wants
+# the numbers, not the count.
+sed -e 's/\t1003\t1\tPASS\t1\t1\t1\t1\trefused at decide/\t—\t1\tFAIL\t1\t1\t1\t1\taborted before it reached a verdict (exit 1)/' \
+  -e 's/\t1006\t1\tPASS\t2\t2\t2\t2\trefused before publication/\t—\t1\tFAIL\t2\t2\t2\t2\taborted before it reached a verdict (exit 1)/' \
+  "$TMP/probes.tsv" >"$TMP/two-aborted.tsv"
+check "two aborted probes are both named in the preamble" 0 \
+  "**2 of the six probes never reached a run** (probe 3, 6)" \
+  record_render "$TMP/ctx.tsv" "$TMP/two-aborted.tsv" "$TMP/setup.tsv"
+# `unestablished` is a subtraction, and a duplicated row would have rendered
+# it negative. The shape check's row count catches that before the emission
+# ships; the arithmetic does not lean on it.
+{
+  cat "$TMP/probes.tsv"
+  head -n 1 "$TMP/probes.tsv"
+} >"$TMP/seven.tsv"
+record_render "$TMP/ctx.tsv" "$TMP/seven.tsv" "$TMP/setup.tsv" >"$TMP/seven.md"
+check "a duplicated probe row never renders a negative count" 1 "" \
+  grep -qE 'Not established: -' "$TMP/seven.md"
+check "the duplicated row is still what reds the shape check" 1 \
+  "the probe table has 7 rows, expected 6" record_check "$TMP/seven.md"
+
+# ---------------------------------------------------------------------------
 # `probe_counts` refuses a count that did not read (round 1). An API error
 # prints nothing, and `$((after - before))` over an empty string is 0 — the
 # very delta a refusal probe is looking for, so the swallowed read would have
@@ -479,6 +529,8 @@ check "the aborted probe's row links no run it never had" 0 "| — |" \
   bash -c 'awk "/^\\| 6 \\|/" "$1"' _ "$TMP/aborted.md"
 check "the record after an abort still passes the shape check" 0 "six probe rows" \
   record_check "$TMP/aborted.md"
+check "the end-to-end aborted record's preamble names the probe that never ran" 0 \
+  "**1 of the six probes never reached a run** (probe 6)" cat "$TMP/aborted.md"
 check "the aborted probe establishes nothing in the conclusion" 1 "" \
   grep -qF 'refused a mismatched tag before creating anything' "$TMP/aborted.md"
 check "the probes before the abort still stand" 0 \

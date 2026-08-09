@@ -102,11 +102,36 @@ record_establishes() {
   done
 }
 
+# record_unrun <probes-tsv> — the probe numbers with no run behind their row.
+#
+# The preamble asserted "All six probes ran" from the moment it was written,
+# and the abort guard made that false: an aborted probe's row carries `—` for
+# its run and says so in its result, under a header still claiming every row
+# was written from its own run (@claude-bot-andresmgsl, round 2). It is the
+# same shape the conclusion was just fixed for, at lower stakes, so it is
+# fixed the same way — the sentence is a measurement now, not a constant.
+record_unrun() {
+  local probes="${1:?}" n row run out=""
+  for n in 1 2 3 4 5 6; do
+    row="$(awk -F'\t' -v n="$n" '$1 == n { print; exit }' "$probes")"
+    if [ -z "$row" ]; then
+      out="$out $n"
+      continue
+    fi
+    run="$(cut -f3 <<<"$row")"
+    case "$run" in
+      '' | '—') out="$out $n" ;;
+    esac
+  done
+  printf '%s\n' "${out# }"
+}
+
 # record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
 record_render() {
   local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
   local ver scratch created candidate_sha candidate_ref fork_repo fork_ref
   local fork_head pin disposal runner stamp failed passed unestablished
+  local unrun unrun_count
   ver="$(record_ctx "$ctx" version)"
   scratch="$(record_ctx "$ctx" scratch)"
   created="$(record_ctx "$ctx" created)"
@@ -123,17 +148,29 @@ record_render() {
   # A probe that never wrote a row establishes nothing either, so the
   # conclusion counts what passed rather than what failed.
   passed="$(awk -F'\t' '$5 == "PASS"' "$probes" | wc -l | tr -d ' ')"
+  # Clamped: a duplicated row would otherwise render a negative count. The
+  # shape check's row count catches that before the emission ships, so this
+  # is belt and braces — but the arithmetic should not need a check elsewhere
+  # in the file to stay sane (@claude-bot-andresmgsl, round 2).
   unestablished=$((6 - passed))
+  [ "$unestablished" -ge 0 ] || unestablished=0
+  unrun="$(record_unrun "$probes")"
+  unrun_count="$(printf '%s\n' "$unrun" | wc -w | tr -d ' ')"
 
   cat <<EOF
 # $ver — drill record
 
 Run $stamp by \`$runner\` with \`drill/rehearsal.sh\` against the $ver
 candidate, candidate ref \`$candidate_ref\`, canonical candidate SHA
-\`$candidate_sha\`. All six probes ran; every row in the table below was
-written from its own run by the script that drove it.
-
+\`$candidate_sha\`.
 EOF
+
+  if [ "$unrun_count" = 0 ]; then
+    printf 'All six probes ran; every row in the table below was written from\nits own run by the script that drove it.\n\n'
+  else
+    printf '**%s of the six probes never reached a run** (probe %s): those rows\nare written from the abort itself, show a dash where a run link would be,\nand nothing is claimed for them below. Every other row in the table was written\nfrom its own run by the script that drove it.\n\n' \
+      "$unrun_count" "${unrun// /, }"
+  fi
 
   if [ "$failed" = 0 ]; then
     printf '**Every probe passed.**\n\n'
@@ -237,7 +274,7 @@ EOF
 # is checked rather than trusted — the script is the record's only author now,
 # so nothing else will notice.
 record_check() {
-  local file="${1:?record_check: file required}" rows problems=""
+  local file="${1:?record_check: file required}" rows problems="" exempt=0
   rows="$(awk -F'|' '/^\| [1-6] \|/ { print }' "$file")"
   local count
   count="$(printf '%s\n' "$rows" | awk 'NF' | wc -l | tr -d ' ')"
@@ -257,6 +294,7 @@ record_check() {
     # say `—` for its run *and* carry the aborted failure mark, so a row that
     # merely lost its run ID still reds (#313's "must fail loudly").
     if [ "$run_cell" = "—" ] && [[ "$result_cell" == *"❌ aborted"* ]]; then
+      exempt=$((exempt + 1))
       continue
     fi
     printf '%s' "$row" | grep -qE '/actions/runs/[0-9]+' ||
@@ -277,5 +315,12 @@ record_check() {
     echo "record_check: ${problems#; }" >&2
     return 1
   fi
-  echo "record_check: six probe rows, each with a run ID and its before/after counts, and a conclusion that claims only what they measured."
+  # The success line is evidence too, and it used to announce run IDs for six
+  # rows one line after excusing a row that had none. It says what it checked
+  # (@claude-bot-andresmgsl, round 2).
+  if [ "$exempt" = 0 ]; then
+    echo "record_check: six probe rows, each with a run ID and its before/after counts, and a conclusion that claims only what they measured."
+  else
+    echo "record_check: six probe rows — $exempt aborted before reaching a run and carry the aborted mark in place of a run ID, the rest carry a run ID and their before/after counts — and a conclusion that claims only what they measured."
+  fi
 }

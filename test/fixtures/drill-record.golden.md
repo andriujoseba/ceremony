@@ -2,8 +2,9 @@
 
 Run 2026-08-09 by `drill-runner` with `drill/rehearsal.sh` against the 0.7.0
 candidate, candidate ref `build/313-drill-rehearsal`, canonical candidate SHA
-`c0ffee1234567890c0ffee1234567890c0ffee12`. All six probes ran; every row in the table below was
-written from its own run by the script that drove it.
+`c0ffee1234567890c0ffee1234567890c0ffee12`.
+All six probes ran; every row in the table below was written from
+its own run by the script that drove it.
 
 **Every probe passed.**
 
