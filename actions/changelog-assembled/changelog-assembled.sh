@@ -129,6 +129,49 @@ trap 'rm -rf "$tmp"' EXIT
 
 git show "$merge_base:$changelog" >"$tmp/base-changelog.md" 2>/dev/null || : >"$tmp/base-changelog.md"
 
+# An rc cut is tag-only (#317 D1): the inverse of a bare release ceremony.
+# Every fragment that existed at the merge base must survive, and the
+# changelog must be byte-identical. These are deliberately diff assertions;
+# neither can be proven by inspecting HEAD alone.
+if version_is_rc "$ver"; then
+  failures=0
+  deleted=""
+  while IFS= read -r -d '' path; do
+    name="${path##*/}"
+    case "$name" in
+      README.md) continue ;;
+      *.md) ;;
+      *) continue ;;
+    esac
+    if [ ! -e "$path" ]; then
+      deleted="${deleted}    ${path}"$'\n'
+    fi
+  done < <(git ls-tree -r -z --name-only "$merge_base" -- "$dir/")
+
+  if [ -n "$deleted" ]; then
+    {
+      echo "changelog-assembled: rc tree '$ver' consumed fragment(s) that existed at the merge base ($short_base):"
+      echo
+      printf '%s' "$deleted"
+      echo
+      echo "  RC cuts are tag-only (#317 D1): every fragment must survive for the final release."
+    } >&2
+    failures=$((failures + 1))
+  fi
+
+  if ! cmp -s "$tmp/base-changelog.md" "$changelog"; then
+    {
+      echo "changelog-assembled: rc tree '$ver' changed $changelog from the merge base ($short_base)."
+      echo "  RC cuts are tag-only (#317 D1): CHANGELOG.md must remain byte-identical."
+    } >&2
+    failures=$((failures + 1))
+  fi
+
+  [ "$failures" -eq 0 ] || exit 1
+  echo "changelog-assembled: rc tree '$ver' consumed no fragments and left $changelog byte-identical to the merge base ($short_base)"
+  exit 0
+fi
+
 # A branch that merely SITS on a release is not the ceremony that stamped
 # it: right after a release merges, main's version is bare until the -dev
 # bump lands, and a PR branched in that window would otherwise be asked to
