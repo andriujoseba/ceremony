@@ -2,6 +2,10 @@
 # The drill instrument's contract suite (#313). The split the repo already
 # uses holds here too: this suite proves every decision offline against a
 # recording `gh` stub, and the live shakedown run proves the doors.
+#
+# File-wide, because both idioms are load-bearing here rather than incidental:
+# shellcheck disable=SC2016 # a `bash -c` body's $1 belongs to that process
+# shellcheck disable=SC2030,SC2031 # each stub probe runs in its own subshell
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -194,7 +198,8 @@ stub_reset() {
   mkdir -p "$TMP/state"
   printf '1000\n' >"$TMP/state/counter"
   : >"$TMP/state/calls"
-  local R="$TMP/state/$(san "$FORK")"
+  local R
+  R="$TMP/state/$(san "$FORK")"
   mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
   printf '2026-08-09T00:00:00Z\n' >"$R/created_at"
   printf 'false\n' >"$R/archived"
