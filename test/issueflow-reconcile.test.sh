@@ -217,7 +217,10 @@ check "cross-repo ref in a later clause still flags" 0 "FLAG_CROSS_REPO" \
 check "open blocker keeps issue blocked" 0 "KEEP" blocked_decision "$refs" $'CLOSED\nOPEN'
 check "all closed blockers release issue" 0 "READY" blocked_decision "$refs" $'CLOSED\nCLOSED'
 check "missing blocked declaration is flagged" 0 "FLAG_UNPARSEABLE" blocked_decision "" ""
-check "unreadable blocker is flagged" 0 "FLAG_UNPARSEABLE" blocked_decision "12" "UNKNOWN"
+check "unreadable dependency has its own skip verdict" 0 "SKIP_UNREADABLE_DEPENDENCY" \
+  blocked_decision "12" "UNKNOWN"
+check "an open blocker still wins beside an unreadable dependency" 0 "KEEP" \
+  blocked_decision "12" $'OPEN\nUNKNOWN'
 check "cross-repo-only blocker is flagged distinctly" 0 "FLAG_CROSS_REPO" \
   blocked_decision "" "" "rig#112"
 check "cross-repo blocker prevents false promotion when locals close" 0 "FLAG_CROSS_REPO" \
@@ -1899,6 +1902,47 @@ both_out="$(sweep_run)"
 check "two skipped issues are both named, in the plural" 0 \
   'issueflow: 2 issues skipped this pass on unreadable facts: #70 #72' \
   printf '%s\n' "$both_out"
+
+# A dependency read is part of the issue's atomic pass. The parse echo is
+# staged before this read, so an empty recorder proves both comments and edits
+# were discarded rather than merely showing that the decision arm stayed quiet
+# (#345). Bound and name the recorder here; the PR body carries the measured
+# before/after counts beside the mutation evidence.
+jq -n --arg at "$(iso_at "$INOW")" \
+  '{number:73,user:{login:"triage-one"},created_at:$at,body:"Blocked by #74.",labels:[{name:"blocked"}],assignees:[]}' \
+  >"$SWEEP/repos_owner_repo_issues_73.json"
+printf '[]\n' >"$SWEEP/repos_owner_repo_issues_73_comments.json"
+printf '%s\n' "$GH_STUB_ERROR_BODY" \
+  >"$SWEEP/repos_owner_repo_issues_74.json.http-error"
+sweep_board '[{"number":73}]'
+dependency_edits_before="$(wc -l <"$SWEEP/edits")"
+dependency_out="$(sweep_run)"
+dependency_edits_after="$(wc -l <"$SWEEP/edits")"
+check "a failed dependency read leaves the armed edit recorder empty" 0 "0 0" \
+  printf '%s %s\n' "$dependency_edits_before" "$dependency_edits_after"
+check "the blocked issue names the dependency read it skipped" 0 \
+  "issueflow: #73: skipped this pass — could not read dependency #74: $GH_STUB_STDERR" \
+  printf '%s\n' "$dependency_out"
+check "the dependency skip ends with the partial-pass tail" 0 \
+  'issueflow: 1 issue skipped this pass on an unreadable fact: #73' \
+  printf '%s\n' "$dependency_out"
+check "the failed dependency read never accuses the declaration" 1 "" \
+  grep -qF 'blocked-unparseable' "$SWEEP/edits"
+
+dependency_state_probe() {
+  (
+    REPO=owner/repo
+    # shellcheck disable=SC2317 # reached indirectly by reference_states
+    gh() { issue_stub_gh "$@"; }
+    local states=""
+    reference_states 75 states <<<"76"
+    printf '%s\n' "$states"
+  )
+}
+printf '{"state":"surprising"}\n' >"$TMP/repos_owner_repo_issues_76.json"
+check "a non-issue dependency state skips instead of becoming UNKNOWN" 3 \
+  "#75: skipped this pass — dependency #76 answered a state other than open or closed" \
+  dependency_state_probe
 
 sweep_board '[{"number":71}]'
 whole_out="$(sweep_run)"
