@@ -100,11 +100,33 @@ jobs:
           cat > "$RUNNER_TEMP/stub/gh" <<'EOF'
           #!/usr/bin/env bash
           if [ "$1" = api ]; then echo true; exit 0; fi
+          if [ "$1" = release ] && [ "$2" = create ]; then
+            tag="$3"
+            shift 3
+            prerelease=false
+            notes_file=""
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                --prerelease) prerelease=true; shift ;;
+                --notes-file) notes_file="$2"; shift 2 ;;
+                --title | -R) shift 2 ;;
+                --verify-tag) shift ;;
+                *) shift ;;
+              esac
+            done
+            [ -n "$notes_file" ] && [ -f "$notes_file" ] || exit 98
+            mkdir -p "$EXERCISE_RELEASES"
+            printf 'isPrerelease=%s\n' "$prerelease" > "$EXERCISE_RELEASES/$tag.meta"
+            cp "$notes_file" "$EXERCISE_RELEASES/$tag.notes"
+            exit 0
+          fi
           echo "gh stub: unexpected call: gh $*" >&2
           exit 97
           EOF
           chmod +x "$RUNNER_TEMP/stub/gh"
           echo "$RUNNER_TEMP/stub" >> "$GITHUB_PATH"
+          mkdir -p "$RUNNER_TEMP/releases"
+          echo "EXERCISE_RELEASES=$RUNNER_TEMP/releases" >> "$GITHUB_ENV"
           git init -q "$RUNNER_TEMP/fixture"
           cd "$RUNNER_TEMP/fixture"
           git config user.email fixture@example.invalid
@@ -208,6 +230,127 @@ jobs:
           grep -q "The entry this release ships" "$RUNNER_TEMP/notes.md" \
             || { echo "notes.md missing the fixture's entry" >&2; exit 1; }
           echo "step-replay ($CEREMONY_DIR): facts -> decide -> notes carried real values end to end"
+
+      - name: rc merge and tag doors, then final promotion — replayed end to end
+        # The fixture executes the notes and publish branches from both live
+        # doors, then the merge door's re-arm arithmetic. The gh stub above
+        # persists release facts and bodies; local tags are the matching dry
+        # substitute for the write API. Final promotion follows the rc in the
+        # same fixture so the surviving fragments are proved cumulative.
+        run: |
+          make_rc_fixture() {
+            fixture="$1"
+            version="$2"
+            git init -q "$fixture"
+            git -C "$fixture" config user.email fixture@example.invalid
+            git -C "$fixture" config user.name fixture
+            printf '%s\n' "$version" > "$fixture/VERSION"
+            cat > "$fixture/CHANGELOG.md" <<'EOF'
+          # Changelog
+
+          ## 0.6.2 — 2026-08-08
+
+          - An older final release.
+          EOF
+            mkdir "$fixture/changelog.d"
+            printf '# fixture marker\n' > "$fixture/changelog.d/README.md"
+            printf 'grouped\n' > "$fixture/changelog.d/shape"
+            cat > "$fixture/changelog.d/42.md" <<'EOF'
+          ### Added
+
+          - The candidate entry survives until promotion (#42).
+          EOF
+            git -C "$fixture" add VERSION CHANGELOG.md changelog.d
+            git -C "$fixture" commit -qm "candidate $version"
+          }
+
+          publish_fixture() {
+            # release.yml's publish body, with assets empty in this fixture.
+            # shellcheck source=/dev/null
+            . "$CEREMONY_DIR/lib/version.sh"
+            release_flags=()
+            if version_is_rc "$VER"; then
+              release_flags+=(--prerelease)
+            fi
+            assets=()
+            gh release create "$VER" --verify-tag --title "$VER" \
+              --notes-file "$RUNNER_TEMP/notes.md" -R "$GITHUB_REPOSITORY" \
+              "${release_flags[@]}" \
+              "${assets[@]}"
+          }
+
+          rc_fixture="$RUNNER_TEMP/rc-fixture"
+          make_rc_fixture "$rc_fixture" 0.7.0-rc1
+          cd "$rc_fixture"
+          before_changelog="$(sha256sum CHANGELOG.md | awk '{ print $1 }')"
+          expected_notes="$(bash "$CEREMONY_DIR/bin/changelog-assemble" 0.7.0-rc1 --check)"
+          before_tags="$(git tag | wc -l)"
+          before_releases="$(find "$EXERCISE_RELEASES" -type f | wc -l)"
+
+          mv changelog.d/42.md "$RUNNER_TEMP/42.md"
+          if bash "$CEREMONY_DIR/bin/changelog-assemble" 0.7.0-rc1 --check > "$RUNNER_TEMP/empty-notes.md" 2>&1; then
+            echo "zero-fragment rc unexpectedly reached publication" >&2
+            exit 1
+          fi
+          grep -F "zero fragments" "$RUNNER_TEMP/empty-notes.md"
+          [ "$(git tag | wc -l)" = "$before_tags" ]
+          [ "$(find "$EXERCISE_RELEASES" -type f | wc -l)" = "$before_releases" ]
+          mv "$RUNNER_TEMP/42.md" changelog.d/42.md
+
+          VER=0.7.0-rc1
+          # release.yml's rc notes branch.
+          # shellcheck source=/dev/null
+          . "$CEREMONY_DIR/lib/changelog.sh"
+          # shellcheck source=/dev/null
+          . "$CEREMONY_DIR/lib/version.sh"
+          if version_is_rc "$VER"; then
+            bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" --check > "$RUNNER_TEMP/notes.md"
+          else
+            changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
+          fi
+          git tag "$VER"
+          publish_fixture
+          printf '%s\n' "$expected_notes" | diff -u - "$RUNNER_TEMP/notes.md"
+          grep -Fx 'isPrerelease=true' "$EXERCISE_RELEASES/$VER.meta"
+          diff -u "$RUNNER_TEMP/notes.md" "$EXERCISE_RELEASES/$VER.notes"
+          [ "$(sha256sum CHANGELOG.md | awk '{ print $1 }')" = "$before_changelog" ]
+          git cat-file -e "$VER:changelog.d/42.md"
+          next="$(version_next_dev "$VER")"
+          [ "$next" = 0.7.0-rc2-dev ]
+          version_write file "$next"
+          [ "$(cat VERSION)" = 0.7.0-rc2-dev ]
+          git add VERSION
+          git commit -qm "re-arm after $VER"
+
+          # Promotion follows the rc: the final ceremony consumes the same
+          # fragments, uses the stamped-section notes path, and bare-bumps.
+          VER=0.7.0
+          printf '%s\n' "$VER" > VERSION
+          bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" 2026-08-09
+          git add VERSION CHANGELOG.md changelog.d
+          git commit -qm "promote $VER"
+          changelog_section CHANGELOG.md "$VER" > "$RUNNER_TEMP/notes.md"
+          git tag "$VER"
+          publish_fixture
+          grep -Fx 'isPrerelease=false' "$EXERCISE_RELEASES/$VER.meta"
+          grep -F 'The candidate entry survives until promotion' "$EXERCISE_RELEASES/$VER.notes"
+          next="$(version_next_dev "$VER")"
+          [ "$next" = 0.7.1-dev ]
+
+          # The tag door takes the same rc notes/flag branch and never calls
+          # the bump: VERSION remains byte-identical after publication.
+          tag_fixture="$RUNNER_TEMP/rc-tag-fixture"
+          make_rc_fixture "$tag_fixture" 0.8.0-rc2
+          cd "$tag_fixture"
+          VER=0.8.0-rc2
+          before_version="$(cat VERSION)"
+          bash "$CEREMONY_DIR/bin/changelog-assemble" "$VER" --check > "$RUNNER_TEMP/notes.md"
+          git tag "$VER"
+          publish_fixture
+          grep -Fx 'isPrerelease=true' "$EXERCISE_RELEASES/$VER.meta"
+          grep -F 'The candidate entry survives until promotion' "$EXERCISE_RELEASES/$VER.notes"
+          [ "$(cat VERSION)" = "$before_version" ]
+          echo "rc replay ($CEREMONY_DIR): merge/tag prereleases and final promotion carried real release facts"
 
   fixture-chain:
     runs-on: ubuntu-latest
