@@ -98,9 +98,10 @@ committed **before** the caller, so the first door run had a real parent
 version to inspect — the script refuses to install the caller against a tree
 with no fixture in it.
 
-**Disposal, as this run observed it**: $disposal. It is **pending the
-operator's delete**, which no builder can perform: \`delete_repo\` is absent
-from fleet tokens by doctrine (#135). No delete was attempted and none is
+**Disposal, as this run observed it**: $disposal.
+
+It is **pending the operator's delete**, which no builder can perform:
+\`delete_repo\` is absent from fleet tokens by doctrine (#135). No delete was attempted and none is
 claimed — the instrument refuses the call rather than retrying the 403 wall.
 Cleanup gates nothing.
 

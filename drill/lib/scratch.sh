@@ -54,6 +54,19 @@ drill_gh() {
   gh "$@"
 }
 
+# drill_gh_soft <gh-args...> — stdout only when the call actually succeeded.
+#
+# `gh api --jq` applies the filter to the *error* body on a 404 and still
+# prints it, so a missing ref answers `null` and an absent file answers a
+# JSON object; both read as data downstream. Only the exit status tells them
+# apart, so every "does this exist yet" read goes through here.
+drill_gh_soft() {
+  local out rc=0
+  out="$(drill_gh "$@" 2>/dev/null)" || rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  printf '%s\n' "$out"
+}
+
 # scratch_create <owner/name> — a private, disposable repo.
 scratch_create() {
   local repo="${1:?scratch_create: owner/name required}"
@@ -68,13 +81,13 @@ scratch_created_at() {
 
 # scratch_ref_sha <repo> <branch> — the branch head, empty when it has none.
 scratch_ref_sha() {
-  drill_gh api "repos/${1:?}/git/ref/heads/${2:?}" --jq '.object.sha' 2>/dev/null || true
+  drill_gh_soft api "repos/${1:?}/git/ref/heads/${2:?}" --jq '.object.sha'
 }
 
 # scratch_paths <repo> <ref> — every path in the ref's tree, one per line.
 scratch_paths() {
-  drill_gh api "repos/${1:?}/git/trees/${2:?}?recursive=1" \
-    --jq '.tree[] | select(.type == "blob") | .path' 2>/dev/null || true
+  drill_gh_soft api "repos/${1:?}/git/trees/${2:?}?recursive=1" \
+    --jq '.tree[] | select(.type == "blob") | .path'
 }
 
 # scratch_blob <repo> <local-file> — create a blob, print its SHA.
@@ -199,8 +212,10 @@ scratch_release_tags() {
 # scratch_version <repo> <ref> — the tree's VERSION at a ref, for the
 # re-arm assertions.
 scratch_version() {
-  drill_gh api "repos/${1:?}/contents/VERSION?ref=${2:?}" --jq '.content' 2>/dev/null |
-    base64 -d 2>/dev/null | tr -d '[:space:]'
+  local encoded
+  encoded="$(drill_gh_soft api "repos/${1:?}/contents/VERSION?ref=${2:?}" --jq '.content')"
+  [ -n "$encoded" ] || return 0
+  base64 -d <<<"$encoded" 2>/dev/null | tr -d '[:space:]'
 }
 
 # scratch_run_for <repo> <head-sha> — wait for the newest run at a head and

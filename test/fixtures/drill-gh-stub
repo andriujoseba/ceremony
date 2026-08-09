@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+# A recording, stateful `gh` stub for the drill rehearsal suite (#313).
+#
+# It models just enough GitHub for `drill/rehearsal.sh` to run end to end
+# offline: refs, blobs, trees, commits, pulls, labels, tags, releases and
+# workflow runs. What it deliberately does NOT model is the release doors'
+# decision — the contract suite proves that offline already, and a stub that
+# re-implemented decide would only be testing itself. Instead every door
+# event pops one line from `$DRILL_STUB_SCENARIO`:
+#
+#     <conclusion><TAB><effects>
+#
+# with effects a comma-separated list of `release:<tag>`, `tag:<name>`,
+# `rearm:<version>` or `none`. That is what lets the suite drive a full
+# green sequence, and equally a refusal probe whose after-count grew.
+#
+# Every invocation is appended to `$DRILL_STUB_STATE/calls`, which is how the
+# suite asserts that the repo-delete endpoint is never reached.
+set -uo pipefail
+
+S="${DRILL_STUB_STATE:?drill-gh-stub: DRILL_STUB_STATE required}"
+mkdir -p "$S"
+[ -f "$S/counter" ] || echo 1000 >"$S/counter"
+printf '%s\n' "$*" >>"$S/calls"
+
+san() { printf '%s' "$1" | tr '/' '_'; }
+next_id() {
+  local n
+  n=$(($(cat "$S/counter") + 1))
+  printf '%s\n' "$n" >"$S/counter"
+  printf '%s\n' "$n"
+}
+
+case "${1:-}" in
+  api) shift ;;
+  repo)
+    case "${2:-}" in
+      create)
+        R="$S/$(san "$3")"
+        mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
+        printf '2026-08-09T00:00:00Z\n' >"$R/created_at"
+        printf 'false\n' >"$R/archived"
+        : >"$R/tags"
+        : >"$R/releases"
+        : >"$R/runs"
+        exit 0
+        ;;
+      delete)
+        echo "gh: Must have admin rights to Repository. (HTTP 403)" >&2
+        exit 1
+        ;;
+    esac
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+
+method=""
+endpoint=""
+jqexpr=""
+input=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X | --method)
+      method="${2:-}"
+      shift
+      ;;
+    --method=*) method="${1#--method=}" ;;
+    --jq)
+      jqexpr="${2:-}"
+      shift
+      ;;
+    --input)
+      input="${2:-}"
+      shift
+      ;;
+    -*) ;;
+    *) [ -n "$endpoint" ] || endpoint="$1" ;;
+  esac
+  shift
+done
+
+body=""
+[ "$input" != "-" ] || body="$(cat)"
+if [ -z "$method" ]; then
+  if [ -n "$body" ]; then method=POST; else method=GET; fi
+fi
+
+path="${endpoint%%\?*}"
+query=""
+case "$endpoint" in *\?*) query="${endpoint#*\?}" ;; esac
+path="${path#/}"
+
+out() {
+  if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$1"; else printf '%s\n' "$1"; fi
+}
+missing() {
+  # gh applies --jq to the error body too, so a missing ref answers `null`
+  # rather than nothing. Modelled deliberately: it is the shape that makes
+  # exit status the only honest existence test.
+  if [ -n "$jqexpr" ]; then
+    jq -r "$jqexpr" <<<'{"message":"Not Found"}' 2>/dev/null || true
+  else
+    printf '{"message":"Not Found"}\n'
+  fi
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+}
+qval() {
+  printf '%s' "$query" | tr '&' '\n' |
+    awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); print; exit }'
+}
+
+if [ "$path" = user ]; then
+  out '{"login":"drill-runner"}'
+  exit 0
+fi
+
+IFS=/ read -r _kind owner name rest <<<"$path"
+R="$S/$(san "$owner/$name")"
+[ -d "$R" ] || missing
+
+# ---------------------------------------------------------------------------
+# The object model: blobs, trees, commits, refs.
+# ---------------------------------------------------------------------------
+tree_of_ref() { # <ref-name e.g. heads/main> -> tree id
+  local sha
+  sha="$(cat "$R/refs/$(san "$1")" 2>/dev/null || true)"
+  [ -n "$sha" ] || return 1
+  cat "$R/commit/$sha" 2>/dev/null
+}
+
+# fire <head-sha> — one door event, if the tree at that head carries a caller.
+fire() {
+  local head="$1" tree line conclusion effects run e
+  tree="$(cat "$R/commit/$head" 2>/dev/null || true)"
+  [ -n "$tree" ] || return 0
+  grep -q '^\.github/workflows/release\.yml	' "$R/tree/$tree" || return 0
+  line="$(head -n1 "$DRILL_STUB_SCENARIO")"
+  [ -n "$line" ] || return 0
+  tail -n +2 "$DRILL_STUB_SCENARIO" >"$DRILL_STUB_SCENARIO.rest" &&
+    mv "$DRILL_STUB_SCENARIO.rest" "$DRILL_STUB_SCENARIO"
+  conclusion="$(cut -f1 <<<"$line")"
+  effects="$(cut -f2 <<<"$line")"
+  run="$(next_id)"
+  printf '%s\t%s\t1\t%s\n' "$run" "$head" "$conclusion" >>"$R/runs"
+  for e in ${effects//,/ }; do
+    case "$e" in
+      release:*)
+        printf '%s\n' "${e#release:}" >>"$R/releases"
+        # The merge door creates its own tag; the tag door's already exists,
+        # created by the probe as the operator would.
+        grep -qxF "${e#release:}" "$R/tags" || printf '%s\n' "${e#release:}" >>"$R/tags"
+        ;;
+      tag:*) printf '%s\n' "${e#tag:}" >>"$R/tags" ;;
+      rearm:*) set_main_version "${e#rearm:}" ;;
+      none | '') ;;
+    esac
+  done
+}
+
+set_main_version() { # the door's own re-arm commit
+  local ver="$1" tree blob newtree newcommit
+  tree="$(tree_of_ref heads/main)" || return 0
+  blob="$(next_id)"
+  printf '%s\n' "$ver" >"$R/blob/$blob"
+  newtree="$(next_id)"
+  awk -F'\t' -v b="$blob" 'BEGIN{OFS="\t"} $1 == "VERSION" { $2 = b } { print }' \
+    "$R/tree/$tree" >"$R/tree/$newtree"
+  newcommit="$(next_id)"
+  printf '%s\n' "$newtree" >"$R/commit/$newcommit"
+  printf '%s\n' "$newcommit" >"$R/refs/$(san heads/main)"
+}
+
+case "$rest" in
+  '')
+    if [ "$method" = PATCH ]; then
+      jq -e '.archived == true' <<<"$body" >/dev/null && printf 'true\n' >"$R/archived"
+      out "$(jq -n --arg a "$(cat "$R/archived")" '{archived: ($a == "true"), private: true}')"
+    else
+      out "$(jq -n --arg c "$(cat "$R/created_at")" --arg a "$(cat "$R/archived")" \
+        '{created_at: $c, archived: ($a == "true"), private: true}')"
+    fi
+    ;;
+  git/blobs)
+    sha="$(next_id)"
+    jq -r '.content' <<<"$body" | base64 -d >"$R/blob/$sha"
+    out "$(jq -n --arg s "$sha" '{sha: $s}')"
+    ;;
+  git/trees)
+    id="$(next_id)"
+    base="$(jq -r '.base_tree // ""' <<<"$body")"
+    if [ -n "$base" ] && [ -f "$R/tree/$base" ]; then
+      cp "$R/tree/$base" "$R/tree/$id"
+    else
+      : >"$R/tree/$id"
+    fi
+    while IFS=$'\t' read -r p b; do
+      [ -n "$p" ] || continue
+      grep -v "^$p	" "$R/tree/$id" >"$R/tree/$id.tmp" 2>/dev/null || :
+      mv "$R/tree/$id.tmp" "$R/tree/$id"
+      [ "$b" = null ] || printf '%s\t%s\n' "$p" "$b" >>"$R/tree/$id"
+    done < <(jq -r '.tree[] | "\(.path)\t\(.sha // "null")"' <<<"$body")
+    sort -o "$R/tree/$id" "$R/tree/$id"
+    out "$(jq -n --arg s "$id" '{sha: $s}')"
+    ;;
+  git/commits)
+    sha="$(next_id)"
+    jq -r '.tree' <<<"$body" >"$R/commit/$sha"
+    # The message rides the request body, so the call log alone cannot show
+    # the order the trees landed in. Recorded here so the suite can assert
+    # the fixture-before-caller ordering on the repo's own history.
+    jq -r '.message' <<<"$body" >>"$R/messages"
+    out "$(jq -n --arg s "$sha" '{sha: $s}')"
+    ;;
+  git/commits/*)
+    c="${rest#git/commits/}"
+    [ -f "$R/commit/$c" ] || missing
+    out "$(jq -n --arg t "$(cat "$R/commit/$c")" '{tree: {sha: $t}}')"
+    ;;
+  git/refs)
+    ref="$(jq -r '.ref' <<<"$body")"
+    sha="$(jq -r '.sha' <<<"$body")"
+    printf '%s\n' "$sha" >"$R/refs/$(san "${ref#refs/}")"
+    case "${ref#refs/}" in
+      tags/*) printf '%s\n' "${ref#refs/tags/}" >>"$R/tags" ;;
+    esac
+    case "${ref#refs/}" in
+      heads/main | tags/*) fire "$sha" ;;
+    esac
+    out "$(jq -n --arg s "$sha" '{object: {sha: $s}}')"
+    ;;
+  git/ref/*)
+    r="${rest#git/ref/}"
+    [ -f "$R/refs/$(san "$r")" ] || missing
+    out "$(jq -n --arg s "$(cat "$R/refs/$(san "$r")")" '{object: {sha: $s}}')"
+    ;;
+  git/refs/*)
+    r="${rest#git/refs/}"
+    if [ "$method" = DELETE ]; then
+      rm -f "$R/refs/$(san "$r")"
+      case "$r" in tags/*) grep -vxF "${r#tags/}" "$R/tags" >"$R/tags.tmp" || :; mv "$R/tags.tmp" "$R/tags" ;; esac
+      out '{}'
+    elif [ "$method" = PATCH ]; then
+      sha="$(jq -r '.sha' <<<"$body")"
+      printf '%s\n' "$sha" >"$R/refs/$(san "$r")"
+      [ "$r" != heads/main ] || fire "$sha"
+      out "$(jq -n --arg s "$sha" '{object: {sha: $s}}')"
+    else
+      [ -f "$R/refs/$(san "$r")" ] || missing
+      out "$(jq -n --arg s "$(cat "$R/refs/$(san "$r")")" '{object: {sha: $s}}')"
+    fi
+    ;;
+  git/trees/*)
+    r="${rest#git/trees/}"
+    t="$(tree_of_ref "heads/$r")" || missing
+    out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | split("\t")
+      | {path: .[0], type: "blob"}) | {tree: .}' <"$R/tree/$t")"
+    ;;
+  contents/*)
+    p="${rest#contents/}"
+    ref="$(qval ref)"
+    [ -n "$ref" ] || ref=main
+    t="$(tree_of_ref "heads/$ref")" || missing
+    blob="$(awk -F'\t' -v p="$p" '$1 == p { print $2; exit }' "$R/tree/$t")"
+    [ -n "$blob" ] || missing
+    out "$(jq -n --arg c "$(base64 <"$R/blob/$blob" | tr -d '\n')" '{content: $c}')"
+    ;;
+  labels)
+    out '{}'
+    ;;
+  pulls)
+    n="$(next_id)"
+    jq -r '"\(.head)\t\(.base)"' <<<"$body" >"$R/pulls/$n"
+    : >"$R/labels/$n"
+    out "$(jq -n --argjson n "$n" '{number: $n}')"
+    ;;
+  pulls/*/merge)
+    n="${rest#pulls/}"
+    n="${n%/merge}"
+    head="$(cut -f1 <"$R/pulls/$n")"
+    tree="$(tree_of_ref "heads/$head")" || missing
+    sha="$(next_id)"
+    printf '%s\n' "$tree" >"$R/commit/$sha"
+    printf '%s\n' "$sha" >"$R/refs/$(san heads/main)"
+    fire "$sha"
+    out "$(jq -n --arg s "$sha" '{sha: $s}')"
+    ;;
+  issues/*/labels)
+    n="${rest#issues/}"
+    n="${n%/labels}"
+    if [ "$method" = POST ]; then
+      jq -r '.labels[]' <<<"$body" >>"$R/labels/$n"
+      out '[]'
+    else
+      out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | {name: .})' <"$R/labels/$n")"
+    fi
+    ;;
+  tags)
+    out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | {name: .})' <"$R/tags")"
+    ;;
+  releases)
+    out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | {tag_name: .})' <"$R/releases")"
+    ;;
+  actions/runs)
+    head="$(qval head_sha)"
+    out "$(awk -F'\t' -v h="$head" '$2 == h { printf "{\"id\":%s,\"status\":\"completed\",\"conclusion\":\"%s\",\"run_attempt\":%s}\n", $1, $4, $3 }' \
+      "$R/runs" | jq -s -c '{workflow_runs: .}')"
+    ;;
+  actions/runs/*/rerun)
+    id="${rest#actions/runs/}"
+    id="${id%/rerun}"
+    line="$(head -n1 "$DRILL_STUB_SCENARIO")"
+    conclusion="$(cut -f1 <<<"$line")"
+    effects="$(cut -f2 <<<"$line")"
+    tail -n +2 "$DRILL_STUB_SCENARIO" >"$DRILL_STUB_SCENARIO.rest" &&
+      mv "$DRILL_STUB_SCENARIO.rest" "$DRILL_STUB_SCENARIO"
+    awk -F'\t' -v id="$id" -v c="$conclusion" 'BEGIN{OFS="\t"}
+      $1 == id { $3 = $3 + 1; $4 = c } { print }' "$R/runs" >"$R/runs.tmp"
+    mv "$R/runs.tmp" "$R/runs"
+    for e in ${effects//,/ }; do
+      case "$e" in
+        release:*)
+          printf '%s\n' "${e#release:}" >>"$R/releases"
+          printf '%s\n' "${e#release:}" >>"$R/tags"
+          ;;
+        tag:*) printf '%s\n' "${e#tag:}" >>"$R/tags" ;;
+      esac
+    done
+    out '{}'
+    ;;
+  actions/runs/*)
+    id="${rest#actions/runs/}"
+    out "$(awk -F'\t' -v id="$id" '$1 == id { printf "{\"run_attempt\":%s,\"status\":\"completed\",\"conclusion\":\"%s\"}\n", $3, $4 }' \
+      "$R/runs" | head -n1)"
+    ;;
+  *)
+    missing
+    ;;
+esac
