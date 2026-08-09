@@ -75,21 +75,36 @@ version_is_dev() {
   esac
 }
 
-# version_next_dev <ver> — bare X.Y.Z -> X.Y.(Z+1)-dev (print). Refuses
-# anything else, including -dev and -rc1: this is only ever called on a
-# just-released version to re-arm main, and an rc's "next" is a human
-# decision, not arithmetic (box's drills/ prefix-confusion lore is why
-# nothing here guesses around pre-release identifiers).
+# version_is_rc <ver> — exit 0 iff ver is exactly X.Y.Z-rcN, with N numeric.
+# An rc dev tree ends in -dev and remains version_is_dev's state instead.
+version_is_rc() {
+  [[ "${1:?version_is_rc: version required}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]
+}
+
+# version_next_dev <ver> — bare X.Y.Z -> X.Y.(Z+1)-dev, and
+# X.Y.Z-rcN -> X.Y.Z-rc(N+1)-dev (print). #317 made that one rc convention
+# arithmetic; -dev, malformed and other pre-release identifiers still refuse
+# rather than guessing (box's drills/ prefix-confusion lore).
 version_next_dev() {
   local ver="${1:?version_next_dev: version required}"
-  if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "version_next_dev: refusing '$ver' — expected bare X.Y.Z" >&2
-    return 1
+  local major minor patch rc
+  if [[ "$ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)-rc([0-9]+)$ ]]; then
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    patch="${BASH_REMATCH[3]}"
+    rc="${BASH_REMATCH[4]}"
+    # 10#: a zero-padded rc number ("09") would otherwise be read as octal.
+    printf '%s.%s.%s-rc%s-dev\n' "$major" "$minor" "$patch" "$((10#$rc + 1))"
+    return 0
   fi
-  local major minor patch
-  IFS=. read -r major minor patch <<<"$ver"
-  # 10#: a zero-padded patch ("09") would otherwise be read as octal.
-  printf '%s.%s.%s-dev\n' "$major" "$minor" "$((10#$patch + 1))"
+  if [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    IFS=. read -r major minor patch <<<"$ver"
+    # 10#: a zero-padded patch ("09") would otherwise be read as octal.
+    printf '%s.%s.%s-dev\n' "$major" "$minor" "$((10#$patch + 1))"
+    return 0
+  fi
+  echo "version_next_dev: refusing '$ver' — expected bare X.Y.Z or X.Y.Z-rcN" >&2
+  return 1
 }
 
 # version_write <backend> <ver> [dir] — write the version into the tree.
