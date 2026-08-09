@@ -64,10 +64,17 @@ failed probe, and the assertion is these numbers, not the prose beside them.
 ## What the rehearsal establishes
 
 Both doors ran live against the 0.7.0 candidate's own machinery, driven by
-`drill/rehearsal.sh` rather than by hand. The merge door published from a
-labeled ceremony PR, tagged the reviewed merge commit and re-armed main
-itself; it refused a bare push without a label, refused a re-run of its own
-completed ceremony, and stayed a green no-op under a label carried by
-ordinary work. The tag door published from a matching manual tag without
-touching main, and refused a mismatched one before creating anything. Every
-refusal path carries its own before/after counts above.
+`drill/rehearsal.sh` rather than by hand. Each line below is one probe's,
+and it is printed as a claim only where that probe passed: what stands here
+is a measurement in the table above, never a sentence written from an
+intention.
+
+- ✅ The merge door published exactly one `0.7.0` release from a labeled ceremony PR, tagged the reviewed merge commit, and re-armed main itself.
+- ✅ The merge door stayed a green no-op under a `release` label carried by ordinary work.
+- ✅ The merge door refused a bare version push without the `release` label.
+- ✅ The merge door refused a re-run of its own completed ceremony.
+- ✅ The tag door published from a matching manual tag without touching main.
+- ✅ The tag door refused a mismatched tag before creating anything.
+
+Every refusal claim above is asserted on the before/after counts in the probe
+table, not on the prose beside them.

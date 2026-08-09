@@ -17,7 +17,15 @@ record_ctx() {
 
 # record_run_cell <scratch-repo> <run-id> <attempt> — a resolvable run link.
 record_run_cell() {
-  local repo="${1:?}" run="${2:?}" attempt="${3:-1}" cell
+  local repo="${1:?}" run="${2:-}" attempt="${3:-1}" cell
+  # A probe that aborted before any run existed has no run to link, and a
+  # link built around a run ID nobody holds is worse than the dash saying so.
+  case "$run" in
+    '' | '—')
+      printf '%s\n' '—'
+      return 0
+      ;;
+  esac
   cell="[$run](https://github.com/$repo/actions/runs/$run)"
   [ "$attempt" -le 1 ] || cell="$cell (attempt $attempt)"
   printf '%s\n' "$cell"
@@ -49,11 +57,56 @@ record_setup_rows() {
   done <"$tsv"
 }
 
+# record_claim <n> <version> — the one sentence probe <n> establishes when it
+# passes, and that nothing establishes when it does not.
+#
+# The claims live here one per probe, keyed to the probe that measures them,
+# because the alternative is the shape this file's header refuses: a
+# concluding paragraph written once, asserting outcomes the run may not have
+# had. The record's own conclusion was that shape until this round caught it
+# closing a two-failure run with the two refusals that had just failed.
+record_claim() {
+  case "${1:?record_claim: n required}" in
+    1) printf 'The merge door published exactly one `%s` release from a labeled ceremony PR, tagged the reviewed merge commit, and re-armed main itself.' "${2:?record_claim: version required}" ;;
+    2) printf 'The merge door stayed a green no-op under a `release` label carried by ordinary work.' ;;
+    3) printf 'The merge door refused a bare version push without the `release` label.' ;;
+    4) printf 'The merge door refused a re-run of its own completed ceremony.' ;;
+    5) printf 'The tag door published from a matching manual tag without touching main.' ;;
+    6) printf 'The tag door refused a mismatched tag before creating anything.' ;;
+    *) return 1 ;;
+  esac
+}
+
+# record_establishes <probes-tsv> <version> — one line per probe, and never a
+# claim whose probe did not pass.
+#
+# A failed probe's claim is not softened here, it is not printed at all: the
+# failure takes its place, so the section cannot assert what the table denies.
+record_establishes() {
+  local probes="${1:?}" ver="${2:?}" n row verdict name note
+  for n in 1 2 3 4 5 6; do
+    row="$(awk -F'\t' -v n="$n" '$1 == n { print; exit }' "$probes")"
+    if [ -z "$row" ]; then
+      printf -- '- ⬜ **Nothing established** — probe %s did not run, so this record makes no claim for it.\n' "$n"
+      continue
+    fi
+    verdict="$(cut -f5 <<<"$row")"
+    name="$(cut -f2 <<<"$row")"
+    note="$(cut -f10 <<<"$row")"
+    if [ "$verdict" = PASS ]; then
+      printf -- '- ✅ %s\n' "$(record_claim "$n" "$ver")"
+    else
+      printf -- '- ❌ **Nothing established** — probe %s (%s) failed: %s. This run is no evidence about that behavior either way.\n' \
+        "$n" "$name" "$note"
+    fi
+  done
+}
+
 # record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
 record_render() {
   local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
   local ver scratch created candidate_sha candidate_ref fork_repo fork_ref
-  local fork_head pin disposal runner stamp failed
+  local fork_head pin disposal runner stamp failed passed unestablished
   ver="$(record_ctx "$ctx" version)"
   scratch="$(record_ctx "$ctx" scratch)"
   created="$(record_ctx "$ctx" created)"
@@ -67,6 +120,10 @@ record_render() {
   runner="$(record_ctx "$ctx" runner)"
   stamp="$(record_ctx "$ctx" stamp)"
   failed="$(awk -F'\t' '$5 == "FAIL"' "$probes" | wc -l | tr -d ' ')"
+  # A probe that never wrote a row establishes nothing either, so the
+  # conclusion counts what passed rather than what failed.
+  passed="$(awk -F'\t' '$5 == "PASS"' "$probes" | wc -l | tr -d ' ')"
+  unestablished=$((6 - passed))
 
   cat <<EOF
 # $ver — drill record
@@ -148,14 +205,28 @@ EOF
 ## What the rehearsal establishes
 
 Both doors ran live against the $ver candidate's own machinery, driven by
-\`drill/rehearsal.sh\` rather than by hand. The merge door published from a
-labeled ceremony PR, tagged the reviewed merge commit and re-armed main
-itself; it refused a bare push without a label, refused a re-run of its own
-completed ceremony, and stayed a green no-op under a label carried by
-ordinary work. The tag door published from a matching manual tag without
-touching main, and refused a mismatched one before creating anything. Every
-refusal path carries its own before/after counts above.
+\`drill/rehearsal.sh\` rather than by hand. Each line below is one probe's,
+and it is printed as a claim only where that probe passed: what stands here
+is a measurement in the table above, never a sentence written from an
+intention.
+
 EOF
+  record_establishes "$probes" "$ver"
+
+  if [ "$unestablished" = 0 ]; then
+    cat <<'EOF'
+
+Every refusal claim above is asserted on the before/after counts in the probe
+table, not on the prose beside them.
+EOF
+  else
+    cat <<EOF
+
+**Not established: $unestablished of the six.** A failed drill is a valid
+record and this is one — what the run proved is claimed above, what it did
+not is named where it failed, and neither is smoothed into the other.
+EOF
+  fi
 }
 
 # record_check <record-file> — the shape check the script runs on its own
@@ -173,10 +244,19 @@ record_check() {
   [ "$count" = 6 ] || problems="$problems; the probe table has $count rows, expected 6"
   local n
   for n in 1 2 3 4 5 6; do
-    local row
+    local row run_cell result_cell
     row="$(awk -F'|' -v n=" $n " '$2 == n { print; exit }' "$file")"
     if [ -z "$row" ]; then
       problems="$problems; probe $n has no row"
+      continue
+    fi
+    run_cell="$(awk -F'|' -v n=" $n " '$2 == n { print $4; exit }' "$file" | tr -d ' ')"
+    result_cell="$(awk -F'|' -v n=" $n " '$2 == n { print $7; exit }' "$file")"
+    # An aborted probe is the one row that honestly has no run to link: it
+    # never reached one. That exemption is narrow on purpose — the row must
+    # say `—` for its run *and* carry the aborted failure mark, so a row that
+    # merely lost its run ID still reds (#313's "must fail loudly").
+    if [ "$run_cell" = "—" ] && [[ "$result_cell" == *"❌ aborted"* ]]; then
       continue
     fi
     printf '%s' "$row" | grep -qE '/actions/runs/[0-9]+' ||
@@ -184,11 +264,18 @@ record_check() {
     printf '%s' "$row" | grep -qE '[0-9]+ → [0-9]+ \|[^|]*[0-9]+ → [0-9]+' ||
       problems="$problems; probe $n has no before/after counts"
   done
+  # The conclusion is checked like the table, because it is evidence like the
+  # table: one line per probe, each either a claim its probe earned or the
+  # failure that withdrew it.
+  local claims
+  claims="$(grep -cE '^- (✅|❌|⬜) ' "$file" || true)"
+  [ "$claims" = 6 ] ||
+    problems="$problems; the conclusion has $claims probe lines, expected 6"
   grep -qF 'pending the operator' "$file" ||
     problems="$problems; the record does not state the disposal as pending the operator's delete"
   if [ -n "$problems" ]; then
-    echo "record_check: ${problems# ; }" >&2
+    echo "record_check: ${problems#; }" >&2
     return 1
   fi
-  echo "record_check: six probe rows, each with a run ID and its before/after counts."
+  echo "record_check: six probe rows, each with a run ID and its before/after counts, and a conclusion that claims only what they measured."
 }

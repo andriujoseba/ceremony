@@ -125,6 +125,15 @@ record_fixture() { # <run-cell-for-probe-3>
 | 5 | tag-door release from a manual tag | [1005](https://github.com/o/n/actions/runs/1005) | 1 → 2 | 1 → 2 | ✅ ok |
 | 6 | mismatched tag | [1006](https://github.com/o/n/actions/runs/1006) | 2 → 2 | 2 → 2 | ✅ ok |
 
+## What the rehearsal establishes
+
+- ✅ one
+- ✅ two
+- ✅ three
+- ✅ four
+- ✅ five
+- ✅ six
+
 It is **pending the operator's delete**.
 EOF
 }

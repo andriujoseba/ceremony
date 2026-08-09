@@ -68,7 +68,7 @@ jobs:
   release:
     uses: $repo/.github/workflows/release.yml@$ref
     with:
-      version-source: file
+      version-source: file   # or: package-json
 EOF
 }
 

@@ -29,9 +29,29 @@ mismatched tag"
 # probe_name <n>
 probe_name() { sed -n "${1:?probe_name: n required}p" <<<"$DRILL_PROBE_NAMES"; }
 
-# probe_counts <repo> — `<tags><TAB><releases>`.
+# probe_counts <repo> — `<tags><TAB><releases>`, or a refusal.
+#
+# A count that did not read is not a count. `scratch_tag_count` prints
+# nothing when the API errors, and `$((after - before))` over an empty string
+# is 0 — which is exactly the delta a refusal probe wants to see, so a
+# swallowed read would record a PASS asserted on measurements nobody took.
+# The refusal is here, at the point of measurement, rather than left to the
+# shape check downstream of the row already being written.
 probe_counts() {
-  printf '%s\t%s\n' "$(scratch_tag_count "$1")" "$(scratch_release_count "$1")"
+  local repo="${1:?probe_counts: repo required}" tags releases
+  tags="$(scratch_tag_count "$repo")" || tags=""
+  releases="$(scratch_release_count "$repo")" || releases=""
+  local kind value
+  for kind in tag:"$tags" release:"$releases"; do
+    value="${kind#*:}"
+    case "$value" in
+      '' | *[!0-9]*)
+        echo "probe_counts: the ${kind%%:*} count at $repo did not read as a number ('$value') — a refusal probe asserted on a count nobody took is not a measurement." >&2
+        return 1
+        ;;
+    esac
+  done
+  printf '%s\t%s\n' "$tags" "$releases"
 }
 
 # probe_record <n> <run> <attempt> <verdict> <tb> <ta> <rb> <ra> <note>
@@ -41,6 +61,38 @@ probe_record() {
     >>"$DRILL_PROBES"
   printf 'drill: probe %s (%s) %s — tags %s→%s, releases %s→%s\n' \
     "$1" "$(probe_name "$1")" "$4" "$5" "$6" "$7" "$8" >&2
+}
+
+# probe_run <n> <probe-fn> — run one probe without letting it take the
+# rehearsal down with it.
+#
+# The probes are the stretch of this script that talks to a live API over
+# minutes, so a failure inside one is not always a door verdict:
+# `scratch_run_for` exhausting its polls on a run that never completes is the
+# realistic case, and it says nothing about the door. Called bare under
+# `set -e` such a probe aborts the script before the archive and the record,
+# and the EXIT trap then removes the work directory with `probes.tsv` in it —
+# an unarchived scratch repo and no record at all, under a header comment
+# promising the record either way. So the abort becomes what it is: this
+# probe's failed row, and five probes that still get asked their question.
+probe_run() {
+  local n="${1:?probe_run: n required}" fn="${2:?probe_run: probe required}"
+  local rows_before rows_after counts status=0
+  local tb='?' ta='?' rb='?' ra='?'
+  rows_before="$(wc -l <"$DRILL_PROBES")"
+  counts="$(probe_counts "$DRILL_REPO")" || counts=""
+  [ -z "$counts" ] || IFS=$'\t' read -r tb rb <<<"$counts"
+  "$fn" || status=$?
+  rows_after="$(wc -l <"$DRILL_PROBES")"
+  # The probe reached its own verdict and recorded it: that row is the answer,
+  # whatever the probe's exit status was on the way out of it.
+  if [ "$rows_after" -gt "$rows_before" ]; then
+    return 0
+  fi
+  counts="$(probe_counts "$DRILL_REPO")" || counts=""
+  [ -z "$counts" ] || IFS=$'\t' read -r ta ra <<<"$counts"
+  probe_record "$n" '—' 1 FAIL "$tb" "$ta" "$rb" "$ra" \
+    "aborted before it reached a verdict (exit $status) — this run is no evidence about this probe; the counts either side are the drill's own, not the door's"
 }
 
 # probe_setup_record <run> <conclusion> <what>

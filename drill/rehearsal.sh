@@ -162,12 +162,15 @@ probe_setup_record "$baseline_run" "$baseline_conc" \
 scratch_label_create "$DRILL_REPO" release
 
 # ---- the six probes, in doctrine order ------------------------------------
-probe_1_ceremony
-probe_2_mislabeled
-probe_3_bare
-probe_4_rerun
-probe_5_tag
-probe_6_mismatched_tag
+# Each through probe_run, so an abort inside one is that probe's failed row
+# rather than the end of the rehearsal: the archive and the record below are
+# what the header promises either way.
+probe_run 1 probe_1_ceremony
+probe_run 2 probe_2_mislabeled
+probe_run 3 probe_3_bare
+probe_run 4 probe_4_rerun
+probe_run 5 probe_5_tag
+probe_run 6 probe_6_mismatched_tag
 
 # ---- disposal: archive, observe, and stop ---------------------------------
 observed="$(scratch_archive "$DRILL_REPO")"
