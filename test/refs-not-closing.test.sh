@@ -52,6 +52,14 @@ check "backticked closing keyword is reported as the match" 1 \
 check "backticked match points at the Development sidebar remedy" 1 \
   "remove the Development sidebar link" guard code-span 5
 
+diagnostic_contains_retired_sentence() {
+  bash "$SCRIPT" "$TMP/code-span.md" 5 2>&1 |
+    grep -qF "Backticks do not protect"
+}
+
+check "failure omits the retired backtick claim" 1 "" \
+  diagnostic_contains_retired_sentence
+
 # Prove the diagnostic pin is load-bearing rather than merely compatible with
 # both the retired and replacement text (#359).
 MUTANT="$TMP/refs-not-closing-without-routes.sh"
@@ -65,6 +73,10 @@ diagnostic_names_both_routes() {
     <<<"$output" && grep -qF "Development" <<<"$output"
 }
 
+check "diagnostic names both closing-graph routes" 0 "" \
+  diagnostic_names_both_routes "$SCRIPT"
+check "two-route mutation changes the script" 1 "" \
+  cmp -s "$SCRIPT" "$MUTANT"
 check "removing the two-route diagnostic reds its pin" 1 "" \
   diagnostic_names_both_routes "$MUTANT"
 
