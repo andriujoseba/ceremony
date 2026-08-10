@@ -878,6 +878,9 @@ empty_stdout() { # <cmd…> — the command printed nothing on stdout
 calls_are() { # <n> <literal> — the call log holds exactly n matching lines
   test "$(grep -cF -- "$2" "$TMP/state/calls")" -eq "$1"
 }
+calls_at_least() { # <n> <literal> — at least n, for "it spent the budget"
+  test "$(grep -cF -- "$2" "$TMP/state/calls")" -ge "$1"
+}
 
 # D2 — absent and failed, told apart. Both branches carry a test, because the
 # whole defect is that they were one branch.
@@ -1209,6 +1212,97 @@ check "and every probe still reached its verdict" 0 "probes passed 8/8, failed 0
   printf '%s\n' "$sites_out"
 check "the record it emits is the clean run's, unchanged" 0 "" \
   diff -u "$TMP/emitted.md" "$TMP/probesites.md"
+
+# The two changelog reads *after* a door has run — probe 7's across the rc cut
+# and probe 8's across the promotion. They need their own run, because the
+# fault above is spent on probe 7's before-read, and they need the call log
+# rather than the record to tell the modes apart: in `any` mode `scratch_file`
+# returns 1 on the stale answer just as an exhausted read does, so both modes
+# record the same "did not read back" row. What differs is that one of them
+# asked ten times and the other gave up on the first stale 404 — so the budget
+# it spent is the assertion, and a `skip` of one aims the rule past the
+# before-read whose empty answer would be a true one.
+stub_reset
+green_scenario "$TMP/changelog.scenario"
+faults "1	99	GET repos/$SCRATCH/contents/CHANGELOG.md*	404	Not Found"
+changelog_out="$(run_rehearsal "$TMP/changelog.scenario" --out "$TMP/changelog.md" 2>&1)"
+check "a changelog read that never answers fails its probe and no more" 0 \
+  "probes passed 6/8, failed 2" printf '%s\n' "$changelog_out"
+check "probe 7 says the comparison was never taken" 0 \
+  "CHANGELOG.md did not read back after the rc cut" cat "$TMP/changelog.md"
+check "probe 8 says the same of the stamped section" 0 \
+  "CHANGELOG.md did not read back after the promotion" cat "$TMP/changelog.md"
+check "and both of them spent the budget rather than believing the first 404" 0 "" \
+  calls_at_least 20 "contents/CHANGELOG.md"
+
+# Setup's own read-after-writes, which cannot ride a rehearsal because a fault
+# there aborts before a probe runs: the fixture's seeding assertion, and
+# fork_ref_prepare's two reads of the ref it has just created. Each `any`-mode
+# escape has a message of its own that reads as a fact about the repo — "is
+# missing the armed fixture", "carries no .github/workflows/*.yml", "no
+# workflow … carries CEREMONY_SELF_REF" — which is the shape D4 forbids, so
+# each is asserted absent as well as the honest one asserted present.
+stub_reset
+SEEDED="$SCRATCH_OWNER/seeded-probe"
+with_stub scratch_create "$SEEDED" >/dev/null 2>&1
+printf '# Changelog\n' >"$TMP/seed-changelog"
+printf 'Fragments live here.\n' >"$TMP/seed-readme"
+{
+  printf 'A\tVERSION\t%s\n' "$TMP/seed-version"
+  printf 'A\tCHANGELOG.md\t%s\n' "$TMP/seed-changelog"
+  printf 'A\tchangelog.d/README.md\t%s\n' "$TMP/seed-readme"
+} >"$TMP/seeded.manifest"
+with_stub scratch_commit "$SEEDED" main "the armed fixture at 0.7.0-dev" \
+  "$TMP/seeded.manifest" >/dev/null 2>&1
+check "the fixture this case is about is genuinely seeded" 0 "" \
+  with_stub fixture_assert_seeded "$SEEDED" main
+faults "0	2	GET repos/*/git/trees/*	404	Not Found"
+check "a seeding check whose tree read answers stale twice still passes" 0 "" \
+  with_stub fixture_assert_seeded "$SEEDED" main
+faults "0	99	GET repos/*/git/trees/*	404	Not Found"
+with_stub fixture_assert_seeded "$SEEDED" main >"$TMP/seeded.out" 2>&1
+seeded_rc=$?
+check "a seeding check whose tree never reads back aborts" 0 "" test "$seeded_rc" -eq 1
+check "and names the read rather than the fixture" 0 \
+  "the tree of main on $SEEDED did not read back after 10 attempts" cat "$TMP/seeded.out"
+check "it never reports an armed fixture as missing on a read that failed" 1 "" \
+  grep -qF 'is missing the armed fixture' "$TMP/seeded.out"
+# The genuine absence keeps its own words, as every refusal the retry sits in
+# front of does.
+faults
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+check "a tree that genuinely lacks the fixture still says which files" 1 \
+  "is missing the armed fixture: VERSION CHANGELOG.md changelog.d/README.md" \
+  with_stub fixture_assert_seeded "$FORK" main
+
+stub_reset
+mkdir -p "$TMP/prepare-work"
+faults "0	2	GET repos/*/contents/*	404	Not Found"
+check "a carrier read that answers stale twice still prepares the pin" 0 "" \
+  with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/prepare-work"
+stub_reset
+faults "0	99	GET repos/*/contents/*	404	Not Found"
+with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/prepare-work" \
+  >"$TMP/prepare.out" 2>&1
+prepare_rc=$?
+check "a carrier read that never answers aborts the preparation" 0 "" \
+  test "$prepare_rc" -eq 1
+check "and names the read, not a pin the workflow supposedly lacks" 0 \
+  "did not read back after 10 attempts" cat "$TMP/prepare.out"
+check "it never claims no workflow carries CEREMONY_SELF_REF" 1 "" \
+  grep -qF 'carries CEREMONY_SELF_REF' "$TMP/prepare.out"
+stub_reset
+faults "0	99	GET repos/*/git/trees/*	404	Not Found"
+with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/prepare-work" \
+  >"$TMP/prepare-tree.out" 2>&1
+prepare_tree_rc=$?
+check "a carrier list that never reads back aborts the preparation too" 0 "" \
+  test "$prepare_tree_rc" -eq 1
+check "and says so as a failed read" 0 \
+  "the tree of $FORK_REF on $FORK did not read back after 10 attempts" \
+  cat "$TMP/prepare-tree.out"
+check "never as a ref that carries no workflows" 1 "" \
+  grep -qF 'carries no .github/workflows' "$TMP/prepare-tree.out"
 
 # And the other half of that site, which the mode alone does not fix: what the
 # probe RECORDS when the read is exhausted rather than merely slow. `probe_run`
