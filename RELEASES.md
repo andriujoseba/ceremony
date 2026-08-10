@@ -153,6 +153,15 @@ steps:
 1. Mint the epic's “to mint when this arc opens” list together with findings,
    deferred work, and discussion outcomes accumulated since the epic was
    written. Each member initially declares `Blocked by <the epic>`.
+   **A member that arrives by re-opening a closed issue is re-pointed while it
+   is still closed**: edit the closed issue's body so its declaration reads
+   `Blocked by <the epic>`, verify the parse returns exactly the epic — a
+   struck-through marker still parses, so the edit rewrites the old marker
+   into non-parseable prose rather than striking it — and only then re-open
+   it. The order is the rule: a re-opened issue carries the `blocked` label
+   and the declaration it closed under, so a declaration naming only closed
+   gates decides `ready` at the next sweep and admits a member the operator
+   never blessed at step 4 (#325).
 2. Graph hard `Blocked by` edges and same-file clusters on the epic.
 3. Write the waves into the epic body as checklists in claim order, with a
    separate verification lane and the progress view under `## Task list`, and
