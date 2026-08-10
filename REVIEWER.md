@@ -36,10 +36,12 @@ In order of authority:
    exists to fix — `Closes #137` closed its issue with a post-merge
    criterion unmet (#151). For a `Refs #N` body, also verify that no closing
    keyword immediately precedes `#N` anywhere in the body, even in prose
-   explaining the hand close or inside a code span: GitHub used those exact
-   shapes to close #209, #212 and #199 (#200, #218). The safe forms put the
-   number first (`#N is closed by hand`) or omit it (`triage closes the issue
-   by hand`). Check every
+   explaining the hand close: GitHub used that shape to close #209 and #212
+   (#200, #218). The `refs-not-closing` guard and GitHub's closing-issue graph
+   settle the check: a `Refs #N` head with a clean graph closes nothing, and a
+   closing keyword quoted inside a code span at such a head is not a defect or
+   grounds for request-changes. The safe forms put the number first (`#N is
+   closed by hand`) or omit it (`triage closes the issue by hand`). Check every
    criterion; a PR that ships less than the issue says is a request-changes
    even if the code is beautiful.
 2. **The repo's load-bearing constraints** — the rules bought with

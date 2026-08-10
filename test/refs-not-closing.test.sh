@@ -49,8 +49,24 @@ check "failure offers number-free rewrite" 1 "closes the issue" guard prose 5
 body code-span 'Refs #5' '' "The body must not contain \`Closes #5\` anywhere."
 check "backticked closing keyword is reported as the match" 1 \
   "matched: Closes #5" guard code-span 5
-check "backtick failure explains that code spans do not protect" 1 \
-  "Backticks do not protect" guard code-span 5
+check "backticked match points at the Development sidebar remedy" 1 \
+  "remove the Development sidebar link" guard code-span 5
+
+# Prove the diagnostic pin is load-bearing rather than merely compatible with
+# both the retired and replacement text (#359).
+MUTANT="$TMP/refs-not-closing-without-routes.sh"
+sed '/The closing graph can come from a/,/sidebar link\./c\
+  The closing graph has an unexplained entry.' "$SCRIPT" >"$MUTANT"
+
+diagnostic_names_both_routes() {
+  local candidate="$1" output
+  output="$(bash "$candidate" "$TMP/code-span.md" 5 2>&1)"
+  grep -qF "closing keyword adjacent to the number in the body's prose" \
+    <<<"$output" && grep -qF "Development" <<<"$output"
+}
+
+check "removing the two-route diagnostic reds its pin" 1 "" \
+  diagnostic_names_both_routes "$MUTANT"
 
 body adjacency 'Refs #5' '' 'Triage closes #9 and #5 after the proof.'
 check "non-adjacent #5 does not join closing set #9" 0 "no Refs target" \

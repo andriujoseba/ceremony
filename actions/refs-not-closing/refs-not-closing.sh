@@ -115,10 +115,12 @@ sentence_for_issue() {
   done
 
   cat <<'EOF'
-  A `Refs #N` PR must not close N. Remove the sidebar closing link or rewrite
-  an adjacent closing-keyword sentence so the number comes first (`#N is
-  closed by hand`) or the number is omitted (`triage closes the issue by
-  hand`). Backticks do not protect a closing keyword from GitHub's parser.
+  A `Refs #N` PR must not close N. The closing graph can come from a
+  closing keyword adjacent to the number in the body's prose or a Development
+  sidebar link. Remove the link or rewrite an adjacent closing-keyword sentence
+  so the number comes first (`#N is closed by hand`) or the number is omitted
+  (`triage closes the issue by hand`). If the only match above is backticked,
+  remove the Development sidebar link.
 EOF
 } >&2
 exit 1
