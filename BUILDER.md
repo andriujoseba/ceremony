@@ -111,8 +111,10 @@ triage bug, and the move is to say so on the issue, not to guess.
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence
   explaining why the PR does not close it: GitHub reads the body by
-  adjacency, not intent, and a code span does not protect the phrase (#200,
-  #218). Put the number first (`#N is closed by hand`) or omit it.
+  adjacency, not intent. GitHub's closing-issue graph at the head is the
+  authority: `refs-not-closing` reads it, and a closing keyword quoted inside
+  a code span creates no entry in it (#200, #218). Put the number first (`#N
+  is closed by hand`) or omit it.
 - **The issue's acceptance criteria are your definition of done**: reproduce
   them as a checklist in the PR body and check them honestly. One that turns
   out wrong or unreachable goes back to triage to be amended, never silently
