@@ -112,7 +112,7 @@ drill_read() {
   local what="${2:?drill_read: description required}"
   shift 2
   local max="${DRILL_READ_TRIES:-10}" nap="${DRILL_READ_NAP_SECONDS:-1}"
-  local tries=0 out rc
+  local tries=0 out rc plural=attempts
   [ "$max" -ge 1 ] || max=1
   while :; do
     tries=$((tries + 1))
@@ -130,7 +130,8 @@ drill_read() {
   # head", "the rewritten pin does not read the candidate SHA" — about writes
   # that had landed, and the hour that cost went into re-reading GitHub by
   # hand to find out (#369).
-  echo "drill: $what did not read back after $tries attempts — a failed read, not a failed write; the write may well have landed." >&2
+  [ "$tries" -ne 1 ] || plural=attempt
+  echo "drill: $what did not read back after $tries $plural — a failed read, not a failed write; the write may well have landed." >&2
   return 1
 }
 

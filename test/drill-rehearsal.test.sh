@@ -514,7 +514,17 @@ mkdir -p "$STUB_BIN"
 cp "$ROOT/test/fixtures/drill-gh-stub" "$STUB_BIN/gh"
 chmod +x "$STUB_BIN/gh"
 
+# The stub's fault rules (#369), cleared by every reset so no case inherits
+# another's. One rule per line: `skip<TAB>times<TAB>glob<TAB>status<TAB>msg`.
+FAULTS="$TMP/faults"
+faults() {
+  local rule
+  : >"$FAULTS"
+  for rule in "$@"; do printf '%s\n' "$rule" >>"$FAULTS"; done
+}
+
 stub_reset() {
+  faults
   rm -rf "$TMP/state"
   mkdir -p "$TMP/state"
   printf '1000\n' >"$TMP/state/counter"
@@ -556,7 +566,8 @@ printf 's9\n' >"$U/refs/heads_main"
 ordering_probe() {
   ( # shellcheck disable=SC2030 # each probe is a subshell on purpose
     export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
-    export DRILL_STUB_SCENARIO="$TMP/scenario"
+    export DRILL_STUB_SCENARIO="$TMP/scenario" DRILL_STUB_FAULTS="$FAULTS"
+    export DRILL_READ_NAP_SECONDS=0
     : >"$TMP/scenario"
     caller_install "$1" main "$TMP/caller-stage" "$FORK" "$FORK_REF" "$TMP"
   )
@@ -594,6 +605,9 @@ run_rehearsal() { # <scenario-file> [extra args…]
     # shellcheck disable=SC2031 # the ordering probe's subshell is unrelated
     export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
     export DRILL_STUB_SCENARIO="$scenario" DRILL_RUN_POLL_SECONDS=0 DRILL_RUN_TRIES=3
+    # The read retry runs at its default try count and no nap: the suite
+    # exercises the retries themselves, and only the sleeping is skipped.
+    export DRILL_STUB_FAULTS="$FAULTS" DRILL_READ_NAP_SECONDS=0
     cd "$ROOT" || exit 1
     ./drill/rehearsal.sh --owner "$SCRATCH_OWNER" --version 0.7.0 \
       --fork-ref "$FORK@$FORK_REF" --candidate-sha "$CAND_SHA" \
@@ -825,6 +839,191 @@ check "the canonical-repo refusal names the shadow-tag rule" 0 "0.1.0 shadow-tag
   printf '%s\n' "$canonical_out"
 check "the canonical-repo refusal creates no scratch repo" 1 "" \
   grep -q "repo create" "$TMP/state/calls"
+
+# ---------------------------------------------------------------------------
+# The read-after-write path retries, and a soft read means one thing (#369).
+#
+# The 0.7.0 cut aborted four times in setup before a probe ran; three were one
+# defect — every read here follows a write, GitHub answered stale or
+# transiently, and nothing retried — and two of those three reported the
+# opposite of what had happened, saying a write had failed when it had landed.
+# So the messages are asserted on as hard as the exit statuses: the wrong
+# message IS the defect, and a test that only checked the status would have
+# passed on 0.7.0's behavior.
+#
+# The stub's fault rules are what make this driveable offline: the same
+# request has to answer differently on the second call than on the first, and
+# no amount of stub *state* produces that.
+# ---------------------------------------------------------------------------
+with_stub() { # <cmd…> — one library call against the stub, nap-free
+  export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
+  export DRILL_STUB_SCENARIO="$TMP/empty.scenario" DRILL_STUB_FAULTS="$FAULTS"
+  export DRILL_READ_NAP_SECONDS=0
+  "$@"
+}
+empty_stdout() { # <cmd…> — the command printed nothing on stdout
+  local out
+  out="$("$@" 2>/dev/null)"
+  [ -z "$out" ]
+}
+calls_are() { # <n> <literal> — the call log holds exactly n matching lines
+  test "$(grep -cF -- "$2" "$TMP/state/calls")" -eq "$1"
+}
+
+# D2 — absent and failed, told apart. Both branches carry a test, because the
+# whole defect is that they were one branch.
+stub_reset
+: >"$TMP/empty.scenario"
+check "a 404 answers absent: the call succeeded in saying 'not there'" 0 "" \
+  with_stub drill_gh_soft api "repos/$FORK/git/ref/heads/nosuch" --jq '.object.sha'
+check "and absent prints nothing, so the filtered error body never reads as data" 0 "" \
+  empty_stdout with_stub drill_gh_soft api "repos/$FORK/git/ref/heads/nosuch" --jq '.object.sha'
+faults "0	1	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+check "a non-404 failure is a failed read, not an absence" 1 "Internal Server Error" \
+  with_stub drill_gh_soft api "repos/$FORK/git/ref/heads/main" --jq '.object.sha'
+
+# The genuine 404 does not spend the retry budget waiting for a thing nobody
+# ever wrote — asserted on the call count, since a budget spent silently is
+# exactly what a passing test would otherwise hide.
+stub_reset
+: >"$TMP/state/calls"
+check "a ref that truly does not exist answers absent" 0 "" \
+  empty_stdout with_stub scratch_ref_sha "$FORK" nosuch
+check "and it spent exactly one call doing it" 0 "" calls_are 1 "git/ref/heads/nosuch"
+
+# D1 — a read that fails K < tries times and then succeeds. This is the 0.7.0
+# failure mode itself, replayed.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+faults "0	2	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+: >"$TMP/state/calls"
+check "a read that fails twice and then answers is a read that answered" 0 "$CAND_SHA" \
+  with_stub scratch_ref_sha "$FORK" main
+check "and it took exactly the three calls that took" 0 "" calls_are 3 "git/ref/heads/main"
+
+# D3 — `409 Git Repository is empty` on a repo the instrument has just
+# created is the same "not there *yet*" as a 404: retried where the write is
+# known to have happened, and the bootstrap's own door where it is not.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+faults "0	2	GET repos/*/git/ref/heads/main	409	Git Repository is empty."
+: >"$TMP/state/calls"
+check "a 409 on a just-created repo retries rather than aborting" 0 "$CAND_SHA" \
+  with_stub scratch_ref_sha "$FORK" main nonempty
+check "and the 409 was retried, not reported" 0 "" calls_are 3 "git/ref/heads/main"
+faults "0	1	GET repos/*/git/ref/heads/main	409	Git Repository is empty."
+check "the same 409 still answers absent where absence is the question" 0 "" \
+  empty_stdout with_stub scratch_ref_sha "$FORK" main
+
+# The try count is a bound, and a bound of none is one attempt.
+faults "0	99	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+tries_zero() { DRILL_READ_TRIES=0 with_stub scratch_ref_sha "$FORK" main nonempty; }
+check "DRILL_READ_TRIES=0 is one attempt, and says so in the singular" 1 \
+  "did not read back after 1 attempt" tries_zero
+
+# Must-pass, end to end: the bootstrap re-read answers stale twice and the
+# rehearsal proceeds, emitting the record the clean run emitted.
+#
+# The fault is a 404 on a ref that exists, and it is a 404 on purpose. That is
+# the shape of the read this defect is about — GitHub answering "not there"
+# about a commit it is holding — and a 500 here would prove nothing, because
+# a failed read is retried in either mode. Only a stale one tells the two
+# apart, and the `skip` is what aims it past the pre-bootstrap read, whose
+# empty answer is a true one.
+stub_reset
+green_scenario "$TMP/retried.scenario"
+faults "1	2	GET repos/$SCRATCH/git/ref/heads/main	404	Not Found"
+retried_out="$(run_rehearsal "$TMP/retried.scenario" --out "$TMP/retried.md" 2>&1)"
+retried_rc=$?
+check "a bootstrap re-read that answers stale twice does not stop the rehearsal" 0 "" \
+  test "$retried_rc" -eq 0
+check "and all eight probes still ran" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$retried_out"
+check "the record it emits is the clean run's, unchanged" 0 "" \
+  diff -u "$TMP/emitted.md" "$TMP/retried.md"
+
+# Must-fail: the same read never answers. The message is the assertion — it
+# names the read, the target and the attempt count, and says nothing about
+# whether the write landed. "left … with no head" was the 0.7.0 wording, and
+# `…-rehearsal-2@main` held the commit it said had not landed.
+stub_reset
+BOOTSTRAP="$SCRATCH_OWNER/bootstrap-probe"
+with_stub scratch_create "$BOOTSTRAP" >/dev/null 2>&1
+printf '0.7.0-dev\n' >"$TMP/seed-version"
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/boot.manifest"
+faults "1	99	GET repos/$BOOTSTRAP/git/ref/heads/main	404	Not Found"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$BOOTSTRAP" main "the armed fixture at 0.7.0-dev" \
+  "$TMP/boot.manifest" >"$TMP/boot.out" 2>&1
+boot_rc=$?
+check "a bootstrap re-read that never answers aborts" 0 "" test "$boot_rc" -eq 1
+check "and names the read, its target and its attempt count" 0 \
+  "refs/heads/main on $BOOTSTRAP did not read back after 10 attempts" cat "$TMP/boot.out"
+check "the abort never claims the commit left the branch with no head" 1 "" \
+  grep -qF 'no head' "$TMP/boot.out"
+check "it says a failed read is not a failed write" 0 \
+  "a failed read, not a failed write" cat "$TMP/boot.out"
+# D5, first half: the read retried ten times and the write beneath it once.
+check "the bootstrap write was not retried while its read was" 0 "" \
+  calls_are 1 "contents/VERSION --method PUT"
+
+# fork_ref_verify: one 500 and the pin still verifies; a budget of them is a
+# failed read and never the pin's fault.
+stub_reset
+mkdir -p "$TMP/verify-work"
+with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work" >/dev/null 2>&1
+faults "0	1	GET repos/*/contents/*	500	Internal Server Error"
+check "a pin read that 500s once still verifies" 0 "$CAND_SHA" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+faults "0	99	GET repos/*/contents/*	500	Internal Server Error"
+with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work" \
+  >"$TMP/verify.out" 2>&1
+verify_rc=$?
+check "a pin read that never answers aborts" 0 "" test "$verify_rc" -eq 1
+check "and names the read that failed, with its attempt count" 0 \
+  "did not read back after 10 attempts" cat "$TMP/verify.out"
+check "the abort never asserts the pin does not read the candidate SHA" 1 "" \
+  grep -qF 'does not read the candidate SHA' "$TMP/verify.out"
+faults "0	99	GET repos/*/git/trees/*	500	Internal Server Error"
+check "a carrier list that never reads back is a failed read too" 1 \
+  "the tree of $FORK_REF on $FORK did not read back" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+# The stale answers, which is the half a 500 cannot prove: a read that keeps
+# saying "not there" about a tree and a pin this instrument just wrote is not
+# an absence to pass over — a verify that read no bytes verifies nothing, and
+# passing there would be the same claim-without-a-measurement in a new place.
+faults "0	2	GET repos/*/contents/*	404	Not Found"
+check "a pin read that answers stale twice still verifies" 0 "$CAND_SHA" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+faults "0	99	GET repos/*/contents/*	404	Not Found"
+check "a pin that never reads back is a failed read, not a verified pin" 1 \
+  "did not read back after 10 attempts" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+faults "0	99	GET repos/*/git/trees/*	404	Not Found"
+check "a carrier list that never reads back is one too" 1 \
+  "the tree of $FORK_REF on $FORK did not read back" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+# And the refusal the retry must not have swallowed: a pin that genuinely
+# disagrees keeps its own wording, which is the message the retry replaced
+# only for the case where nothing was read at all.
+faults
+check "a pin that genuinely disagrees still says so, in its own words" 1 \
+  "the rewritten pin does not read the candidate SHA" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" \
+  deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$TMP/verify-work"
+
+# D5 — no write path gains a retry. A retried write against the git data API
+# risks a second commit, so a failed write is an abort and stays one.
+stub_reset
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/write.manifest"
+faults "0	1	POST repos/*/git/commits	500	Internal Server Error"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$FORK" main "a commit whose write fails once" \
+  "$TMP/write.manifest" >"$TMP/write.out" 2>&1
+write_rc=$?
+check "a write that fails once aborts rather than retrying" 0 "" test "$write_rc" -eq 1
+check "exactly one commit was attempted" 0 "" calls_are 1 "git/commits --input -"
+check "and exactly one tree was written under it" 0 "" calls_are 1 "git/trees --input -"
 
 # ---------------------------------------------------------------------------
 # Argument refusals: the CLI is a door too.
