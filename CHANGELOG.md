@@ -12,6 +12,50 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.0 — 2026-08-10
+
+### Added
+
+- The release drill rehearses the rc legs: an rc cut probe asserting a
+  prerelease, an untouched `CHANGELOG.md` and surviving fragments, and a
+  promotion probe asserting the assembled final section while the candidate
+  stays a prerelease (#321).
+- `drill/rehearsal.sh` runs the release drill: scratch repo, armed fixture,
+  caller stub at a rewritten fork pin, the six doctrine probes and the
+  record. Every refusal probe's nothing-created claim is a before/after tag
+  and release count (#313).
+- The instrument archives and never deletes, printing the operator's delete
+  step instead of retrying a 403 wall, and refuses to pin the caller stub at
+  a tag-named ref on this repo (#135, #313).
+
+### Changed
+
+- Release-init step 1 now covers the member that arrives by re-opening a
+  closed issue: re-point its declaration at the epic and verify the parse
+  before the re-open, so the sweep cannot promote it in between (#325).
+- Release doctrine now covers cumulative prerelease cuts, deterministic rc
+  re-arming, and the changelog precondition for adopting that path (#322).
+- Release doors now publish candidates as prereleases with fragment-assembled notes and automatically re-arm the next candidate (#320).
+- Changelog guards now preserve fragments and leave the changelog untouched for tag-only release candidates (#319).
+- Release candidates now re-arm deterministically to the next numbered rc development tree (#318).
+
+### Fixed
+
+- The issue-flow sweep survives a long release body: the membership record
+  reaches its parser from a variable rather than a pipe, so the parser's
+  bounding `exit` can no longer break the writer feeding it (#364).
+- A pre-loop failure in that sweep names its stage — the board read, the
+  membership parse, or the flag computation — instead of a bare `jq`
+  message and an exit code (#364).
+- Make the closing-issue graph authoritative for `Refs` pull requests and stop treating quoted closing keywords in code spans as defects (#359).
+- The epic task-list parse takes every CommonMark list marker, not just
+  `-` and `*`; rows and headings indented past three spaces open nothing
+  (#349).
+- Neither section parser reads a heading or a row inside a fenced code
+  block, and an indented heading now closes its section instead of running
+  the parse into the next one (#349).
+- Skip an issue when its dependency state cannot be read instead of accusing a valid blocker declaration (#345).
+
 ## 0.6.3 — 2026-08-08
 
 ### Changed
