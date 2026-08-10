@@ -3232,8 +3232,12 @@ stage_run() {
 stage_out="$(stage_run)"
 stage_rc=$?
 # D9: it reports and RE-RAISES. A named stage that swallowed the status would
-# be the failure this whole issue is about, arriving from the other side.
-check "a forced membership-parse failure still reds the sweep" 0 "" test "$stage_rc" -eq 1
+# be the failure this whole issue is about, arriving from the other side — and
+# a stage that reported a GENERIC status would lose the one fact the incident
+# log did carry. `2` is the stub jq's own exit code, arriving unchanged.
+check "a forced membership-parse failure still reds the sweep" 0 "" test "$stage_rc" -ne 0
+check "...at the status the stage actually failed with, not a generic one" 0 "" \
+  test "$stage_rc" -eq 2
 check "...and the pre-loop region names the stage" 0 \
   'issueflow: could not parse the release window membership' \
   printf '%s\n' "$stage_out"
