@@ -1181,6 +1181,73 @@ faults "0	2	GET repos/$FORK	500	Internal Server Error"
 check "a disposal read that 500s twice still reports the flag" 0 \
   "archived=true private=true" with_stub scratch_archive "$FORK"
 
+# The cases above pin the helpers' modes. What they cannot see is whether the
+# *callers* pass the mode — a probe that reverts to the default reads `any`
+# again and the helper is blameless. So the three probe-side read-after-writes
+# are pinned end to end, in one run carrying one fault each: probe 1's re-arm
+# read of VERSION, probe 7's CHANGELOG.md read off main, and probe 1's label
+# verify between the write and the merge.
+#
+# Every one of them is a 404 answering about a file or a label this instrument
+# has just written, and every one of them is silent in `any` mode: the re-arm
+# records "main reads ''", the changelog read reports the file missing, the
+# label verify refuses to merge. All three surface here as a probe row that is
+# not PASS, which is why the assertion is 8/8 and the emitted record rather
+# than any one message. One run rather than three because each fault names its
+# own endpoint, so a regression at any single site reds it.
+stub_reset
+green_scenario "$TMP/probesites.scenario"
+faults \
+  "0	2	GET repos/$SCRATCH/contents/VERSION*	404	Not Found" \
+  "0	2	GET repos/$SCRATCH/contents/CHANGELOG.md*	404	Not Found" \
+  "0	2	GET repos/$SCRATCH/issues/*/labels	404	Not Found"
+sites_out="$(run_rehearsal "$TMP/probesites.scenario" --out "$TMP/probesites.md" 2>&1)"
+sites_rc=$?
+check "stale answers at the probes' own read-after-writes do not stop the rehearsal" 0 "" \
+  test "$sites_rc" -eq 0
+check "and every probe still reached its verdict" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$sites_out"
+check "the record it emits is the clean run's, unchanged" 0 "" \
+  diff -u "$TMP/emitted.md" "$TMP/probesites.md"
+
+# And the other half of that site, which the mode alone does not fix: what the
+# probe RECORDS when the read is exhausted rather than merely slow. `probe_run`
+# calls each probe as `"$fn" || status=$?`, which suppresses `set -e` inside
+# it, so an unbranched `armed="$(scratch_version …)"` left `armed` empty and the
+# row read "main reads '' after the ceremony" — a claim about main derived from
+# a read that never happened, with drill_read's honest message on stderr where
+# the record cannot see it. The row is the assertion here, and the old wording
+# is asserted absent: it is the defect, not a detail of it.
+stub_reset
+green_scenario "$TMP/rearm.scenario"
+faults "0	99	GET repos/$SCRATCH/contents/VERSION*	404	Not Found"
+rearm_out="$(run_rehearsal "$TMP/rearm.scenario" --out "$TMP/rearm.md" 2>&1)"
+check "a re-arm read that never answers still leaves a record behind" 0 "" \
+  test -s "$TMP/rearm.md"
+check "and the probe row says the read did not answer" 0 \
+  "VERSION did not read back off main after the ceremony" cat "$TMP/rearm.md"
+check "it never records a version it never read" 1 "" \
+  grep -qF "main reads ''" "$TMP/rearm.md"
+
+# The disposal is the last thing the instrument does, and it sits after eight
+# probes under `set -euo pipefail`. An exhausted read there used to be the end
+# of the run — the record those probes filled, lost to a read. It is now a
+# sentence in the record instead, and this is what says so.
+stub_reset
+green_scenario "$TMP/disposal.scenario"
+export DRILL_STUB_ARCHIVE_LAG=99
+disposal_out="$(run_rehearsal "$TMP/disposal.scenario" --out "$TMP/disposal.md" 2>&1)"
+disposal_rc=$?
+unset DRILL_STUB_ARCHIVE_LAG
+check "a disposal read that never answers still emits the record" 0 "" \
+  test "$disposal_rc" -eq 0
+check "with all eight probe rows in it" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$disposal_out"
+check "and the record says the archive is unobserved rather than claiming it" 0 \
+  "the read afterwards never answered" cat "$TMP/disposal.md"
+check "it never reports an archive it did not observe" 1 "" \
+  grep -qF 'a fresh read afterwards reported' "$TMP/disposal.md"
+
 # ---------------------------------------------------------------------------
 # Argument refusals: the CLI is a door too.
 # ---------------------------------------------------------------------------
