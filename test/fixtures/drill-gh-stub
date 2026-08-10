@@ -130,6 +130,11 @@ qval() {
 # at the *second* read of an endpoint rather than the first — and otherwise
 # fails the call `times` times before letting it through. Counters are written
 # back to the file, so a rule spans the whole run.
+#
+# These rules inject *failures*. The other half of staleness — a write that
+# landed while the read still answers the old value — is not expressible here,
+# and gets its own knob at the one endpoint where it matters:
+# `$DRILL_STUB_ARCHIVE_LAG`, at the `repos/<owner>/<name>` GET below.
 glob_match() { # <glob> <string>
   # shellcheck disable=SC2254 # the unquoted pattern IS the feature here
   case "$2" in $1) return 0 ;; esac
@@ -281,7 +286,23 @@ case "$rest" in
       jq -e '.archived == true' <<<"$body" >/dev/null && printf 'true\n' >"$R/archived"
       out "$(jq -n --arg a "$(cat "$R/archived")" '{archived: ($a == "true"), private: true}')"
     else
-      out "$(jq -n --arg c "$(cat "$R/created_at")" --arg a "$(cat "$R/archived")" \
+      a="$(cat "$R/archived")"
+      # Value staleness, which the fault rules above cannot express: they inject
+      # HTTP failures, and this is the write that landed while the read still
+      # answers the old value. `$DRILL_STUB_ARCHIVE_LAG` is how many reads keep
+      # saying `archived: false` after the PATCH set it — the only kind of
+      # staleness `scratch_archive`'s `select(.archived)` defends against, since
+      # this endpoint answers a formatted string either way and a bounded retry
+      # on failure alone would end on the wrong answer. The countdown lives in
+      # state so successive reads eventually tell the truth, and it only bites
+      # once the flag is actually set, so `scratch_created_at`'s read of the
+      # same endpoint before the archive never spends it.
+      lag="$(cat "$R/archive_lag" 2>/dev/null || printf '%s' "${DRILL_STUB_ARCHIVE_LAG:-0}")"
+      if [ "$a" = true ] && [ "${lag:-0}" -gt 0 ]; then
+        a=false
+        printf '%s\n' "$((lag - 1))" >"$R/archive_lag"
+      fi
+      out "$(jq -n --arg c "$(cat "$R/created_at")" --arg a "$a" \
         '{created_at: $c, archived: ($a == "true"), private: true}')"
     fi
     ;;

@@ -1041,6 +1041,146 @@ check "a write that fails once aborts rather than retrying" 0 "" test "$write_rc
 check "exactly one commit was attempted" 0 "" calls_are 1 "git/commits --input -"
 check "and exactly one tree was written under it" 0 "" calls_are 1 "git/trees --input -"
 
+# The base-tree read, which is the call the 0.7.0 cut's third abort came from
+# — `409 Git Repository is empty.` from the git data API about a repo
+# `gh repo create` had just returned — and the one routing in this change that
+# round 1 found pinned by nothing. Both mutations were green without this:
+# reverting the routing, and flipping only its mode to `any`.
+#
+# The mode is the half that matters, and the assertion is the tree rather than
+# the message. In `any` mode a 409 or 404 there answers *absent*, `base_tree`
+# comes back empty, and the tree POST is built without it while the parent
+# stays — so the commit's tree is the manifest and nothing else, and every file
+# the repo already had is deleted by the drill's own write. Silent corruption:
+# nothing aborts, nothing prints, and the paths are the only witness.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/basetree.manifest"
+faults "0	2	GET repos/*/git/commits/*	409	Git Repository is empty."
+: >"$TMP/state/calls"
+check "a base-tree read answering 409 twice still lands the commit" 0 "" \
+  with_stub scratch_commit "$FORK" main "a commit over a stale base tree" \
+  "$TMP/basetree.manifest"
+check "and it retried that read rather than reporting it, three calls in" 0 "" \
+  calls_are 3 "git/commits/$CAND_SHA"
+check "the write under it still went once" 0 "" calls_are 1 "git/trees --input -"
+with_stub scratch_paths "$FORK" main | sort >"$TMP/basetree.paths"
+printf '%s\n' .github/workflows/ci.yml .github/workflows/labels.yml \
+  .github/workflows/release.yml VERSION | sort >"$TMP/basetree.expected"
+# Compared as a whole list, not searched for a substring: the failure this
+# pins is files *missing*, and a containment check cannot see that.
+check "and every file the repo already had survived it — the base tree was read, not skipped" 0 "" \
+  diff -u "$TMP/basetree.expected" "$TMP/basetree.paths"
+# Named off the head as it stands, because the commit above moved it: the
+# message has to name the commit whose tree was actually asked for.
+BASETREE_HEAD="$(with_stub scratch_ref_sha "$FORK" main)"
+faults "0	99	GET repos/*/git/commits/*	409	Git Repository is empty."
+: >"$TMP/state/calls"
+check "a base-tree read that never answers aborts, naming the read" 1 \
+  "the tree of commit $BASETREE_HEAD on $FORK did not read back after 10 attempts" \
+  with_stub scratch_commit "$FORK" main "a commit whose base tree never reads" \
+  "$TMP/basetree.manifest"
+check "and no tree was written under a base it never read" 0 "" \
+  calls_are 0 "git/trees --input -"
+
+# The sites round 1 found still outside the helper: reads that follow a write
+# this instrument made, where a stale 404 escaped drill_gh_soft as exit 0 and
+# empty and the caller took it for an answer.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/read.manifest"
+with_stub scratch_commit "$FORK" main "a file to read back" "$TMP/read.manifest" \
+  >/dev/null 2>&1
+faults "0	2	GET repos/*/contents/VERSION*	404	Not Found"
+check "a VERSION read that answers stale twice reads the version, not an absence" 0 "0.7.0-dev" \
+  with_stub scratch_version "$FORK" main nonempty
+faults "0	99	GET repos/*/contents/VERSION*	404	Not Found"
+with_stub scratch_version "$FORK" main nonempty >"$TMP/version.out" 2>&1
+version_rc=$?
+check "a VERSION read that never answers is a failed read, not a version" 0 "" \
+  test "$version_rc" -eq 1
+check "and it names the read and its attempt count" 0 \
+  "VERSION at $FORK@main did not read back after 10 attempts" cat "$TMP/version.out"
+# The escape this replaces exited 0 with empty stdout, and the probe then
+# recorded a claim about main from that emptiness. The exit status above is
+# what stops it; this is the other half — nothing reaches stdout to be read as
+# a version.
+version_stdout="$(with_stub scratch_version "$FORK" main nonempty 2>/dev/null)"
+check "and prints no version at all, so nothing downstream can assert on one" 0 "" \
+  test -z "$version_stdout"
+
+# `any` is still the mode for the question it answers: a ref that genuinely
+# carries no VERSION is not a stale read to spend ten calls on.
+faults
+: >"$TMP/state/calls"
+check "a VERSION nobody wrote still answers absent" 0 "" \
+  empty_stdout with_stub scratch_version "$FORK" nosuchbranch
+check "and spent exactly one call doing it" 0 "" calls_are 1 "contents/VERSION"
+
+# scratch_file, the same two ways. Its false absence had a message of its own
+# — "has no 'VERSION' to read" — and that message is the thing D4 forbids: a
+# statement about the repo derived from a read that never happened.
+faults "0	2	GET repos/*/contents/VERSION*	404	Not Found"
+check "a file read that answers stale twice still lands the bytes" 0 "" \
+  with_stub scratch_file "$FORK" main VERSION "$TMP/read.out" nonempty
+check "and the bytes it landed are the file's" 0 "0.7.0-dev" cat "$TMP/read.out"
+faults "0	99	GET repos/*/contents/VERSION*	404	Not Found"
+with_stub scratch_file "$FORK" main VERSION "$TMP/read.out" nonempty \
+  >"$TMP/file.out" 2>&1
+file_rc=$?
+check "a file read that never answers aborts" 0 "" test "$file_rc" -eq 1
+check "and names the read rather than the file" 0 \
+  "VERSION at $FORK@main did not read back after 10 attempts" cat "$TMP/file.out"
+check "and never says the ref has no such path, which was the false absence" 1 "" \
+  grep -qF "has no 'VERSION' to read" "$TMP/file.out"
+# And the genuine absence keeps its own wording, as the pin refusal does.
+faults
+check "a path that truly is not there still says so, in its own words" 1 \
+  "has no 'nosuch.md' to read" \
+  with_stub scratch_file "$FORK" main nosuch.md "$TMP/read.out"
+
+# The label verify: 0.6.0's probe 2 merged unlabeled because a label write
+# failed and the failure was read after the merge, so this read is the one the
+# probe refuses to merge on. An empty answer from it, one write later, is a
+# stale index — and refusing there would abort a probe over the read.
+stub_reset
+LABELPR="$(with_stub scratch_pr_create "$FORK" topic main "a labelled PR" 2>/dev/null)"
+with_stub scratch_pr_label "$FORK" "$LABELPR" release >/dev/null 2>&1
+faults "0	2	GET repos/*/issues/*/labels	404	Not Found"
+: >"$TMP/state/calls"
+check "a label read that answers stale twice reads the label back" 0 "release" \
+  with_stub scratch_pr_labels "$FORK" "$LABELPR" nonempty
+check "and took the three calls it took" 0 "" calls_are 3 "issues/$LABELPR/labels"
+faults "0	99	GET repos/*/issues/*/labels	404	Not Found"
+check "a label read that never answers is a failed read" 1 \
+  "the labels on $FORK#$LABELPR did not read back after 10 attempts" \
+  with_stub scratch_pr_labels "$FORK" "$LABELPR" nonempty
+
+# The disposal read. This one is different in kind: it answers a formatted
+# string on a 200 either way, so `nonempty` buys nothing over `any` unless the
+# read selects on the value just written — a stale `archived=false` about a
+# repo the PATCH above archived is non-empty, and a retry that accepts it ends
+# on the wrong answer and puts 0.2.0's record-a-cleanup-that-did-not-happen
+# straight back. The stub's lag knob is what makes that shape reachable; the
+# fault rules inject failures and cannot express it.
+stub_reset
+check "an archive whose flag reads back true reports what it observed" 0 \
+  "archived=true private=true" with_stub scratch_archive "$FORK"
+stub_reset
+archive_lagged() { DRILL_STUB_ARCHIVE_LAG=2 with_stub scratch_archive "$FORK"; }
+check "an archive whose flag reads stale twice waits for the value it wrote" 0 \
+  "archived=true private=true" archive_lagged
+stub_reset
+archive_never() { DRILL_STUB_ARCHIVE_LAG=99 with_stub scratch_archive "$FORK"; }
+check "an archive whose flag never reads back true is a failed read, not a disposal" 1 \
+  "the archived flag on $FORK did not read back after 10 attempts" archive_never
+check "and it never reports an unarchived repo as the disposal it observed" 1 "" \
+  archive_never
+stub_reset
+faults "0	2	GET repos/$FORK	500	Internal Server Error"
+check "a disposal read that 500s twice still reports the flag" 0 \
+  "archived=true private=true" with_stub scratch_archive "$FORK"
+
 # ---------------------------------------------------------------------------
 # Argument refusals: the CLI is a door too.
 # ---------------------------------------------------------------------------
