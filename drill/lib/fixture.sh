@@ -83,7 +83,10 @@ fixture_assert_seeded() {
   local repo="${1:?fixture_assert_seeded: repo required}"
   local branch="${2:?fixture_assert_seeded: branch required}"
   local paths missing="" want
-  paths="$(scratch_paths "$repo" "$branch")"
+  # The fixture commit is already in: an empty or failed read here is the
+  # instrument's own stale read, and reporting it as a missing fixture would
+  # be the 0.7.0 lie in a third place (#369).
+  paths="$(scratch_paths "$repo" "$branch" nonempty)" || return 1
   for want in VERSION CHANGELOG.md changelog.d/README.md; do
     grep -qxF "$want" <<<"$paths" || missing="$missing $want"
   done
