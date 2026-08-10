@@ -190,8 +190,17 @@ probe_run 7 probe_7_rc_cut
 probe_run 8 probe_8_promotion
 
 # ---- disposal: archive, observe, and stop ---------------------------------
-observed="$(scratch_archive "$DRILL_REPO")"
-disposal="the repository is **archived** — \`PATCH /repos/$DRILL_REPO\` with \`archived: true\`, and a fresh read afterwards reported \`$observed\`"
+# The read-back can exhaust its retries (#369 D4), and if it does, that must
+# not take the record with it: eight probes have already run and the header
+# promises their rows either way. So the disposal sentence reports the read
+# that did not answer, rather than `set -e` ending the run one line short of
+# the thing the run is for.
+observed="$(scratch_archive "$DRILL_REPO")" || observed=""
+if [ -n "$observed" ]; then
+  disposal="the repository is **archived** — \`PATCH /repos/$DRILL_REPO\` with \`archived: true\`, and a fresh read afterwards reported \`$observed\`"
+else
+  disposal="the repository was sent \`PATCH /repos/$DRILL_REPO\` with \`archived: true\`, but the read afterwards never answered — the archive may well have landed; it is unobserved, and this record does not claim it did"
+fi
 
 # ---- the record -----------------------------------------------------------
 ctx="$DRILL_WORK/ctx.tsv"

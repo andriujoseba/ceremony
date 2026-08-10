@@ -855,11 +855,20 @@ check "the canonical-repo refusal creates no scratch repo" 1 "" \
 # request has to answer differently on the second call than on the first, and
 # no amount of stub *state* produces that.
 # ---------------------------------------------------------------------------
+# A subshell, so the exports land on the call and nothing else. `check` already
+# runs its command in a command substitution, but the handful of direct
+# `with_stub …` calls in this file do not — and an exported PATH and a zeroed
+# nap leaking into whatever gets appended after them is a trap rather than a
+# feature. Every caller's side effects are stub state on disk, so nothing here
+# needs shell state to survive the call; `DRILL_READ_TRIES=0 with_stub …` still
+# works, since a subshell inherits shell variables.
 with_stub() { # <cmd…> — one library call against the stub, nap-free
-  export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
-  export DRILL_STUB_SCENARIO="$TMP/empty.scenario" DRILL_STUB_FAULTS="$FAULTS"
-  export DRILL_READ_NAP_SECONDS=0
-  "$@"
+  (
+    export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
+    export DRILL_STUB_SCENARIO="$TMP/empty.scenario" DRILL_STUB_FAULTS="$FAULTS"
+    export DRILL_READ_NAP_SECONDS=0
+    "$@"
+  )
 }
 empty_stdout() { # <cmd…> — the command printed nothing on stdout
   local out

@@ -291,10 +291,14 @@ scratch_pr_label() {
     drill_gh api "repos/${1:?}/issues/${2:?}/labels" --input - >/dev/null
 }
 
-# scratch_pr_labels <repo> <number> — the labels actually on the PR, so the
-# probe can confirm rather than assume.
+# scratch_pr_labels <repo> <number> [mode] — the labels actually on the PR, so
+# the probe can confirm rather than assume. drill_read's modes again: `any` for
+# "what is on this PR", `nonempty` for the read that follows a label write of
+# this instrument's own, where an empty answer can only be a stale index.
 scratch_pr_labels() {
-  drill_gh api "repos/${1:?}/issues/${2:?}/labels" --jq '.[].name'
+  local repo="${1:?}" number="${2:?}" mode="${3:-any}"
+  drill_read "$mode" "the labels on $repo#$number" \
+    drill_gh_soft api "repos/$repo/issues/$number/labels" --jq '.[].name'
 }
 
 # scratch_pr_merge <repo> <number> — prints the merge commit SHA.
@@ -339,16 +343,22 @@ scratch_release_prerelease() {
   esac
 }
 
-# scratch_file <repo> <ref> <path> <out-file> — the file's bytes at a ref,
-# put where a byte comparison can reach them.
+# scratch_file <repo> <ref> <path> <out-file> [mode] — the file's bytes at a
+# ref, put where a byte comparison can reach them.
 #
 # `scratch_version` below strips whitespace because a version is a token;
 # this one strips nothing, because the rc cut's changelog claim is `cmp` and
 # not prose (#321 D3): "byte-identical before and after" is only a
 # measurement if the bytes are what was compared.
+#
+# The mode is drill_read's, and it defaults to `any` because "is this path
+# here" is a real question. Every caller reading a file back off main after a
+# release door wrote it passes `nonempty` instead: a 404 there is GitHub being
+# stale about a file it holds, and taking it at face value reports the file
+# missing — the false absence D1 exists to retire.
 scratch_file() {
-  local repo="${1:?}" ref="${2:?}" path="${3:?}" out="${4:?}" encoded
-  encoded="$(drill_read any "$path at $repo@$ref" \
+  local repo="${1:?}" ref="${2:?}" path="${3:?}" out="${4:?}" mode="${5:-any}" encoded
+  encoded="$(drill_read "$mode" "$path at $repo@$ref" \
     drill_gh_soft api "repos/$repo/contents/$path?ref=$ref" --jq '.content')" || return 1
   if [ -z "$encoded" ]; then
     echo "scratch_file: $repo@$ref has no '$path' to read." >&2
@@ -357,11 +367,16 @@ scratch_file() {
   base64 -d <<<"$encoded" >"$out"
 }
 
-# scratch_version <repo> <ref> — the tree's VERSION at a ref, for the
-# re-arm assertions.
+# scratch_version <repo> <ref> [mode] — the tree's VERSION at a ref, for the
+# re-arm assertions. Same two modes as scratch_file, for the same reason: the
+# re-arm reads are `nonempty`, because the door has just written that file and
+# an empty answer about it is a stale index rather than a repo without a
+# VERSION. A caller that reads this in `any` mode and then asserts on the
+# result is asserting on a read that may not have happened — which is why the
+# re-arm sites branch on the exit status rather than on the string.
 scratch_version() {
-  local repo="${1:?}" ref="${2:?}" encoded
-  encoded="$(drill_read any "VERSION at $repo@$ref" \
+  local repo="${1:?}" ref="${2:?}" mode="${3:-any}" encoded
+  encoded="$(drill_read "$mode" "VERSION at $repo@$ref" \
     drill_gh_soft api "repos/$repo/contents/VERSION?ref=$ref" --jq '.content')" || return 1
   [ -n "$encoded" ] || return 0
   base64 -d <<<"$encoded" 2>/dev/null | tr -d '[:space:]'
@@ -424,10 +439,20 @@ scratch_run_rerun() {
 # scratch_archive <repo> — archive, then read the flag back. The record
 # states the disposal its author observed, never the one it asked for: 0.2.0
 # shipped a record asserting a cleanup that had not happened (#135).
+#
+# That read is read-after-write like any other, so it goes through the helper
+# (D3). The `select(.archived)` is what makes `nonempty` bite here: this read
+# answers with a formatted string either way, so a stale `archived=false` about
+# a repo the PATCH above just archived is non-empty and would end the retry on
+# the wrong answer — the one shape of staleness this call can suffer. Selecting
+# on the value just written turns it back into the empty answer `nonempty`
+# retries, exactly as the bootstrap's ref re-read does.
 scratch_archive() {
   local repo="${1:?}" observed
   jq -n '{archived: true}' |
     drill_gh api "repos/$repo" --method PATCH --input - >/dev/null || return 1
-  observed="$(drill_gh api "repos/$repo" --jq '"archived=\(.archived) private=\(.private)"')" || return 1
+  observed="$(drill_read nonempty "the archived flag on $repo" \
+    drill_gh_soft api "repos/$repo" \
+    --jq 'select(.archived) | "archived=\(.archived) private=\(.private)"')" || return 1
   printf '%s\n' "$observed"
 }
