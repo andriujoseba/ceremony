@@ -3,7 +3,7 @@
 Run 2026-08-09 by `drill-runner` with `drill/rehearsal.sh` against the 0.7.0
 candidate, candidate ref `build/313-drill-rehearsal`, canonical candidate SHA
 `c0ffee1234567890c0ffee1234567890c0ffee12`.
-All six probes ran; every row in the table below was written from
+All eight probes ran; every row in the table below was written from
 its own run by the script that drove it.
 
 **Every probe passed.**
@@ -19,6 +19,13 @@ the first ceremony PR, per the guide's prerequisite. The fixture was
 committed **before** the caller, so the first door run had a real parent
 version to inspect — the script refuses to install the caller against a tree
 with no fixture in it.
+
+The rc legs run one rung further along the ladder — `0.7.2-dev` →
+`0.7.2-rc1` → `0.7.2` — because the probes before them have already
+published 0.7.0 and its successor, and a promotion needs a version nothing
+has released. An rc that ships carries its own drill record, so the rc cut's
+ceremony PR carries **`drills/0.7.2-rc1.md`** and that is the path the rc
+version's record lives at.
 
 **Disposal, as this run observed it**: the repository is **archived** — a fresh read afterwards reported `archived=true private=true`.
 
@@ -57,6 +64,8 @@ failed probe, and the assertion is these numbers, not the prose beside them.
 | 4 | re-run of the completed ceremony | [1001](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1001) (attempt 2) | 1 → 1 | 1 → 1 | ✅ refused at the assert |
 | 5 | tag-door release from a manual tag | [1005](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1005) | 1 → 2 | 1 → 2 | ✅ published from its own section |
 | 6 | mismatched tag | [1006](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1006) | 2 → 2 | 2 → 2 | ✅ refused before publication |
+| 7 | rc cut, tag-only and marked prerelease | [1007](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1007) | 2 → 3 | 2 → 3 | ✅ published as a prerelease, changelog byte-identical |
+| 8 | promotion of the rc to the final version | [1008](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1008) | 3 → 4 | 3 → 4 | ✅ the assembled section stamped, the candidate still a prerelease |
 
 ## Setup, and the runs that are not probes
 
@@ -76,6 +85,8 @@ intention.
 - ✅ The merge door refused a re-run of its own completed ceremony.
 - ✅ The tag door published from a matching manual tag without touching main.
 - ✅ The tag door refused a mismatched tag before creating anything.
+- ✅ The merge door cut `0.7.2-rc1` as a prerelease from its surviving fragments, left `CHANGELOG.md` byte-identical, and re-armed main to `0.7.2-rc2-dev`.
+- ✅ The merge door promoted `0.7.2-rc1` to `0.7.2`, stamping the section its fragments assemble to and consuming them, while the candidate stayed a prerelease.
 
 Every refusal claim above is asserted on the before/after counts in the probe
 table, not on the prose beside them.

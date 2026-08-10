@@ -8,6 +8,27 @@
 # Every number in the emitted record comes from a measurement the run took.
 # 0.2.0's record shipped a draft asserting a cleanup that had not happened
 # (#135); nothing here is written from an intention.
+#
+# The probe count is one of those numbers. It was six literals in this file
+# until the rc legs landed (#321), so growing the doctrine list meant editing
+# every sentence that counted it and hoping none was missed. It comes from
+# `drill/lib/probes.sh` now, which owns the list; source that first.
+: "${DRILL_PROBE_COUNT:?drill/lib/record.sh: source drill/lib/probes.sh first — the doctrine list owns the probe count}"
+
+# record_count_word — the probe count as the prose spells it. The record
+# reads as English and the shape check greps that English, so the two need
+# one speller between them; an unspelled count falls back to its digits
+# rather than inventing a word.
+record_count_word() {
+  case "$DRILL_PROBE_COUNT" in
+    6) printf 'six' ;;
+    7) printf 'seven' ;;
+    8) printf 'eight' ;;
+    9) printf 'nine' ;;
+    10) printf 'ten' ;;
+    *) printf '%s' "$DRILL_PROBE_COUNT" ;;
+  esac
+}
 
 # record_ctx <ctx-file> <key> — a `key<TAB>value` lookup.
 record_ctx() {
@@ -73,18 +94,20 @@ record_claim() {
     4) printf 'The merge door refused a re-run of its own completed ceremony.' ;;
     5) printf 'The tag door published from a matching manual tag without touching main.' ;;
     6) printf 'The tag door refused a mismatched tag before creating anything.' ;;
+    7) printf "The merge door cut \`%s-rc1\` as a prerelease from its surviving fragments, left \`CHANGELOG.md\` byte-identical, and re-armed main to \`%s-rc2-dev\`." "${3:?record_claim: rc version required}" "$3" ;;
+    8) printf "The merge door promoted \`%s-rc1\` to \`%s\`, stamping the section its fragments assemble to and consuming them, while the candidate stayed a prerelease." "${3:?record_claim: rc version required}" "$3" ;;
     *) return 1 ;;
   esac
 }
 
-# record_establishes <probes-tsv> <version> — one line per probe, and never a
-# claim whose probe did not pass.
+# record_establishes <probes-tsv> <version> <rc-version> — one line per probe,
+# and never a claim whose probe did not pass.
 #
 # A failed probe's claim is not softened here, it is not printed at all: the
 # failure takes its place, so the section cannot assert what the table denies.
 record_establishes() {
-  local probes="${1:?}" ver="${2:?}" n row verdict name note
-  for n in 1 2 3 4 5 6; do
+  local probes="${1:?}" ver="${2:?}" rc="${3:?}" n row verdict name note
+  for ((n = 1; n <= DRILL_PROBE_COUNT; n++)); do
     row="$(awk -F'\t' -v n="$n" '$1 == n { print; exit }' "$probes")"
     if [ -z "$row" ]; then
       printf -- '- ⬜ **Nothing established** — probe %s did not run, so this record makes no claim for it.\n' "$n"
@@ -94,7 +117,7 @@ record_establishes() {
     name="$(cut -f2 <<<"$row")"
     note="$(cut -f10 <<<"$row")"
     if [ "$verdict" = PASS ]; then
-      printf -- '- ✅ %s\n' "$(record_claim "$n" "$ver")"
+      printf -- '- ✅ %s\n' "$(record_claim "$n" "$ver" "$rc")"
     else
       printf -- '- ❌ **Nothing established** — probe %s (%s) failed: %s. This run is no evidence about that behavior either way.\n' \
         "$n" "$name" "$note"
@@ -112,7 +135,7 @@ record_establishes() {
 # fixed the same way — the sentence is a measurement now, not a constant.
 record_unrun() {
   local probes="${1:?}" n row run out=""
-  for n in 1 2 3 4 5 6; do
+  for ((n = 1; n <= DRILL_PROBE_COUNT; n++)); do
     row="$(awk -F'\t' -v n="$n" '$1 == n { print; exit }' "$probes")"
     if [ -z "$row" ]; then
       out="$out $n"
@@ -129,8 +152,10 @@ record_unrun() {
 # The doors, as the probe numbers that exercise them. Two sentences in the
 # record are claims about the doors rather than about a probe, and both the
 # renderer and the shape check have to split the rows the same way or they
-# will disagree about a record neither of them wrote.
-DRILL_MERGE_PROBES='1 2 3 4'
+# will disagree about a record neither of them wrote. The rc legs are the
+# merge door's too: an rc cut and its promotion are both labeled ceremony
+# PRs merging to main (#321).
+DRILL_MERGE_PROBES='1 2 3 4 7 8'
 DRILL_TAG_PROBES='5 6'
 
 # record_ran <probes-tsv> — the probe numbers whose row was written from a run.
@@ -138,7 +163,7 @@ DRILL_TAG_PROBES='5 6'
 # on: a door ran iff at least one of its probes reached a run.
 record_ran() {
   local probes="${1:?}" n row run out=""
-  for n in 1 2 3 4 5 6; do
+  for ((n = 1; n <= DRILL_PROBE_COUNT; n++)); do
     row="$(awk -F'\t' -v n="$n" '$1 == n { print; exit }' "$probes")"
     [ -n "$row" ] || continue
     run="$(cut -f3 <<<"$row")"
@@ -221,10 +246,15 @@ EOF
 # record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
 record_render() {
   local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
-  local ver scratch created candidate_sha candidate_ref fork_repo fork_ref
+  local ver rc scratch created candidate_sha candidate_ref fork_repo fork_ref
   local fork_head pin disposal runner stamp failed passed unestablished
-  local unrun unrun_count
+  local unrun unrun_count word
   ver="$(record_ctx "$ctx" version)"
+  # The rc ladder's own version: the probes above publish `$ver` and
+  # `$ver`'s successor, and the rc legs run one further along so the
+  # promotion has a version nothing has released (#321).
+  rc="$(record_ctx "$ctx" rc_version)"
+  word="$(record_count_word)"
   scratch="$(record_ctx "$ctx" scratch)"
   created="$(record_ctx "$ctx" created)"
   candidate_sha="$(record_ctx "$ctx" candidate_sha)"
@@ -244,7 +274,7 @@ record_render() {
   # shape check's row count catches that before the emission ships, so this
   # is belt and braces — but the arithmetic should not need a check elsewhere
   # in the file to stay sane (@claude-bot-andresmgsl, round 2).
-  unestablished=$((6 - passed))
+  unestablished=$((DRILL_PROBE_COUNT - passed))
   [ "$unestablished" -ge 0 ] || unestablished=0
   unrun="$(record_unrun "$probes")"
   unrun_count="$(printf '%s\n' "$unrun" | wc -w | tr -d ' ')"
@@ -258,10 +288,10 @@ candidate, candidate ref \`$candidate_ref\`, canonical candidate SHA
 EOF
 
   if [ "$unrun_count" = 0 ]; then
-    printf 'All six probes ran; every row in the table below was written from\nits own run by the script that drove it.\n\n'
+    printf 'All %s probes ran; every row in the table below was written from\nits own run by the script that drove it.\n\n' "$word"
   else
-    printf '**%s of the six probes never reached a run** (probe %s): those rows\nare written from the abort itself, show a dash where a run link would be,\nand nothing is claimed for them below. Every other row in the table was written\nfrom its own run by the script that drove it.\n\n' \
-      "$unrun_count" "${unrun// /, }"
+    printf '**%s of the %s probes never reached a run** (probe %s): those rows\nare written from the abort itself, show a dash where a run link would be,\nand nothing is claimed for them below. Every other row in the table was written\nfrom its own run by the script that drove it.\n\n' \
+      "$unrun_count" "$word" "${unrun// /, }"
   fi
 
   if [ "$failed" = 0 ]; then
@@ -283,6 +313,13 @@ the first ceremony PR, per the guide's prerequisite. The fixture was
 committed **before** the caller, so the first door run had a real parent
 version to inspect — the script refuses to install the caller against a tree
 with no fixture in it.
+
+The rc legs run one rung further along the ladder — \`$rc-dev\` →
+\`$rc-rc1\` → \`$rc\` — because the probes before them have already
+published $ver and its successor, and a promotion needs a version nothing
+has released. An rc that ships carries its own drill record, so the rc cut's
+ceremony PR carries **\`drills/$rc-rc1.md\`** and that is the path the rc
+version's record lives at.
 
 **Disposal, as this run observed it**: $disposal.
 
@@ -347,7 +384,7 @@ EOF
 EOF
   record_doors "$probes" "$ver"
   printf '\n'
-  record_establishes "$probes" "$ver"
+  record_establishes "$probes" "$ver" "$rc"
 
   if [ "$unestablished" = 0 ]; then
     cat <<'EOF'
@@ -358,7 +395,7 @@ EOF
   else
     cat <<EOF
 
-**Not established: $unestablished of the six.** A failed drill is a valid
+**Not established: $unestablished of the $word.** A failed drill is a valid
 record and this is one — what the run proved is claimed above, what it did
 not is named where it failed, and neither is smoothed into the other.
 EOF
@@ -374,12 +411,18 @@ EOF
 # so nothing else will notice.
 record_check() {
   local file="${1:?record_check: file required}" rows problems="" exempt=0 ran=""
-  rows="$(awk -F'|' '/^\| [1-6] \|/ { print }' "$file")"
+  local word
+  word="$(record_count_word)"
+  # Any numbered row, not the doctrine's range: a table carrying a row the
+  # doctrine does not name must red on the count below rather than be quietly
+  # skipped by the pattern that was supposed to find it (#321).
+  rows="$(awk -F'|' '$2 ~ /^ [0-9]+ $/ { print }' "$file")"
   local count
   count="$(printf '%s\n' "$rows" | awk 'NF' | wc -l | tr -d ' ')"
-  [ "$count" = 6 ] || problems="$problems; the probe table has $count rows, expected 6"
+  [ "$count" = "$DRILL_PROBE_COUNT" ] ||
+    problems="$problems; the probe table has $count rows, expected $DRILL_PROBE_COUNT"
   local n
-  for n in 1 2 3 4 5 6; do
+  for ((n = 1; n <= DRILL_PROBE_COUNT; n++)); do
     local row run_cell result_cell
     row="$(awk -F'|' -v n=" $n " '$2 == n { print; exit }' "$file")"
     if [ -z "$row" ]; then
@@ -409,20 +452,24 @@ record_check() {
   # failure that withdrew it.
   local claims
   claims="$(grep -cE '^- (✅|❌|⬜) ' "$file" || true)"
-  [ "$claims" = 6 ] ||
-    problems="$problems; the conclusion has $claims probe lines, expected 6"
+  [ "$claims" = "$DRILL_PROBE_COUNT" ] ||
+    problems="$problems; the conclusion has $claims probe lines, expected $DRILL_PROBE_COUNT"
   grep -qF 'pending the operator' "$file" ||
     problems="$problems; the record does not state the disposal as pending the operator's delete"
+  # D4: the rc legs are only evidence for an rc that ships if the emission
+  # says where that rc's own record lives (#321).
+  grep -qE 'drills/[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+\.md' "$file" ||
+    problems="$problems; the record does not name the rc version's own record path"
   # The prose that talks about the runs is graded against the rows too. It was
   # the one part of the record nothing checked, and `record_render` measuring
   # it is only a guarantee while `record_render` is the sole author
   # (@claude-bot-andresmgsl, round 3): a hand-touched record, or a second
   # renderer, gets the same grading the table has always had.
   local claimed
-  if grep -qF 'All six probes ran' "$file"; then
+  if grep -qF "All $word probes ran" "$file"; then
     claimed=0
   else
-    claimed="$(sed -n 's/^\*\*\([0-9][0-9]*\) of the six probes never reached a run\*\*.*/\1/p' \
+    claimed="$(sed -n "s/^\\*\\*\\([0-9][0-9]*\\) of the $word probes never reached a run\\*\\*.*/\\1/p" \
       "$file" | head -n 1)"
   fi
   if [ -z "$claimed" ]; then
@@ -455,16 +502,16 @@ record_check() {
     echo "record_check: ${problems#; }" >&2
     return 1
   fi
-  # The success line is evidence too, and it used to announce run IDs for six
-  # rows one line after excusing a row that had none. It says what it checked
+  # The success line is evidence too, and it used to announce a run ID for
+  # every row one line after excusing a row that had none. It says what it checked
   # (@claude-bot-andresmgsl, round 2).
   if [ "$exempt" = 0 ]; then
-    echo "record_check: six probe rows, each with a run ID and its before/after counts, and a conclusion that claims only what they measured."
+    echo "record_check: $word probe rows, each with a run ID and its before/after counts, and a conclusion that claims only what they measured."
   else
     # The sentence counts rows, so it agrees with the count it just printed
     # (@claude-bot-andresmgsl, round 3).
     local carries='carry'
     [ "$exempt" != 1 ] || carries='carries'
-    echo "record_check: six probe rows — $exempt aborted before reaching a run and $carries the aborted mark in place of a run ID, the rest carry a run ID and their before/after counts — and a conclusion that claims only what they measured."
+    echo "record_check: $word probe rows — $exempt aborted before reaching a run and $carries the aborted mark in place of a run ID, the rest carry a run ID and their before/after counts — and a conclusion that claims only what they measured."
   fi
 }
