@@ -29,6 +29,36 @@ maps the ladder whose `0.1.2` working surface moved from the crufty ledger
 [heavy-duty/crew#162](https://github.com/heavy-duty/crew/issues/162) to
 [heavy-duty/crew#346](https://github.com/heavy-duty/crew/issues/346).
 
+## Release candidates
+
+Release candidates extend one final-version window rather than opening
+separate version epics. Their worked ladder is
+`X.Y.Z-dev` → `X.Y.Z-rc1` → `X.Y.Z-rc2-dev` → `X.Y.Z-rc2` → … →
+`X.Y.Z`. Each candidate is a tag-only cut: its ceremony PR changes the
+version to the bare `X.Y.Z-rcN` and adds `drills/X.Y.Z-rcN.md`, but leaves
+`CHANGELOG.md` and every fragment untouched. The release doors assemble the
+surviving fragments into cumulative notes, publish the candidate with
+`--prerelease`, and the merge door deterministically re-arms main as
+`X.Y.Z-rc(N+1)-dev`. Repeat those steps for each candidate. Promotion to
+`X.Y.Z` is the ordinary final ceremony: assemble and stamp the final section,
+consume the fragments, publish the final release, and re-arm the next patch
+development version (#322).
+
+This path is fragment-mode only. Before opening an rc window, inspect the
+first `## ` section of `CHANGELOG.md`: it must not be a stamped version that
+matches `X.Y.Z-rcN` exactly. `changelog-armed` refuses that top section in
+every mode and on every PR, while `changelog-monotonic` forbids deleting the
+historical version heading. Stamp the next final section above it instead;
+never delete the rc heading. That stamp is an ordinary ceremony PR, not a
+migration exception. In legacy heading mode the ordinary
+`## Unreleased` re-arm already puts a safe section above it. Fragment mode
+refuses a surviving `## Unreleased`, so the next final cut is the adoption
+door. Deeper rc headings are harmless history: the guard reads only the top
+section. Spellings outside the declared `X.Y.Z-rcN` convention, such as
+`-rc.1`, `-RC1`, or `-beta1`, are not rc stamps to `changelog-armed`;
+`changelog-monotonic` still forbids deleting any version-shaped historical
+heading (#322).
+
 ## Gates
 
 Each version epic declares `Blocked by <predecessor>`. Special ordering — a

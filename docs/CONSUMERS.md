@@ -311,6 +311,10 @@ No hook → no assets: for a pure-bash tree, GitHub's source tarball for the
 tag IS the package. Worked examples land with the conversions: cast's tgz
 build (#15) and incubator's GHCR image push (#16).
 
+Native release-candidate cuts and deterministic rc re-arming are available
+at `0.7.0` and later (#322). Adopt them with the ordinary pin bump and
+doctrine re-sync; earlier pins do not carry the rc release path.
+
 ## Labels automation
 
 The labels automation is two reusable workflows since #209, adopted
