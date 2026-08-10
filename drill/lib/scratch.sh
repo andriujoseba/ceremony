@@ -447,12 +447,56 @@ scratch_run_rerun() {
 # the wrong answer — the one shape of staleness this call can suffer. Selecting
 # on the value just written turns it back into the empty answer `nonempty`
 # retries, exactly as the bootstrap's ref re-read does.
+#
+# And this is the one site in that family where the *wrong* answer is
+# representable, so an answer may not be filed as an absence (D7). A read that
+# says `archived=false` ten times knows the archive did not land; folding it
+# into "the read never answered" throws away exactly what #135 installed the
+# read-back for, after 0.2.0 shipped a record asserting a cleanup that had not
+# happened. Three dispositions, and the caller states the one it has:
+#
+#   0  archived, and observed so — the flag is on stdout
+#   3  read, and it says the repo is NOT archived — the last answer is on
+#      stdout, and the archive did not land
+#   1  never answered — nothing on stdout, and nothing may be claimed
 scratch_archive() {
-  local repo="${1:?}" observed
+  local repo="${1:?}" observed raw last rc=0
   jq -n '{archived: true}' |
     drill_gh api "repos/$repo" --method PATCH --input - >/dev/null || return 1
+  raw="$(mktemp)"
   observed="$(drill_read nonempty "the archived flag on $repo" \
-    drill_gh_soft api "repos/$repo" \
-    --jq 'select(.archived) | "archived=\(.archived) private=\(.private)"')" || return 1
-  printf '%s\n' "$observed"
+    scratch_archived_flag "$repo" "$raw")" || rc=$?
+  last="$(cat "$raw")"
+  rm -f "$raw"
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$observed"
+    return 0
+  fi
+  # The reads answered, and what they answered was `archived=false`. That is a
+  # measurement, not a missing one.
+  if [ -n "$last" ]; then
+    printf '%s\n' "$last"
+    return 3
+  fi
+  return 1
+}
+
+# scratch_archived_flag <repo> <raw-file> — one read of the archive flag,
+# recording the whole answer and printing only the archived one.
+#
+# The split is what keeps D7's two dispositions apart: the raw file holds the
+# last answer the read actually got, so an exhausted retry can tell "it said
+# false every time" from "it never said anything", while stdout stays empty on
+# a false so `drill_read nonempty` goes on retrying the staleness it is there
+# for. The file is truncated on a failed read, because a disposition is only
+# ever claimed from the answer this attempt got.
+scratch_archived_flag() {
+  local repo="${1:?}" raw="${2:?}" answer
+  : >"$raw"
+  answer="$(drill_gh_soft api "repos/$repo" \
+    --jq '"archived=\(.archived) private=\(.private)"')" || return 1
+  printf '%s' "$answer" >"$raw"
+  case "$answer" in
+    archived=true*) printf '%s\n' "$answer" ;;
+  esac
 }

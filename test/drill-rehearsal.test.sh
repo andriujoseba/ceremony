@@ -1159,6 +1159,50 @@ check "a label read that never answers is a failed read" 1 \
   "the labels on $FORK#$LABELPR did not read back after 10 attempts" \
   with_stub scratch_pr_labels "$FORK" "$LABELPR" nonempty
 
+# And the caller that turns that read into a claim (#369 D6). The verify used
+# to sit left of a `grep`, which owns the pipeline's exit status, so an
+# exhausted read reached the refusal and reported a PR as unlabeled on a list
+# nobody had read. Both refusals are exercised, because the point is that they
+# are two facts: one says the read did not answer, the other says the label is
+# not there, and only the second may speak about the PR.
+merge_unread_label() {
+  (
+    DRILL_REPO="$FORK"
+    with_stub probe_merge_and_wait probe-label "a labelled PR" release
+  )
+}
+stub_reset
+faults "0	99	GET repos/*/issues/*/labels	404	Not Found"
+merge_unread_label >"$TMP/mergelabel.out" 2>&1
+merge_label_rc=$?
+check "a merge whose label verify never reads back refuses to merge" 0 "" \
+  test "$merge_label_rc" -eq 1
+check "and refuses on the read, naming it" 0 \
+  "did not read back after the write, so the 'release' label was never checked" \
+  cat "$TMP/mergelabel.out"
+check "it never reports the PR as unlabeled on a read that did not answer" 1 "" \
+  grep -qF "did not carry the 'release' label" "$TMP/mergelabel.out"
+check "and it never reached the merge" 0 "" calls_are 0 "/merge"
+# The other side: a list that was read, and genuinely does not carry it. This
+# is 0.6.0's probe 2 — a PR carrying labels, none of them the one the probe is
+# about — and the refusal that must still fire, in its own words.
+merge_lost_label() {
+  (
+    export DRILL_STUB_LABEL_INSTEAD='scope:release-flow'
+    DRILL_REPO="$FORK"
+    with_stub probe_merge_and_wait probe-label "a labelled PR" release
+  )
+}
+stub_reset
+merge_lost_label >"$TMP/lostlabel.out" 2>&1
+lost_label_rc=$?
+check "a merge whose PR reads back without the label refuses too" 0 "" \
+  test "$lost_label_rc" -eq 1
+check "and this one does speak about the PR, because the list was read" 0 \
+  "did not carry the 'release' label after the write" cat "$TMP/lostlabel.out"
+check "it never blames the read that answered perfectly well" 1 "" \
+  grep -qF 'did not read back after the write' "$TMP/lostlabel.out"
+
 # The disposal read. This one is different in kind: it answers a formatted
 # string on a 200 either way, so `nonempty` buys nothing over `any` unless the
 # read selects on the value just written — a stale `archived=false` about a
@@ -1174,15 +1218,40 @@ archive_lagged() { DRILL_STUB_ARCHIVE_LAG=2 with_stub scratch_archive "$FORK"; }
 check "an archive whose flag reads stale twice waits for the value it wrote" 0 \
   "archived=true private=true" archive_lagged
 stub_reset
-archive_never() { DRILL_STUB_ARCHIVE_LAG=99 with_stub scratch_archive "$FORK"; }
-check "an archive whose flag never reads back true is a failed read, not a disposal" 1 \
-  "the archived flag on $FORK did not read back after 10 attempts" archive_never
-check "and it never reports an unarchived repo as the disposal it observed" 1 "" \
-  archive_never
-stub_reset
 faults "0	2	GET repos/$FORK	500	Internal Server Error"
 check "a disposal read that 500s twice still reports the flag" 0 \
   "archived=true private=true" with_stub scratch_archive "$FORK"
+
+# D7 — an answer is not an absence. This read is the one site in the family
+# where the WRONG answer is representable, so its two failures are two
+# dispositions: a flag that reads `false` to the end of the budget is a repo
+# this run knows is not archived, and collapsing it into "the read never
+# answered" throws away what #135 installed the read-back for after 0.2.0
+# shipped a record claiming a cleanup that had not happened.
+stub_reset
+archive_false() { DRILL_STUB_ARCHIVE_LAG=99 with_stub scratch_archive "$FORK"; }
+archive_false >"$TMP/archive-false.out" 2>&1
+archive_false_rc=$?
+check "a flag that reads false to the end of the budget is its own disposition" 0 "" \
+  test "$archive_false_rc" -eq 3
+check "and the answer it kept reading is what it reports" 3 \
+  "archived=false private=true" archive_false
+check "it never claims the archive it did not observe" 1 "" \
+  grep -qF 'archived=true' "$TMP/archive-false.out"
+check "and it spent the whole budget before saying so" 0 "" \
+  calls_at_least 10 '--jq "archived='
+# The other disposition, on the same call: a read that answers nothing at all.
+stub_reset
+faults "0	99	GET repos/$FORK	500	Internal Server Error"
+with_stub scratch_archive "$FORK" >"$TMP/archive-unread.out" 2>&1
+archive_unread_rc=$?
+check "a flag read that never answers is the unread disposition, not the false one" 0 "" \
+  test "$archive_unread_rc" -eq 1
+check "and it names the read and its attempt count" 0 \
+  "the archived flag on $FORK did not read back after 10 attempts" \
+  cat "$TMP/archive-unread.out"
+check "it reports no flag at all, since it read none" 0 "" \
+  empty_stdout with_stub scratch_archive "$FORK"
 
 # The cases above pin the helpers' modes. What they cannot see is whether the
 # *callers* pass the mode — a probe that reverts to the default reads `any`
@@ -1315,13 +1384,29 @@ check "never as a ref that carries no workflows" 1 "" \
 stub_reset
 green_scenario "$TMP/rearm.scenario"
 faults "0	99	GET repos/$SCRATCH/contents/VERSION*	404	Not Found"
-rearm_out="$(run_rehearsal "$TMP/rearm.scenario" --out "$TMP/rearm.md" 2>&1)"
+run_rehearsal "$TMP/rearm.scenario" --out "$TMP/rearm.md" >"$TMP/rearm.out" 2>&1
 check "a re-arm read that never answers still leaves a record behind" 0 "" \
   test -s "$TMP/rearm.md"
-check "and the probe row says the read did not answer" 0 \
+# One assertion per re-arm site, because each is a separate call site and a
+# family fixed at three of four is the same defect (#369 D6). The four rows
+# differ by the door their probe drove, so a single faulted run grades all
+# four independently: reverting any one branch to `armed="$(scratch_version
+# …)"` reds the line that names it and leaves the other three green.
+check "probe 1's row says the ceremony's re-arm read did not answer" 0 \
   "VERSION did not read back off main after the ceremony" cat "$TMP/rearm.md"
-check "it never records a version it never read" 1 "" \
+check "probe 5's row says the tag door's read did not answer" 0 \
+  "VERSION did not read back off main after the tag door" cat "$TMP/rearm.md"
+check "probe 7's row says the rc cut's re-arm read did not answer" 0 \
+  "VERSION did not read back off main after the rc cut" cat "$TMP/rearm.md"
+check "probe 8's row says the promotion's re-arm read did not answer" 0 \
+  "VERSION did not read back off main after the promotion" cat "$TMP/rearm.md"
+check "and not one of the four records a version it never read" 1 "" \
   grep -qF "main reads ''" "$TMP/rearm.md"
+# The honest message is still emitted — on stderr, which is exactly where the
+# old shape left it while the record kept the false claim.
+check "the read names itself on stderr, where the record could not see it" 0 \
+  "VERSION at $SCRATCH@main did not read back after 10 attempts" \
+  cat "$TMP/rearm.out"
 
 # The disposal is the last thing the instrument does, and it sits after eight
 # probes under `set -euo pipefail`. An exhausted read there used to be the end
@@ -1329,10 +1414,9 @@ check "it never records a version it never read" 1 "" \
 # sentence in the record instead, and this is what says so.
 stub_reset
 green_scenario "$TMP/disposal.scenario"
-export DRILL_STUB_ARCHIVE_LAG=99
+faults "1	99	GET repos/$SCRATCH	500	Internal Server Error"
 disposal_out="$(run_rehearsal "$TMP/disposal.scenario" --out "$TMP/disposal.md" 2>&1)"
 disposal_rc=$?
-unset DRILL_STUB_ARCHIVE_LAG
 check "a disposal read that never answers still emits the record" 0 "" \
   test "$disposal_rc" -eq 0
 check "with all eight probe rows in it" 0 "probes passed 8/8, failed 0" \
@@ -1341,6 +1425,30 @@ check "and the record says the archive is unobserved rather than claiming it" 0 
   "the read afterwards never answered" cat "$TMP/disposal.md"
 check "it never reports an archive it did not observe" 1 "" \
   grep -qF 'a fresh read afterwards reported' "$TMP/disposal.md"
+check "and it never says the archive did not land, which it did not measure" 1 "" \
+  grep -qF 'the archive did not land' "$TMP/disposal.md"
+
+# The other disposition, in the record this time (#369 D7). Same exhausted
+# read, a different fact behind it: the flag answered, and what it said is
+# that the repository is not archived. The two sentences are different
+# strings, and the softer one may not be reached from the harder fact.
+stub_reset
+green_scenario "$TMP/unarchived.scenario"
+export DRILL_STUB_ARCHIVE_LAG=99
+unarchived_out="$(run_rehearsal "$TMP/unarchived.scenario" --out "$TMP/unarchived.md" 2>&1)"
+unarchived_rc=$?
+unset DRILL_STUB_ARCHIVE_LAG
+check "a disposal that reads back false still emits the record" 0 "" \
+  test "$unarchived_rc" -eq 0
+check "with all eight probe rows in it too" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$unarchived_out"
+check "and the record says the archive did not land" 0 \
+  "the archive did not land, and the repository is still live" \
+  cat "$TMP/unarchived.md"
+check "quoting the flag it actually read" 0 "archived=false private=true" \
+  cat "$TMP/unarchived.md"
+check "it never files an answered read as one that never answered" 1 "" \
+  grep -qF 'never answered' "$TMP/unarchived.md"
 
 # ---------------------------------------------------------------------------
 # Argument refusals: the CLI is a door too.

@@ -131,10 +131,20 @@ qval() {
 # fails the call `times` times before letting it through. Counters are written
 # back to the file, so a rule spans the whole run.
 #
-# These rules inject *failures*. The other half of staleness — a write that
-# landed while the read still answers the old value — is not expressible here,
-# and gets its own knob at the one endpoint where it matters:
-# `$DRILL_STUB_ARCHIVE_LAG`, at the `repos/<owner>/<name>` GET below.
+# These rules inject *failures*. The other half — a write that answered 200
+# while the world says something else — is not expressible here, and gets a
+# knob at each endpoint where it matters:
+#
+#   $DRILL_STUB_ARCHIVE_LAG    how many reads keep saying `archived: false`
+#                              after the PATCH set it, at the
+#                              `repos/<owner>/<name>` GET below.
+#   $DRILL_STUB_LABEL_INSTEAD  the label a PR ends up carrying, whatever the
+#                              write asked for — a PR that carries labels,
+#                              none of them the one the probe is about. That
+#                              is the state 0.6.0's probe 2 merged in, and it
+#                              is the only way to reach `probe_merge_and_wait`'s
+#                              label refusal from a list that genuinely was
+#                              read (#369 D6).
 glob_match() { # <glob> <string>
   # shellcheck disable=SC2254 # the unquoted pattern IS the feature here
   case "$2" in $1) return 0 ;; esac
@@ -432,7 +442,11 @@ case "$rest" in
     n="${rest#issues/}"
     n="${n%/labels}"
     if [ "$method" = POST ]; then
-      jq -r '.labels[]' <<<"$body" >>"$R/labels/$n"
+      if [ -n "${DRILL_STUB_LABEL_INSTEAD:-}" ]; then
+        printf '%s\n' "$DRILL_STUB_LABEL_INSTEAD" >>"$R/labels/$n"
+      else
+        jq -r '.labels[]' <<<"$body" >>"$R/labels/$n"
+      fi
       out '[]'
     else
       out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | {name: .})' <"$R/labels/$n")"

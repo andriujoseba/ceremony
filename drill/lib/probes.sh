@@ -175,7 +175,7 @@ probe_fragment_paths() {
 # probe_merge_and_wait <branch> <title> <label?> — PR, optional label, merge,
 # wait. Prints `<run-id><TAB><conclusion>`.
 probe_merge_and_wait() {
-  local branch="${1:?}" title="${2:?}" label="${3:-}" pr merge_sha
+  local branch="${1:?}" title="${2:?}" label="${3:-}" pr merge_sha labels
   pr="$(scratch_pr_create "$DRILL_REPO" "$branch" main "$title")" || return 1
   if [ -n "$label" ]; then
     scratch_pr_label "$DRILL_REPO" "$pr" "$label" || return 1
@@ -184,7 +184,17 @@ probe_merge_and_wait() {
     # because this read follows the write directly above it — an empty label
     # list there is a stale index, and refusing to merge on it would abort a
     # probe over a read rather than over the label (#369 D3).
-    if ! scratch_pr_labels "$DRILL_REPO" "$pr" nonempty | grep -qxF "$label"; then
+    #
+    # The read is taken before it is judged, rather than piped into the `grep`
+    # that judges it (#369 D6). Left of a pipe the read's exit status is the
+    # `grep`'s, so an exhausted read reached the refusal below and said the PR
+    # did not carry a label nobody had read — the false claim D4 retires, one
+    # layer up. Two refusals now, because they are two different facts.
+    if ! labels="$(scratch_pr_labels "$DRILL_REPO" "$pr" nonempty)"; then
+      echo "drill: the labels on PR #$pr did not read back after the write, so the '$label' label was never checked — refusing to merge on a read that did not answer, which is not the same as a label that is not there." >&2
+      return 1
+    fi
+    if ! grep -qxF "$label" <<<"$labels"; then
       echo "drill: PR #$pr did not carry the '$label' label after the write — refusing to merge an unlabeled tree into a probe that is about the label." >&2
       return 1
     fi

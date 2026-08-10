@@ -195,9 +195,18 @@ probe_run 8 probe_8_promotion
 # promises their rows either way. So the disposal sentence reports the read
 # that did not answer, rather than `set -e` ending the run one line short of
 # the thing the run is for.
-observed="$(scratch_archive "$DRILL_REPO")" || observed=""
-if [ -n "$observed" ]; then
+#
+# Three dispositions, never two (#369 D7). A read that answered `archived=
+# false` to the end of its budget has measured a cleanup that did not happen,
+# which is the exact thing #135 put this read-back here to catch; filing it as
+# "the read never answered" would hand the operator the softer of the two
+# sentences on the harder of the two facts.
+archive_rc=0
+observed="$(scratch_archive "$DRILL_REPO")" || archive_rc=$?
+if [ "$archive_rc" -eq 0 ]; then
   disposal="the repository is **archived** — \`PATCH /repos/$DRILL_REPO\` with \`archived: true\`, and a fresh read afterwards reported \`$observed\`"
+elif [ "$archive_rc" -eq 3 ]; then
+  disposal="the repository is **not archived** — \`PATCH /repos/$DRILL_REPO\` with \`archived: true\` was sent, and every read afterwards reported \`$observed\`; the archive did not land, and the repository is still live"
 else
   disposal="the repository was sent \`PATCH /repos/$DRILL_REPO\` with \`archived: true\`, but the read afterwards never answered — the archive may well have landed; it is unobserved, and this record does not claim it did"
 fi
