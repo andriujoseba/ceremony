@@ -915,6 +915,13 @@ faults "0	1	GET repos/*/git/ref/heads/main	409	Git Repository is empty."
 check "the same 409 still answers absent where absence is the question" 0 "" \
   empty_stdout with_stub scratch_ref_sha "$FORK" main
 
+# A mode nobody defined is refused rather than read as the weaker one: a
+# misspelled `nonempty` degrading silently to `any` is 0.7.0's defect back
+# with nothing to notice it.
+faults
+check "an unknown read mode is refused, never taken for 'any'" 2 \
+  "unknown mode 'nonemty'" with_stub scratch_ref_sha "$FORK" main nonemty
+
 # The try count is a bound, and a bound of none is one attempt.
 faults "0	99	GET repos/*/git/ref/heads/main	500	Internal Server Error"
 tries_zero() { DRILL_READ_TRIES=0 with_stub scratch_ref_sha "$FORK" main nonempty; }

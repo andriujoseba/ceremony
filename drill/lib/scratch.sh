@@ -113,6 +113,16 @@ drill_read() {
   shift 2
   local max="${DRILL_READ_TRIES:-10}" nap="${DRILL_READ_NAP_SECONDS:-1}"
   local tries=0 out rc plural=attempts
+  # A misspelled mode must not read as the weaker one: `nonempty` is the mode
+  # that retries a stale answer, and silently degrading to `any` would put
+  # 0.7.0's defect back with nothing to notice it.
+  case "$mode" in
+    any | nonempty) ;;
+    *)
+      echo "drill_read: unknown mode '$mode' — expected 'any' or 'nonempty'." >&2
+      return 2
+      ;;
+  esac
   [ "$max" -ge 1 ] || max=1
   while :; do
     tries=$((tries + 1))
