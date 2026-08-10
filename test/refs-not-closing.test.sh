@@ -12,6 +12,8 @@ SCRIPT="$ROOT/actions/refs-not-closing/refs-not-closing.sh"
 ACTION="$ROOT/actions/refs-not-closing/action.yml"
 ENTRYPOINT="$ROOT/actions/refs-not-closing/run.sh"
 WORKFLOW="$ROOT/.github/workflows/refs-guard.yml"
+BUILDER="$ROOT/BUILDER.md"
+REVIEWER="$ROOT/REVIEWER.md"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -79,6 +81,54 @@ check "two-route mutation changes the script" 1 "" \
   cmp -s "$SCRIPT" "$MUTANT"
 check "removing the two-route diagnostic reds its pin" 1 "" \
   diagnostic_names_both_routes "$MUTANT"
+
+# A code span is descriptive in both role paragraphs, but it must never appear
+# after the safe-rewrite anchor as another recommended remedy (#359).
+doctrine_avoids_code_span_remedy() {
+  local candidate="$1" role="$2" paragraph tail
+  case "$role" in
+    builder)
+      paragraph="$(awk '
+        /^- On a `Refs #N` PR/ { emit = 1 }
+        emit && /^- \*\*/ { exit }
+        emit { print }
+      ' "$candidate")"
+      tail="${paragraph#*Put the number first}"
+      ;;
+    reviewer)
+      paragraph="$(awk '
+        /^1\. \*\*The issue.s acceptance criteria/ { emit = 1 }
+        emit && /^2\. \*\*/ { exit }
+        emit { print }
+      ' "$candidate")"
+      tail="${paragraph#*The safe forms}"
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+  [ "$tail" != "$paragraph" ] && ! grep -qiF "code span" <<<"$tail"
+}
+
+BUILDER_MUTANT="$TMP/BUILDER-with-code-span-remedy.md"
+sed 's/) or omit it\./) or omit it, or put the closing phrase in a code span./' \
+  "$BUILDER" >"$BUILDER_MUTANT"
+REVIEWER_MUTANT="$TMP/REVIEWER-with-code-span-remedy.md"
+sed 's/) or omit it (`triage closes the issue by hand`)\./) or omit it (`triage closes the issue by hand`), or put the closing phrase in a code span./' \
+  "$REVIEWER" >"$REVIEWER_MUTANT"
+
+check "builder doctrine does not offer a code-span remedy" 0 "" \
+  doctrine_avoids_code_span_remedy "$BUILDER" builder
+check "builder doctrine mutation changes the file" 1 "" \
+  cmp -s "$BUILDER" "$BUILDER_MUTANT"
+check "builder code-span remedy reds its doctrine pin" 1 "" \
+  doctrine_avoids_code_span_remedy "$BUILDER_MUTANT" builder
+check "reviewer doctrine does not offer a code-span remedy" 0 "" \
+  doctrine_avoids_code_span_remedy "$REVIEWER" reviewer
+check "reviewer doctrine mutation changes the file" 1 "" \
+  cmp -s "$REVIEWER" "$REVIEWER_MUTANT"
+check "reviewer code-span remedy reds its doctrine pin" 1 "" \
+  doctrine_avoids_code_span_remedy "$REVIEWER_MUTANT" reviewer
 
 body adjacency 'Refs #5' '' 'Triage closes #9 and #5 after the proof.'
 check "non-adjacent #5 does not join closing set #9" 0 "no Refs target" \
