@@ -114,7 +114,7 @@ BUILDER_MUTANT="$TMP/BUILDER-with-code-span-remedy.md"
 sed 's/) or omit it\./) or omit it, or put the closing phrase in a code span./' \
   "$BUILDER" >"$BUILDER_MUTANT"
 REVIEWER_MUTANT="$TMP/REVIEWER-with-code-span-remedy.md"
-sed 's/) or omit it (`triage closes the issue by hand`)\./) or omit it (`triage closes the issue by hand`), or put the closing phrase in a code span./' \
+sed '/The safe forms/{n;s/) or omit it.*/) or omit it, or put the closing phrase in a code span./;}' \
   "$REVIEWER" >"$REVIEWER_MUTANT"
 
 check "builder doctrine does not offer a code-span remedy" 0 "" \
