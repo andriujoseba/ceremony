@@ -3098,6 +3098,154 @@ check "...and its enumerated member is not flagged" 1 "" \
 check "...one window flag on that board, and only one" 0 "1" \
   flag_count window "$opened_window_out"
 
+# -- #364: a long release body must not kill the sweep ----------------------
+# The hourly sweep died at exit 2 from 2026-08-10T04:24:00Z, reconciling
+# nothing, on two lines: `jq: error: writing output failed: Broken pipe` and a
+# status. `membership_references` bounds the record at its terminating heading
+# with an awk `exit` (#349 D8, kept by #364 D2); fed through a pipe, that
+# `exit` closed `jq`'s reader while `jq` was still writing, and `pipefail`
+# carried the EPIPE out through the command substitution.
+#
+# THE FIXTURE FEEDS THE SWEEP'S OWN PATH (#364 D3). A case that hands the
+# parser a herestring itself passes before the fix and after it and proves
+# nothing about the call site; this one drives the script as a subprocess
+# behind the stubbed gh, with errexit and pipefail live, which is the runner's
+# own shape.
+#
+# The body is sized past ANY platform's buffering rather than past this one's.
+# The failing size is a property of the runner's `jq` and `mawk` builds and not
+# of this repository — the runner broke below 75868 bytes while this box
+# survived past 227608 — so a fixture tuned to either machine reds only on the
+# unlucky one.
+board_issue_bodyfile() { # $1 number, $2 labels(csv), $3 title, $4 body FILE
+  # board_issue's sibling for a body no argv can carry: a single argument is
+  # capped at 128 KiB on Linux (MAX_ARG_STRLEN), so `--arg` cannot take a body
+  # of the size this case exists to build. `--rawfile` reads it from the file.
+  local labels_json
+  labels_json="$(printf '%s' "$2" | tr ',' '\n' \
+    | jq -R . | jq -sc 'map(select(. != "") | {name: .})')"
+  jq -n --argjson n "$1" --argjson labels "$labels_json" --arg t "$3" \
+    --rawfile b "$4" --arg at "$(iso_at "$INOW")" \
+    '{number: $n, state: "open", title: $t, body: $b, labels: $labels,
+      created_at: $at, user: {login: "triage-one"}, assignees: []}' \
+    >"$BOARD/repos_owner_repo_issues_$1.json"
+}
+
+big_body_file="$TMP/364-release-body.txt"
+{
+  printf '%s\n' \
+    'Blocked by #253.' \
+    '' \
+    '## Members' \
+    '- #343 — the first member, claimed' \
+    '- #345 — the second, so the record is never a single row' \
+    '' \
+    '## Waves'
+  # Everything past the terminating heading is what the parser abandons, and
+  # is exactly what the writer was still holding when the pipe closed. #317's
+  # own body is measurements struck rather than deleted, so this stands in for
+  # the shape the doctrine actually produces.
+  awk 'BEGIN { for (i = 0; i < 20000; i++)
+    printf "| run %d | schedule | consumed %d bytes before the exit | superseded, struck rather than deleted |\n",
+      i, i * 7 }'
+} >"$big_body_file"
+big_body_bytes="$(wc -c <"$big_body_file")"
+# The fixture going vacuous by shrinking is the failure this pins: a
+# regression case that cannot red on the defect it names is not a case at all.
+check "the #364 fixture body is past 1 MiB, so no platform's buffering absorbs it" 0 "" \
+  test "$big_body_bytes" -gt 1048576
+
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$BOARD/graphql-open.json"
+board_issue_bodyfile 253 blocked,release \
+  'Release 0.6.4 — a release body at the length this board produces' "$big_body_file"
+board_issue 343 claimed 'actions/issueflow-reconcile — the first enumerated member' '' 1
+board_issue 345 ready 'lib/changelog.sh — the second enumerated member' ''
+board_issue 350 ready 'docs/CONSUMERS.md — an unblocked non-member' ''
+board_assemble 253 343 345 350
+big_out="$(board_run)"
+big_rc=$?
+check "a release body past 1 MiB no longer kills the sweep" 0 "" test "$big_rc" -eq 0
+check "...and the pass is reported whole" 0 'issueflow: reconciled.' \
+  printf '%s\n' "$big_out"
+check "...with no broken pipe anywhere in its output" 1 "" \
+  grep -qiF 'broken pipe' <<<"$big_out"
+# The parse still happened, and is read back through the sweep's own verdict
+# rather than trusted: the membership record is what decides who is a member.
+check "...and the record parsed: the non-member draws the window flag" 0 \
+  'issueflow: #350: window flag — an unblocked non-member under #253' \
+  printf '%s\n' "$big_out"
+check "...while both enumerated members are left alone" 1 "" \
+  grep -qE '#(343|345): window flag' <<<"$big_out"
+check "...one window flag on that board, and only one" 0 "1" \
+  flag_count window "$big_out"
+# D9: the stage report is silent and inert on a healthy run.
+check "...and no stage report is printed on a green sweep" 1 "" \
+  grep -qE 'issueflow: (the membership parse:|could not parse the release window membership|could not compute the board flags)' \
+  <<<"$big_out"
+
+# -- #364 D5: the fix changes the writer's status, never the parse ----------
+# Same body, both feeds, same records. The parse was never wrong at any size —
+# only the writer's exit status differed, and that status is what killed the
+# sweep. Bracketed as an exact set: a substring assertion would accept a
+# superset and this is the criterion that a member never silently joins.
+big_body="$(cat "$big_body_file")"
+big_open=$'253\n343\n345\n350'
+here_records="$(release_window_members 253 "$big_open" <<<"$big_body")"
+pipe_records="$(printf '%s\n' "$big_body" | release_window_members 253 "$big_open")"
+check "the parsed member set is identical by herestring and by pipe" 0 "" \
+  test "$here_records" = "$pipe_records"
+check "...and it is the record's own set, exactly" 0 "" \
+  test "$(cut -f2 <<<"$here_records")" = $'343\n345'
+check "...carried by the release issue it was read from, exactly" 0 "" \
+  test "$(cut -f1 <<<"$here_records" | sort -u)" = "253"
+
+# -- #364 D8: a pre-loop death names the stage it died in -------------------
+# Both failures of the 04:24Z class printed `jq`'s bare message and an exit
+# code after 61 seconds of work, and nothing that placed the death above a
+# loop which had never started. Forcing the membership feed to fail is what
+# proves the report is wired to the stage rather than to a healthy path.
+mkdir -p "$TMP/stage-stub"
+issueflow_real_jq="$(command -v jq)"
+cat >"$TMP/stage-stub/jq" <<EOF
+#!/usr/bin/env bash
+# Fails ONLY the membership body extraction — the sweep's sole \`--argjson\`
+# caller (#364). Every other jq call, the board read above this stage and the
+# flag computation below it included, is passed straight through, so the
+# stage the report names is the stage that actually died.
+for issueflow_arg in "\$@"; do
+  if [ "\$issueflow_arg" = --argjson ]; then
+    printf 'jq: error: writing output failed: Broken pipe\n' >&2
+    exit 2
+  fi
+done
+exec "$issueflow_real_jq" "\$@"
+EOF
+chmod +x "$TMP/stage-stub/jq"
+stage_run() {
+  : >"$BOARD/edits"
+  env PATH="$TMP/stage-stub:$ARRIVAL/stub:$PATH" GH_FIXTURES="$BOARD" ISSUEFLOW_NOW="$INOW" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+}
+stage_out="$(stage_run)"
+stage_rc=$?
+# D9: it reports and RE-RAISES. A named stage that swallowed the status would
+# be the failure this whole issue is about, arriving from the other side.
+check "a forced membership-parse failure still reds the sweep" 0 "" test "$stage_rc" -eq 1
+check "...and the pre-loop region names the stage" 0 \
+  'issueflow: could not parse the release window membership' \
+  printf '%s\n' "$stage_out"
+check "...naming the release issue whose record it died on" 0 \
+  'issueflow: the membership parse: could not take release #253' \
+  printf '%s\n' "$stage_out"
+check "...rather than leaving only jq's bare message to read" 0 "" \
+  test "$(grep -c '^issueflow: ' <<<"$stage_out")" -ge 2
+check "...and never reports a pass it did not make" 1 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$stage_out"
+check "...nor writes one label over a board it never swept" 1 "" test -s "$BOARD/edits"
+
 # -- the invariant is enforced at the source, not remembered ----------------
 # Staging only holds while every mutation goes through run(). A future call
 # site reaching gh directly would reopen this hole silently, so it is pinned
