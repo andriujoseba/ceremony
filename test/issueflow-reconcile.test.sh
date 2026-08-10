@@ -3250,6 +3250,27 @@ check "...and never reports a pass it did not make" 1 "" \
   grep -qF 'issueflow: reconciled.' <<<"$stage_out"
 check "...nor writes one label over a board it never swept" 1 "" test -s "$BOARD/edits"
 
+# -- #364 D1 is a call-site property, so it is pinned at the source ---------
+# The defect was one call site against a file that otherwise already used the
+# correct shape — `epic_references`, the other early-exiting parser, was safe
+# by its call site rather than by its own construction. A property held only
+# by every author remembering it is one the next composition reinstates, so it
+# is pinned here, the shape the staged-mutation pin below already uses.
+parser_pipe_call_sites() {
+  grep -nE "\| *(membership_references|epic_references|blocked_references|refs_references|release_window_members|release_window_gate)" \
+    "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" || true
+}
+check "no parser call site in the sweep is fed by a pipe" 0 "" \
+  test -z "$(parser_pipe_call_sites)"
+# And the pin must be able to see what it is guarding: a renamed parser would
+# leave the grep above matching nothing and reporting that as compliance.
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and every parser the pin names still exists to be guarded" 0 "" \
+  bash -c 'for f in membership_references epic_references blocked_references \
+      refs_references release_window_members release_window_gate; do
+    grep -qE "^$f\(\)" "$1" || { printf "the pin names a parser that is gone: %s\n" "$f"; exit 1; }
+  done' _ "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
 # -- the invariant is enforced at the source, not remembered ----------------
 # Staging only holds while every mutation goes through run(). A future call
 # site reaching gh directly would reopen this hole silently, so it is pinned
