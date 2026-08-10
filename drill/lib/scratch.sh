@@ -441,12 +441,13 @@ scratch_run_rerun() {
 # shipped a record asserting a cleanup that had not happened (#135).
 #
 # That read is read-after-write like any other, so it goes through the helper
-# (D3). The `select(.archived)` is what makes `nonempty` bite here: this read
-# answers with a formatted string either way, so a stale `archived=false` about
-# a repo the PATCH above just archived is non-empty and would end the retry on
-# the wrong answer — the one shape of staleness this call can suffer. Selecting
-# on the value just written turns it back into the empty answer `nonempty`
-# retries, exactly as the bootstrap's ref re-read does.
+# (D3). What makes `nonempty` bite here is `scratch_archived_flag` printing
+# only an answer that reads back `archived=true`: the API answers with a
+# formatted string either way, so a stale `archived=false` about a repo the
+# PATCH above just archived is non-empty and would end the retry on the wrong
+# answer — the one shape of staleness this call can suffer. Withholding an
+# answer that does not carry the value just written turns it back into the
+# empty answer `nonempty` retries, exactly as the bootstrap's ref re-read does.
 #
 # And this is the one site in that family where the *wrong* answer is
 # representable, so an answer may not be filed as an absence (D7). A read that
