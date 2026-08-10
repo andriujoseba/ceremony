@@ -1407,7 +1407,19 @@ main() {
       done)"
 
   local n tail_line issue_numbers board_json release_numbers rn window_records
-  local window_rendered=""
+  local rc release_body window_rendered=""
+  # The pre-loop region NAMES THE STAGE IT DIED IN before the status
+  # propagates (#364 D8). Both runs of the 2026-08-10T04:24Z class emitted
+  # `jq: error: writing output failed: Broken pipe` and an exit code after 61
+  # seconds of work, and nothing else — no line placed the death above a loop
+  # that had never started, so a third occurrence would have been equally
+  # unreadable. Every stage below REPORTS AND RE-RAISES: it names itself and
+  # then returns THE STATUS THE STAGE ACTUALLY FAILED WITH, never a generic
+  # one, so the run dies exactly as it died before and `jq`'s own exit code
+  # still reaches the job. A failure is never converted into a success, and a
+  # healthy run prints none of it (#364 D9). The board read above keeps its
+  # own `return 1` — it is the stage that already named itself, and its status
+  # is pinned by #257's cases.
   SKIPPED_COUNT=0
   SKIPPED_ISSUES=""
   # A command substitution in a for list suppresses errexit. Capture and
@@ -1450,23 +1462,70 @@ main() {
   WINDOW_CARRIERS=""
   WINDOW_MEMBERS=""
   if [ -n "$issue_numbers" ]; then
+    # THE BODY IS FED FROM A VARIABLE, NEVER A PIPE (#364 D1).
+    # `membership_references` ends the record at its terminating heading with
+    # an awk `exit`, which is what bounds it (#349 D8) and is kept (#364 D2) —
+    # but that `exit` closes the parser's stdin while its writer is still
+    # writing. Past the pipe buffer plus whatever the reader consumed before
+    # honouring the `exit`, `jq` blocked on a pipe with no reader, took EPIPE,
+    # and `pipefail` failed the substitution: the hourly sweep died at exit 2
+    # having reconciled nothing, every issue-side duty off the air with it.
+    # The threshold is the runner's `jq` and `mawk` read-ahead rather than
+    # anything this repo holds, so no body size is the thing to fix. A
+    # herestring is a temporary file: the parser's `exit` closes nothing a
+    # writer is holding, and no body length can reach it. #343 D2's reason
+    # survives intact — a herestring delivers the line structure the parse
+    # reads by heading exactly as the pipe did.
     window_records="$(
       while IFS= read -r rn; do
         [ -n "$rn" ] || continue
-        jq -r --argjson n "$rn" '.[] | select(has("pull_request") | not)
-          | select(.number == $n) | .body // ""' <<<"$board_json" \
-          | release_window_members "$rn" "$issue_numbers"
+        release_body="$(jq -r --argjson n "$rn" '.[] | select(has("pull_request") | not)
+          | select(.number == $n) | .body // ""' <<<"$board_json")" || {
+          rc=$?
+          emit "the membership parse: could not take release #$rn's body from the board payload" >&2
+          exit "$rc"
+        }
+        # An iteration's failure leaves the loop rather than waiting to be the
+        # last one. A command substitution does not inherit errexit
+        # (`inherit_errexit` is off by default), so the loop's status is only
+        # its FINAL iteration's: a death on an earlier release issue would
+        # otherwise be swallowed and the sweep would run on a short window
+        # record, reporting success over a board half-read — the direction
+        # #257 ruled against and #364 D4 refuses to reinstate here.
+        release_window_members "$rn" "$issue_numbers" <<<"$release_body" || {
+          rc=$?
+          emit "the membership parse: release #$rn's membership record did not parse" >&2
+          exit "$rc"
+        }
       done <<<"$release_numbers"
-    )"
+    )" || {
+      rc=$?
+      log "could not parse the release window membership"
+      return "$rc"
+    }
     # One record per parsed non-self member keeps the carrier decision and
     # its WINDOW_MEMBERS contribution coupled to the extracted function.
     WINDOW_CARRIERS="$(cut -f1 <<<"$window_records" | awk 'NF' | sort -nu)"
     WINDOW_MEMBERS="$(cut -f2 <<<"$window_records" | awk 'NF' | sort -nu)"
   fi
-  [ -z "$WINDOW_CARRIERS" ] || window_rendered="$(window_state "$WINDOW_CARRIERS")"
-  COLLISION_FLAGS="$(collision_key_index <<<"$BOARD_RECORDS" | collision_flags)"
+  if [ -n "$WINDOW_CARRIERS" ]; then
+    window_rendered="$(window_state "$WINDOW_CARRIERS")" || {
+      rc=$?
+      log "could not compute the board flags: the window state"
+      return "$rc"
+    }
+  fi
+  COLLISION_FLAGS="$(collision_key_index <<<"$BOARD_RECORDS" | collision_flags)" || {
+    rc=$?
+    log "could not compute the board flags: the collision index"
+    return "$rc"
+  }
   WINDOW_FLAGS="$(window_flags "$WINDOW_MEMBERS" "$WINDOW_CARRIERS" <<<"$BOARD_RECORDS" \
-    | awk -v state="$window_rendered" 'NF { print $1 "\t" state }')"
+    | awk -v state="$window_rendered" 'NF { print $1 "\t" state }')" || {
+    rc=$?
+    log "could not compute the board flags: the window flags"
+    return "$rc"
+  }
   if [ -z "$issue_numbers" ]; then
     log "no open issues."
   else
