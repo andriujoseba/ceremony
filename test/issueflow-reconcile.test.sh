@@ -3134,7 +3134,7 @@ board_issue_bodyfile() { # $1 number, $2 labels(csv), $3 title, $4 body FILE
 big_body_file="$TMP/364-release-body.txt"
 {
   printf '%s\n' \
-    'Blocked by #249.' \
+    'Blocked by #343.' \
     '' \
     '## Members' \
     '- #343 — the first member, claimed' \
