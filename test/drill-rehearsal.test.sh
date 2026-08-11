@@ -240,13 +240,14 @@ check "a probe row whose counts are prose reds the shape check" 1 \
   printf 'scratch\t%s\n' "$SCRATCH"
   printf 'attempt\t1\n'
   printf 'created\t2026-08-09T00:00:00Z\n'
+  printf 'private\tfalse\n'
   printf 'candidate_sha\t%s\n' "$CAND_SHA"
   printf 'candidate_ref\tbuild/313-drill-rehearsal\n'
   printf 'fork_repo\t%s\n' "$FORK"
   printf 'fork_ref\t%s\n' "$FORK_REF"
   printf 'fork_head\tdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
   printf 'pin\t%s\n' "$CAND_SHA"
-  printf 'disposal\tthe repository is **archived** — a fresh read afterwards reported `archived=true private=true`\n'
+  printf 'disposal\tthe repository is **archived** — a fresh read afterwards reported `archived=true private=false`\n'
   printf 'runner\tdrill-runner\n'
   printf 'stamp\t2026-08-09\n'
 } >"$TMP/ctx.tsv"
@@ -537,6 +538,7 @@ stub_reset() {
   mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
   printf '2026-08-09T00:00:00Z\n' >"$R/created_at"
   printf 'false\n' >"$R/archived"
+  printf 'true\n' >"$R/private"
   : >"$R/tags"
   : >"$R/releases"
   : >"$R/runs"
@@ -558,6 +560,7 @@ U="$TMP/state/$(san "$UNSEEDED")"
 mkdir -p "$U/refs" "$U/commit" "$U/tree" "$U/blob" "$U/pulls" "$U/labels"
 printf '2026-08-09T00:00:00Z\n' >"$U/created_at"
 printf 'false\n' >"$U/archived"
+printf 'true\n' >"$U/private"
 : >"$U/tags"
 : >"$U/releases"
 : >"$U/runs"
@@ -642,6 +645,7 @@ seed_taken_repo() { # <owner/name> — enough state for createRepository to coll
   mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
   printf '2026-08-08T00:00:00Z\n' >"$R/created_at"
   printf 'true\n' >"$R/archived"
+  printf 'true\n' >"$R/private"
   : >"$R/tags"
   : >"$R/releases"
   : >"$R/runs"
@@ -656,6 +660,11 @@ seed_taken_ref() { # <ref> — a burned ref on the shared fork
 # never route around themselves, and one discriminator names both artifacts.
 # ---------------------------------------------------------------------------
 stub_reset
+check "the gh stub rejects repo creation without explicit visibility" 1 \
+  "required when not running interactively" \
+  env DRILL_STUB_STATE="$TMP/state" "$STUB_BIN/gh" repo create "$SCRATCH"
+
+stub_reset
 green_scenario "$TMP/attempt-one.scenario"
 attempt_one_out="$(run_rehearsal "$TMP/attempt-one.scenario" \
   --fork-ref "$FORK" --out "$TMP/attempt-one.md" 2>&1)"
@@ -667,6 +676,55 @@ check "the first default attempt says what it picked" 0 \
   "attempt -1 repo and fork ref are free; using -1" printf '%s\n' "$attempt_one_out"
 check "the first default attempt is recorded in Where" 0 \
   'Attempt **`1`**' cat "$TMP/attempt-one.md"
+check "the default creation argv omits --private" 0 "" \
+  grep -qxF "repo create $SCRATCH --public" "$TMP/state/calls"
+check "the default creation reports public success" 0 \
+  "created public scratch repo $SCRATCH" printf '%s\n' "$attempt_one_out"
+check "the default record says public" 0 \
+  "disposable **public** repo" cat "$TMP/attempt-one.md"
+check "the public record carries no owner-only warning" 1 "" \
+  grep -qF "links resolve only for the repo owner" "$TMP/attempt-one.md"
+
+stub_reset
+green_scenario "$TMP/private.scenario"
+private_out="$(run_rehearsal "$TMP/private.scenario" --private \
+  --out "$TMP/private.md" 2>&1)"
+private_rc=$?
+check "the private opt-in completes" 0 "" test "$private_rc" -eq 0
+check "the private creation argv carries --private" 0 "" \
+  grep -qxF "repo create $SCRATCH --private" "$TMP/state/calls"
+check "the private creation warns about unreadable links" 0 \
+  "warning: created private scratch repo $SCRATCH; its record links resolve only for the repo owner" \
+  printf '%s\n' "$private_out"
+check "the private record says private" 0 \
+  "disposable **private** repo" cat "$TMP/private.md"
+check "the private record carries the owner-only sentence" 0 \
+  "Because this repo is private, its run links resolve only for the repo owner." \
+  cat "$TMP/private.md"
+
+stub_reset
+green_scenario "$TMP/opposite-public.scenario"
+DRILL_STUB_PRIVATE_OVERRIDE=true \
+  run_rehearsal "$TMP/opposite-public.scenario" \
+    --out "$TMP/opposite-public.md" >/dev/null 2>&1
+opposite_public_rc=$?
+check "an observed private repo overrides public intent" 0 "" \
+  test "$opposite_public_rc" -eq 0
+check "the public-intent record follows the private read-back" 0 \
+  "disposable **private** repo" cat "$TMP/opposite-public.md"
+
+stub_reset
+green_scenario "$TMP/opposite-private.scenario"
+DRILL_STUB_PRIVATE_OVERRIDE=false \
+  run_rehearsal "$TMP/opposite-private.scenario" --private \
+    --out "$TMP/opposite-private.md" >/dev/null 2>&1
+opposite_private_rc=$?
+check "an observed public repo overrides private intent" 0 "" \
+  test "$opposite_private_rc" -eq 0
+check "the private-intent record follows the public read-back" 0 \
+  "disposable **public** repo" cat "$TMP/opposite-private.md"
+check "the owner-only record sentence follows observation, not private intent" 1 "" \
+  grep -qF "Because this repo is private" "$TMP/opposite-private.md"
 
 stub_reset
 seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
@@ -677,7 +735,7 @@ attempt_three_out="$(run_rehearsal "$TMP/attempt-three.scenario" \
 attempt_three_rc=$?
 check "two burned names route the run to -3" 0 "" test "$attempt_three_rc" -eq 0
 check "the creation calls try exactly -1, -2, then -3" 0 "3" \
-  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123] --private$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123] --public$" "$1"' \
   _ "$TMP/state/calls"
 check "the picked repo and default fork ref share -3" 0 \
   "$FORK/.github/workflows/release.yml@drill/0.7.0-3" cat "$TMP/attempt-three.md"
@@ -698,7 +756,7 @@ check "a burned paired ref routes a free repo name to -2" 0 "" \
 check "the ref-only collision never burns the -1 repo" 1 "" \
   grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-1" "$TMP/state/calls"
 check "the ref-only collision creates the paired -2 repo" 0 "" \
-  grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-2 --private" "$TMP/state/calls"
+  grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-2" "$TMP/state/calls"
 check "a single unavailable pair gets singular wording" 0 \
   "attempt -1 is unavailable; using -2" printf '%s\n' "$ref_routed_out"
 check "the ref-routed repo and fork ref share -2" 0 \
@@ -718,7 +776,7 @@ check "the bounded refusal names the whole range" 0 \
   "tried ceremony-drill-0.7.0-1 through ceremony-drill-0.7.0-10" \
   printf '%s\n' "$attempt_exhausted_out"
 check "exhaustion attempts exactly ten creates" 0 "10" \
-  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]* --private$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]* --public$" "$1"' \
   _ "$TMP/state/calls"
 check "exhaustion creates no eleventh repository" 1 "" \
   test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-11")"
@@ -730,7 +788,7 @@ seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
 seed_taken_ref "drill/0.7.0-2"
 : >"$TMP/explicit-taken.scenario"
 explicit_taken_out="$(run_rehearsal "$TMP/explicit-taken.scenario" \
-  --fork-ref "$FORK" --repo-name chosen-by-hand \
+  --fork-ref "$FORK" --repo-name chosen-by-hand --private \
   --candidate-ref 'build/ref with space;still-one-arg' \
   --out "$TMP/explicit taken.md" 2>&1)"
 explicit_taken_rc=$?
@@ -751,6 +809,7 @@ bash -c 'record_args() { printf "%s\n" "$@"; }; '"${retry_command/drill\/rehears
     --candidate-sha "$CAND_SHA" \
     --repo-name ceremony-drill-0.7.0-3 \
     --candidate-ref 'build/ref with space;still-one-arg' \
+    --private \
     --out "$TMP/explicit taken.md" \
     --date 2026-08-09
 } >"$TMP/retry.expected"
@@ -769,7 +828,7 @@ check "a free explicit name is used verbatim" 0 "" test "$explicit_free_rc" -eq 
 check "an explicit free name does no numbered-name read probe" 1 "" \
   grep -q "^api repos/$SCRATCH_OWNER/ceremony-drill-0.7.0-" "$TMP/state/calls"
 check "an explicit free name is created only once" 0 "1" \
-  bash -c 'grep -c "^repo create drillowner/chosen-by-hand --private$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/chosen-by-hand --public$" "$1"' \
   _ "$TMP/state/calls"
 check "an arbitrary explicit name records a numeric attempt" 0 \
   'Attempt **`1`**' cat "$TMP/explicit-free.md"
@@ -842,7 +901,7 @@ check "an abort record cannot pass the rehearsal shape check" 1 \
 check "a fixture abort archives the scratch repo" 0 "" \
   grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
 check "the abort record states the disposal it observed" 0 \
-  "archived=true private=true" cat "$TMP/setup-fixture.aborted-1.md"
+  "archived=true private=false" cat "$TMP/setup-fixture.aborted-1.md"
 check "the abort output prints the operator's delete step" 0 \
   "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$fixture_abort_out"
 cp "$TMP/setup-fixture.aborted-1.md" "$TMP/setup-fixture.first"
@@ -955,7 +1014,7 @@ check "the record names the fork ref and the rewritten pin" 0 \
 check "the record names the canonical candidate SHA as the rewritten pin" 0 \
   "the rewritten pin \`$CAND_SHA\`" cat "$TMP/emitted.md"
 check "the record states the disposal as observed, archived and pending" 0 \
-  "archived=true private=true" cat "$TMP/emitted.md"
+  "archived=true private=false" cat "$TMP/emitted.md"
 check "the probes ran in doctrine order" 0 $'1\n2\n3\n4\n5\n6\n7\n8' \
   bash -c 'awk -F"|" "/^\\| [1-8] \\|/ { gsub(/ /, \"\", \$2); print \$2 }" "$1"' \
   _ "$TMP/emitted.md"
@@ -993,6 +1052,11 @@ check "the drill never deleted any repository" 1 "" \
   grep -qE "^api (-X|--method) DELETE repos/[^/]+/[^/]+$" "$TMP/state/calls"
 check "the operator's delete step is printed, not run" 0 \
   "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$green_out"
+check "the emitted record keeps exactly eleven run links" 0 "11" \
+  bash -c 'grep -oE "/actions/runs/[0-9]+" "$1" | wc -l | tr -d " "' \
+  _ "$TMP/emitted.md"
+check "the drill contains no post-create visibility flip" 1 "" \
+  grep -R -n -E 'archived: false|--visibility' "$ROOT/drill"
 check "the caller landed after the fixture, never before" 0 "" bash -c '
   fixture=$(grep -n "the armed fixture at" "$1" | head -n1 | cut -d: -f1)
   caller=$(grep -n "install the docs/CONSUMERS.md release caller" "$1" | head -n1 | cut -d: -f1)
@@ -1830,7 +1894,7 @@ check "the read names itself on stderr, where the record could not see it" 0 \
 # sentence in the record instead, and this is what says so.
 stub_reset
 green_scenario "$TMP/disposal.scenario"
-faults "1	99	GET repos/$SCRATCH	500	Internal Server Error"
+faults "2	99	GET repos/$SCRATCH	500	Internal Server Error"
 disposal_out="$(run_rehearsal "$TMP/disposal.scenario" --out "$TMP/disposal.md" 2>&1)"
 disposal_rc=$?
 check "a disposal read that never answers still emits the record" 0 "" \
@@ -1861,7 +1925,7 @@ check "with all eight probe rows in it too" 0 "probes passed 8/8, failed 0" \
 check "and the record says the archive did not land" 0 \
   "the archive did not land, and the repository is still live" \
   cat "$TMP/unarchived.md"
-check "quoting the flag it actually read" 0 "archived=false private=true" \
+check "quoting the flag it actually read" 0 "archived=false private=false" \
   cat "$TMP/unarchived.md"
 check "it never files an answered read as one that never answered" 1 "" \
   grep -qF 'never answered' "$TMP/unarchived.md"

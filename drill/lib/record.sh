@@ -312,7 +312,7 @@ EOF
 # record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
 record_render() {
   local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
-  local ver rc scratch attempt created candidate_sha candidate_ref fork_repo fork_ref
+  local ver rc scratch attempt created private visibility candidate_sha candidate_ref fork_repo fork_ref
   local fork_head pin disposal runner stamp failed passed unestablished
   local unrun unrun_count word
   ver="$(record_ctx "$ctx" version)"
@@ -324,6 +324,15 @@ record_render() {
   scratch="$(record_ctx "$ctx" scratch)"
   attempt="$(record_ctx "$ctx" attempt)"
   created="$(record_ctx "$ctx" created)"
+  private="$(record_ctx "$ctx" private)"
+  case "$private" in
+    true) visibility=private ;;
+    false) visibility=public ;;
+    *)
+      printf "record_render: private context is not true or false ('%s').\n" "$private" >&2
+      return 1
+      ;;
+  esac
   candidate_sha="$(record_ctx "$ctx" candidate_sha)"
   candidate_ref="$(record_ctx "$ctx" candidate_ref)"
   fork_repo="$(record_ctx "$ctx" fork_repo)"
@@ -371,7 +380,7 @@ EOF
   cat <<EOF
 ## Where
 
-Attempt **\`$attempt\`** used disposable **private** repo \`$scratch\`, created
+Attempt **\`$attempt\`** used disposable **$visibility** repo \`$scratch\`, created
 $created. It carries the
 \`docs/CONSUMERS.md\` release caller verbatim (\`version-source: file\`) over a
 fragment-mode fixture armed at \`$ver-dev\`: a preamble-only
@@ -381,7 +390,15 @@ the first ceremony PR, per the guide's prerequisite. The fixture was
 committed **before** the caller, so the first door run had a real parent
 version to inspect — the script refuses to install the caller against a tree
 with no fixture in it.
+EOF
 
+  if [ "$private" = true ]; then
+    printf '\nBecause this repo is private, its run links resolve only for the repo owner.\n\n'
+  else
+    printf '\n'
+  fi
+
+  cat <<EOF
 The rc legs run one rung further along the ladder — \`$rc-dev\` →
 \`$rc-rc1\` → \`$rc\` — because the probes before them have already
 published $ver and its successor, and a promotion needs a version nothing

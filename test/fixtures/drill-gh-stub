@@ -52,6 +52,17 @@ case "${1:-}" in
         mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
         printf '2026-08-09T00:00:00Z\n' >"$R/created_at"
         printf 'false\n' >"$R/archived"
+        case "${4:-}" in
+          --public) private=false ;;
+          --private) private=true ;;
+          *)
+            printf '%s\n' \
+              "\`--public\`, \`--private\`, or \`--internal\` required when not running interactively" >&2
+            exit 1
+            ;;
+        esac
+        [ -z "${DRILL_STUB_PRIVATE_OVERRIDE:-}" ] || private="$DRILL_STUB_PRIVATE_OVERRIDE"
+        printf '%s\n' "$private" >"$R/private"
         : >"$R/tags"
         : >"$R/releases"
         : >"$R/runs"
@@ -302,7 +313,8 @@ case "$rest" in
   '')
     if [ "$method" = PATCH ]; then
       jq -e '.archived == true' <<<"$body" >/dev/null && printf 'true\n' >"$R/archived"
-      out "$(jq -n --arg a "$(cat "$R/archived")" '{archived: ($a == "true"), private: true}')"
+      out "$(jq -n --arg a "$(cat "$R/archived")" --arg p "$(cat "$R/private")" \
+        '{archived: ($a == "true"), private: ($p == "true")}')"
     else
       a="$(cat "$R/archived")"
       # Value staleness, which the fault rules above cannot express: they inject
@@ -321,7 +333,8 @@ case "$rest" in
         printf '%s\n' "$((lag - 1))" >"$R/archive_lag"
       fi
       out "$(jq -n --arg c "$(cat "$R/created_at")" --arg a "$a" \
-        '{created_at: $c, archived: ($a == "true"), private: true}')"
+        --arg p "$(cat "$R/private")" \
+        '{created_at: $c, archived: ($a == "true"), private: ($p == "true")}')"
     fi
     ;;
   git/blobs)

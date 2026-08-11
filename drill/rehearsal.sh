@@ -45,15 +45,16 @@ usage() {
 usage: drill/rehearsal.sh --owner <login> --version <X.Y.Z>
                           --fork-ref <owner/repo[@ref]> --candidate-sha <sha>
                           [--repo-name <name>] [--candidate-ref <ref>]
-                          [--out <file>] [--date <YYYY-MM-DD>]
+                          [--private] [--out <file>] [--date <YYYY-MM-DD>]
 
-  --owner          where the disposable private scratch repo is created
+  --owner          where the disposable public scratch repo is created
   --version        the candidate's release version; the fixture arms X.Y.Z-dev
   --fork-ref       the stub source; omitted ref is picked as drill/<version>-<n>
   --candidate-sha  the canonical candidate SHA every CEREMONY_SELF_REF is
                    rewritten to on that fork ref
   --repo-name      scratch repo name (default: first free ceremony-drill-<version>-<n>)
   --candidate-ref  the candidate branch, recorded (default: the fork ref)
+  --private        create a private repo; record links then resolve only for its owner
   --out            where the record is written (default: ./<version>-drill.md)
   --date           the ceremony's changelog stamp (default: today, UTC)
 
@@ -76,6 +77,7 @@ repo_name=""
 candidate_ref=""
 out=""
 stamp=""
+private=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --owner) [ $# -ge 2 ] || usage; owner="$2"; shift ;;
@@ -84,6 +86,7 @@ while [ $# -gt 0 ]; do
     --candidate-sha) [ $# -ge 2 ] || usage; candidate_sha="$2"; shift ;;
     --repo-name) [ $# -ge 2 ] || usage; repo_name="$2"; shift ;;
     --candidate-ref) [ $# -ge 2 ] || usage; candidate_ref="$2"; shift ;;
+    --private) private=1 ;;
     --out) [ $# -ge 2 ] || usage; out="$2"; shift ;;
     --date) [ $# -ge 2 ] || usage; stamp="$2"; shift ;;
     -h | --help) usage ;;
@@ -239,6 +242,7 @@ fixture_manifest_write() {
 
 scratch_created=0
 created=""
+observed_private=""
 runner=""
 fork_head=""
 pin=""
@@ -271,7 +275,7 @@ if [ -n "$repo_name" ]; then
   explicit_rc=0
   explicit_errors="$DRILL_WORK/setup.stderr"
   : >"$explicit_errors"
-  scratch_create_attempt "$DRILL_REPO" 2>"$explicit_errors" || explicit_rc=$?
+  scratch_create_attempt "$DRILL_REPO" "$private" 2>"$explicit_errors" || explicit_rc=$?
   cat "$explicit_errors" >&2
   if [ "$explicit_rc" -eq 3 ]; then
     suggestion_fork_repo="$fork_repo"
@@ -283,6 +287,7 @@ if [ -n "$repo_name" ]; then
       --fork-ref "$fork_repo@$suggested_ref" --candidate-sha "$candidate_sha"
       --repo-name "ceremony-drill-$version-$suggestion")
     [ -z "$candidate_ref" ] || retry_args+=(--candidate-ref "$candidate_ref")
+    [ "$private" -eq 0 ] || retry_args+=(--private)
     retry_args+=(--out "$out")
     [ -z "$stamp" ] || retry_args+=(--date "$stamp")
     printf -v retry_command '%q ' "${retry_args[@]}"
@@ -294,7 +299,7 @@ else
   suggestion_fork_repo="$fork_repo"
   [ "$fork_ref_explicit" -eq 0 ] || suggestion_fork_repo=""
   setup_capture attempt scratch_attempt_name attempt_create_default \
-    "$owner" "$version" "$suggestion_fork_repo"
+    "$owner" "$version" "$suggestion_fork_repo" "$private"
   DRILL_REPO="$owner/ceremony-drill-$version-$attempt"
   scratch_created=1
 fi
@@ -305,6 +310,7 @@ printf 'drill: %s rehearsal — scratch %s, candidate %s, fork %s@%s\n' \
 
 # ---- the scratch repo (already claimed while choosing its attempt) --------
 setup_capture created scratch_created_at scratch_created_at "$DRILL_REPO"
+setup_capture observed_private scratch_private scratch_private "$DRILL_REPO"
 
 # ---- the armed fixture, BEFORE the caller (the 0.4.0 lesson) --------------
 fixture_manifest="$DRILL_WORK/fixture.manifest"
@@ -364,6 +370,7 @@ ctx="$DRILL_WORK/ctx.tsv"
   printf 'scratch\t%s\n' "$DRILL_REPO"
   printf 'attempt\t%s\n' "$attempt"
   printf 'created\t%s\n' "$created"
+  printf 'private\t%s\n' "$observed_private"
   printf 'candidate_sha\t%s\n' "$candidate_sha"
   printf 'candidate_ref\t%s\n' "${candidate_ref:-$fork_repo@$fork_ref}"
   printf 'fork_repo\t%s\n' "$fork_repo"
