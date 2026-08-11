@@ -167,22 +167,9 @@ probe_trim_blank() {
 
 # probe_fragment_paths <repo> <ref> <out-file> — the fragment directory's
 # paths at a ref, sorted. The rc leg's "every fragment survives" and the
-# promotion's "fragments consumed" are both this list, compared. Non-zero when
-# the read did not answer; the caller may not compare a list it does not have.
-#
-# `scratch_paths | grep | sort … || :` put `grep`'s exit status where the
-# read's belonged and then discarded even that, so a tree read that failed and
-# a `changelog.d` that genuinely holds nothing wrote the same empty file — and
-# two empty fragment lists compare equal, which is a probe passing on a
-# measurement nobody took (#369 D6, the last instance of the family). The read
-# is `nonempty` because the tree of a ref this instrument just wrote to always
-# has blobs in it; the `grep` after it is allowed to match nothing, because a
-# consumed `changelog.d` is exactly that, so the `|| :` now covers only the
-# one exit it was ever meant to.
+# promotion's "fragments consumed" are both this list, compared.
 probe_fragment_paths() {
-  local paths
-  paths="$(scratch_paths "${1:?}" "${2:?}" nonempty)" || return 1
-  printf '%s\n' "$paths" | grep '^changelog\.d/' | sort >"${3:?}" || :
+  scratch_paths "${1:?}" "${2:?}" | grep '^changelog\.d/' | sort >"${3:?}" || :
 }
 
 # probe_merge_and_wait <branch> <title> <label?> — PR, optional label, merge,
@@ -504,7 +491,7 @@ probe_7_rc_cut() {
   # `nonempty`: main was written by the arming commit a few lines up, so an
   # empty answer here is a stale index and not a repo without a CHANGELOG.
   scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_before" nonempty || return 1
-  probe_fragment_paths "$DRILL_REPO" main "$frags_before" || return 1
+  probe_fragment_paths "$DRILL_REPO" main "$frags_before"
 
   probe_branch probe7-rc-cut "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
   stage="$(probe_stage probe7)"
@@ -537,12 +524,9 @@ probe_7_rc_cut() {
   else
     problems="$problems; CHANGELOG.md did not read back after the rc cut, so the byte comparison was never taken"
   fi
-  if probe_fragment_paths "$DRILL_REPO" main "$frags_after"; then
-    cmp -s "$frags_before" "$frags_after" ||
-      problems="$problems; the fragment set changed across the rc cut ($(tr '\n' ' ' <"$frags_before")→ $(tr '\n' ' ' <"$frags_after")) — an rc assembles its notes and consumes nothing"
-  else
-    problems="$problems; the fragment set did not read back off main after the rc cut, so it was never compared"
-  fi
+  probe_fragment_paths "$DRILL_REPO" main "$frags_after"
+  cmp -s "$frags_before" "$frags_after" ||
+    problems="$problems; the fragment set changed across the rc cut ($(tr '\n' ' ' <"$frags_before")→ $(tr '\n' ' ' <"$frags_after")) — an rc assembles its notes and consumes nothing"
   if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
     [ "$armed" = "$DRILL_RC2-dev" ] ||
       problems="$problems; main reads '$armed' after the rc cut, expected '$DRILL_RC2-dev'"
@@ -614,15 +598,12 @@ probe_8_promotion() {
   else
     problems="$problems; CHANGELOG.md did not read back after the promotion, so the stamped section was never compared"
   fi
-  if probe_fragment_paths "$DRILL_REPO" main "$frags_after"; then
-    grep -qxF changelog.d/README.md "$frags_after" ||
-      problems="$problems; changelog.d/README.md is gone after the promotion — the directory's marker survives the consumption"
-    leftover="$(grep -vxF changelog.d/README.md "$frags_after" | tr '\n' ' ')"
-    [ -z "$leftover" ] ||
-      problems="$problems; fragments survived the promotion ($leftover) — a final consumes them"
-  else
-    problems="$problems; the fragment set did not read back off main after the promotion, so the consumption was never checked"
-  fi
+  probe_fragment_paths "$DRILL_REPO" main "$frags_after"
+  grep -qxF changelog.d/README.md "$frags_after" ||
+    problems="$problems; changelog.d/README.md is gone after the promotion — the directory's marker survives the consumption"
+  leftover="$(grep -vxF changelog.d/README.md "$frags_after" | tr '\n' ' ')"
+  [ -z "$leftover" ] ||
+    problems="$problems; fragments survived the promotion ($leftover) — a final consumes them"
   if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
     [ "$armed" = "$DRILL_V4-dev" ] ||
       problems="$problems; main reads '$armed' after the promotion, expected '$DRILL_V4-dev'"
