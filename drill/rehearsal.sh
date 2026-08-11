@@ -249,11 +249,34 @@ setup_capture runner authenticated_login drill_gh api user --jq '.login'
 attempt=""
 if [ -n "$repo_name" ]; then
   DRILL_REPO="$owner/$repo_name"
+  if [ "$fork_ref_explicit" -eq 0 ]; then
+    case "$repo_name" in
+      ceremony-drill-"$version"-[0-9]*)
+        attempt="${repo_name##*-}"
+        [[ "$attempt" =~ ^[0-9]+$ ]] || attempt=""
+        ;;
+    esac
+    [ -n "$attempt" ] || setup_capture attempt scratch_attempt_ref \
+      attempt_first_free_ref "$fork_repo" "$version"
+    fork_ref="drill/$version-$attempt"
+    setup_run scratch_attempt_ref_free attempt_ref_absent \
+      "$fork_repo" "$version" "$attempt"
+  else
+    case "$repo_name $fork_ref" in
+      *"drill/$version-"[0-9]*) attempt="${fork_ref##*-}" ;;
+      *) attempt=1 ;;
+    esac
+    [[ "$attempt" =~ ^[0-9]+$ ]] || attempt=1
+  fi
   explicit_rc=0
-  scratch_create_attempt "$DRILL_REPO" || explicit_rc=$?
+  explicit_errors="$DRILL_WORK/setup.stderr"
+  : >"$explicit_errors"
+  scratch_create_attempt "$DRILL_REPO" 2>"$explicit_errors" || explicit_rc=$?
+  cat "$explicit_errors" >&2
   if [ "$explicit_rc" -eq 3 ]; then
-    retry_args=()
-    suggestion="$(attempt_first_free "$owner" "$version")" || exit 1
+    suggestion_fork_repo="$fork_repo"
+    [ "$fork_ref_explicit" -eq 0 ] || suggestion_fork_repo=""
+    suggestion="$(attempt_first_free "$owner" "$version" "$suggestion_fork_repo")" || exit 1
     suggested_ref="$fork_ref"
     [ "$fork_ref_explicit" -eq 1 ] || suggested_ref="drill/$version-$suggestion"
     retry_args=(drill/rehearsal.sh --owner "$owner" --version "$version"
@@ -265,19 +288,17 @@ if [ -n "$repo_name" ]; then
     printf -v retry_command '%q ' "${retry_args[@]}"
     refuse "--repo-name '$repo_name' is already taken. Retry with: ${retry_command% }"
   fi
-  [ "$explicit_rc" -eq 0 ] || exit "$explicit_rc"
+  [ "$explicit_rc" -eq 0 ] || setup_abort scratch_create "$explicit_rc" "$explicit_errors"
   scratch_created=1
-  case "$repo_name" in
-    ceremony-drill-"$version"-[0-9]*) attempt="${repo_name##*-}" ;;
-    *) attempt="explicit" ;;
-  esac
 else
-  setup_capture attempt scratch_attempt_name attempt_create_default "$owner" "$version"
+  suggestion_fork_repo="$fork_repo"
+  [ "$fork_ref_explicit" -eq 0 ] || suggestion_fork_repo=""
+  setup_capture attempt scratch_attempt_name attempt_create_default \
+    "$owner" "$version" "$suggestion_fork_repo"
   DRILL_REPO="$owner/ceremony-drill-$version-$attempt"
   scratch_created=1
 fi
 [ "$fork_ref_explicit" -eq 1 ] || fork_ref="drill/$version-$attempt"
-pin_assert_fork_ref "$fork_repo" "$fork_ref" || exit 1
 
 printf 'drill: %s rehearsal — scratch %s, candidate %s, fork %s@%s\n' \
   "$DRILL_V1" "$DRILL_REPO" "$candidate_sha" "$fork_repo" "$fork_ref" >&2

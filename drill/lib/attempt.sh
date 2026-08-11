@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Scratch-attempt naming for the release drill (#371). Sourced, never run.
 #
-# A default name is claimed by creation, not by a read followed by a write:
-# another runner cannot take the supposedly free name between those calls.
+# A default repo name is claimed by creation, not by a read followed by a
+# write: another runner cannot take the supposedly free name between those
+# calls. Its paired fork ref has to be absent before that claim, because one
+# attempt number names both artifacts and either one can outlive the other.
 # Explicit names keep the opposite contract — refuse rather than route around
 # them — and use read-only probes only to print the runnable replacement.
 
@@ -34,21 +36,78 @@ scratch_repo_exists() {
   [ -n "$answer" ]
 }
 
-# attempt_create_default <owner> <version> — claim and print the first free n.
-attempt_create_default() {
-  local owner="${1:?}" version="${2:?}" n repo rc
+# attempt_ref_exists <fork-repo> <version> <n> — 0 exists, 1 absent, 2 unreadable.
+attempt_ref_exists() {
+  local fork_repo="${1:?}" version="${2:?}" n="${3:?}" answer
+  answer="$(scratch_ref_sha "$fork_repo" "drill/$version-$n")" || return 2
+  [ -n "$answer" ]
+}
+
+# attempt_ref_absent <fork-repo> <version> <n> — setup assertion for a pick.
+attempt_ref_absent() {
+  local fork_repo="${1:?}" version="${2:?}" n="${3:?}" rc=0
+  attempt_ref_exists "$fork_repo" "$version" "$n" || rc=$?
+  case "$rc" in
+    0)
+      printf 'drill: numbered default fork ref %s@drill/%s-%s is already taken.\n' \
+        "$fork_repo" "$version" "$n" >&2
+      return 1
+      ;;
+    1) return 0 ;;
+    *) return "$rc" ;;
+  esac
+}
+
+# attempt_first_free_ref <fork-repo> <version> — first free numbered default ref.
+attempt_first_free_ref() {
+  local fork_repo="${1:?}" version="${2:?}" n rc
   n=1
   while [ "$n" -le "$DRILL_ATTEMPT_LIMIT" ]; do
+    rc=0
+    attempt_ref_exists "$fork_repo" "$version" "$n" || rc=$?
+    case "$rc" in
+      0) ;;
+      1) printf '%s\n' "$n"; return 0 ;;
+      *) return "$rc" ;;
+    esac
+    n=$((n + 1))
+  done
+  printf 'drill: no numbered default fork ref is free; tried drill/%s-1 through drill/%s-%s (the bounded %s-candidate probe).\n' \
+    "$version" "$version" "$DRILL_ATTEMPT_LIMIT" "$DRILL_ATTEMPT_LIMIT" >&2
+  return 1
+}
+
+# attempt_create_default <owner> <version> [fork-repo] — claim the first pair.
+# The fork repo is omitted when the invocation supplied an explicit ref.
+attempt_create_default() {
+  local owner="${1:?}" version="${2:?}" fork_repo="${3:-}" n repo rc
+  n=1
+  while [ "$n" -le "$DRILL_ATTEMPT_LIMIT" ]; do
+    if [ -n "$fork_repo" ]; then
+      rc=0
+      attempt_ref_exists "$fork_repo" "$version" "$n" || rc=$?
+      case "$rc" in
+        0) n=$((n + 1)); continue ;;
+        1) ;;
+        *) return "$rc" ;;
+      esac
+    fi
     repo="$owner/ceremony-drill-$version-$n"
     rc=0
     scratch_create_attempt "$repo" || rc=$?
     case "$rc" in
       0)
         if [ "$n" -eq 1 ]; then
-          printf 'drill: ceremony-drill-%s-1 is free; using -1\n' "$version" >&2
+          if [ -n "$fork_repo" ]; then
+            printf 'drill: attempt -1 repo and fork ref are free; using -1\n' >&2
+          else
+            printf 'drill: attempt -1 repo name is free; using -1\n' >&2
+          fi
+        elif [ "$n" -eq 2 ]; then
+          printf 'drill: attempt -1 is unavailable; using -2\n' >&2
         else
-          printf 'drill: ceremony-drill-%s-1 through -%s exist; using -%s\n' \
-            "$version" "$((n - 1))" "$n" >&2
+          printf 'drill: attempts -1 through -%s are unavailable; using -%s\n' \
+            "$((n - 1))" "$n" >&2
         fi
         printf '%s\n' "$n"
         return 0
@@ -58,14 +117,15 @@ attempt_create_default() {
     esac
     n=$((n + 1))
   done
-  printf 'drill: no scratch attempt name is free; tried ceremony-drill-%s-1 through ceremony-drill-%s-%s (the bounded %s-candidate probe).\n' \
+  printf 'drill: no scratch attempt pair is free; tried ceremony-drill-%s-1 through ceremony-drill-%s-%s and their paired fork refs (the bounded %s-candidate probe).\n' \
     "$version" "$version" "$DRILL_ATTEMPT_LIMIT" "$DRILL_ATTEMPT_LIMIT" >&2
   return 1
 }
 
-# attempt_first_free <owner> <version> — read-only suggestion for a refusal.
+# attempt_first_free <owner> <version> [fork-repo] — read-only paired suggestion.
+# The fork repo is omitted when the invocation supplied an explicit ref.
 attempt_first_free() {
-  local owner="${1:?}" version="${2:?}" n repo rc
+  local owner="${1:?}" version="${2:?}" fork_repo="${3:-}" n repo rc
   n=1
   while [ "$n" -le "$DRILL_ATTEMPT_LIMIT" ]; do
     repo="$owner/ceremony-drill-$version-$n"
@@ -73,12 +133,21 @@ attempt_first_free() {
     scratch_repo_exists "$repo" || rc=$?
     case "$rc" in
       0) ;;
-      1) printf '%s\n' "$n"; return 0 ;;
+      1)
+        [ -n "$fork_repo" ] || { printf '%s\n' "$n"; return 0; }
+        rc=0
+        attempt_ref_exists "$fork_repo" "$version" "$n" || rc=$?
+        case "$rc" in
+          0) ;;
+          1) printf '%s\n' "$n"; return 0 ;;
+          *) return "$rc" ;;
+        esac
+        ;;
       *) return "$rc" ;;
     esac
     n=$((n + 1))
   done
-  printf 'drill: no scratch attempt name is free; tried ceremony-drill-%s-1 through ceremony-drill-%s-%s (the bounded %s-candidate probe).\n' \
+  printf 'drill: no scratch attempt pair is free; tried ceremony-drill-%s-1 through ceremony-drill-%s-%s and their paired fork refs (the bounded %s-candidate probe).\n' \
     "$version" "$version" "$DRILL_ATTEMPT_LIMIT" "$DRILL_ATTEMPT_LIMIT" >&2
   return 1
 }
