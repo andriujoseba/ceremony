@@ -107,8 +107,9 @@ record_abort_path() {
 # — evidence from setup, deliberately not a rehearsal record shape.
 record_abort_render() {
   local ctx="${1:?}" setup="${2:?}" step="${3:?}" message="${4:-}" status="${5:?}"
-  local scratch created candidate_sha fork_repo fork_ref disposal
+  local scratch attempt created candidate_sha fork_repo fork_ref disposal
   scratch="$(record_ctx "$ctx" scratch)"
+  attempt="$(record_ctx "$ctx" attempt)"
   created="$(record_ctx "$ctx" created)"
   candidate_sha="$(record_ctx "$ctx" candidate_sha)"
   fork_repo="$(record_ctx "$ctx" fork_repo)"
@@ -131,6 +132,7 @@ record_abort_render() {
     printf -- "- Fork ref: \`%s@%s\`\n" "$fork_repo" "$fork_ref"
   fi
   [ -z "$scratch" ] || printf -- "- Scratch repo: \`%s\`\n" "$scratch"
+  [ -z "$attempt" ] || printf -- "- Attempt: \`%s\`\n" "$attempt"
   [ -z "$created" ] || printf -- "- Created: \`%s\`\n" "$created"
 
   if [ -n "$scratch" ] && [ -s "$setup" ]; then
@@ -310,7 +312,7 @@ EOF
 # record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
 record_render() {
   local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
-  local ver rc scratch created candidate_sha candidate_ref fork_repo fork_ref
+  local ver rc scratch attempt created candidate_sha candidate_ref fork_repo fork_ref
   local fork_head pin disposal runner stamp failed passed unestablished
   local unrun unrun_count word
   ver="$(record_ctx "$ctx" version)"
@@ -320,6 +322,7 @@ record_render() {
   rc="$(record_ctx "$ctx" rc_version)"
   word="$(record_count_word)"
   scratch="$(record_ctx "$ctx" scratch)"
+  attempt="$(record_ctx "$ctx" attempt)"
   created="$(record_ctx "$ctx" created)"
   candidate_sha="$(record_ctx "$ctx" candidate_sha)"
   candidate_ref="$(record_ctx "$ctx" candidate_ref)"
@@ -368,7 +371,8 @@ EOF
   cat <<EOF
 ## Where
 
-Disposable **private** repo \`$scratch\`, created $created. It carries the
+Attempt **\`$attempt\`** used disposable **private** repo \`$scratch\`, created
+$created. It carries the
 \`docs/CONSUMERS.md\` release caller verbatim (\`version-source: file\`) over a
 fragment-mode fixture armed at \`$ver-dev\`: a preamble-only
 \`CHANGELOG.md\`, \`changelog.d/README.md\` plus three fragments, and a

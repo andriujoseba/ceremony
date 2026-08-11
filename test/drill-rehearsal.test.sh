@@ -13,6 +13,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/test/harness.sh"
 # shellcheck source=drill/lib/scratch.sh
 source "$ROOT/drill/lib/scratch.sh"
+# shellcheck source=drill/lib/attempt.sh
+source "$ROOT/drill/lib/attempt.sh"
 # shellcheck source=drill/lib/candidate.sh
 source "$ROOT/drill/lib/candidate.sh"
 # shellcheck source=drill/lib/fixture.sh
@@ -29,7 +31,7 @@ CAND_SHA=c0ffee1234567890c0ffee1234567890c0ffee12
 FORK=forkowner/ceremony
 FORK_REF=drill/0.7.0
 SCRATCH_OWNER=drillowner
-SCRATCH="$SCRATCH_OWNER/ceremony-drill-0.7.0"
+SCRATCH="$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
 
 san() { printf '%s' "$1" | tr '/' '_'; }
 
@@ -236,6 +238,7 @@ check "a probe row whose counts are prose reds the shape check" 1 \
   printf 'version\t0.7.0\n'
   printf 'rc_version\t0.7.2\n'
   printf 'scratch\t%s\n' "$SCRATCH"
+  printf 'attempt\t1\n'
   printf 'created\t2026-08-09T00:00:00Z\n'
   printf 'candidate_sha\t%s\n' "$CAND_SHA"
   printf 'candidate_ref\tbuild/313-drill-rehearsal\n'
@@ -633,6 +636,178 @@ green_scenario() {
     "success	release:0.7.2,rearm:0.7.3-dev" >"$1"
 }
 
+seed_taken_repo() { # <owner/name> — enough state for createRepository to collide
+  local repo="$1" R
+  R="$TMP/state/$(san "$repo")"
+  mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
+  printf '2026-08-08T00:00:00Z\n' >"$R/created_at"
+  printf 'true\n' >"$R/archived"
+  : >"$R/tags"
+  : >"$R/releases"
+  : >"$R/runs"
+}
+
+seed_taken_ref() { # <ref> — a burned ref on the shared fork
+  printf '%s\n' "$CAND_SHA" >"$TMP/state/$(san "$FORK")/refs/$(san "heads/$1")"
+}
+
+# ---------------------------------------------------------------------------
+# Attempt names (#371): creation itself claims a default name, explicit names
+# never route around themselves, and one discriminator names both artifacts.
+# ---------------------------------------------------------------------------
+stub_reset
+green_scenario "$TMP/attempt-one.scenario"
+attempt_one_out="$(run_rehearsal "$TMP/attempt-one.scenario" \
+  --fork-ref "$FORK" --out "$TMP/attempt-one.md" 2>&1)"
+attempt_one_rc=$?
+check "the first default attempt completes" 0 "" test "$attempt_one_rc" -eq 0
+check "the first default attempt creates -1" 0 "" \
+  test -d "$TMP/state/$(san "$SCRATCH")"
+check "the first default attempt says what it picked" 0 \
+  "attempt -1 repo and fork ref are free; using -1" printf '%s\n' "$attempt_one_out"
+check "the first default attempt is recorded in Where" 0 \
+  'Attempt **`1`**' cat "$TMP/attempt-one.md"
+
+stub_reset
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-2"
+green_scenario "$TMP/attempt-three.scenario"
+attempt_three_out="$(run_rehearsal "$TMP/attempt-three.scenario" \
+  --fork-ref "$FORK" --out "$TMP/attempt-three.md" 2>&1)"
+attempt_three_rc=$?
+check "two burned names route the run to -3" 0 "" test "$attempt_three_rc" -eq 0
+check "the creation calls try exactly -1, -2, then -3" 0 "3" \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123] --private$" "$1"' \
+  _ "$TMP/state/calls"
+check "the picked repo and default fork ref share -3" 0 \
+  "$FORK/.github/workflows/release.yml@drill/0.7.0-3" cat "$TMP/attempt-three.md"
+check "the routed attempt is recorded as 3" 0 'Attempt **`3`**' \
+  cat "$TMP/attempt-three.md"
+check "the routed choice says which names were burned" 0 \
+  "attempts -1 through -2 are unavailable; using -3" \
+  printf '%s\n' "$attempt_three_out"
+
+stub_reset
+seed_taken_ref "drill/0.7.0-1"
+green_scenario "$TMP/ref-routed.scenario"
+ref_routed_out="$(run_rehearsal "$TMP/ref-routed.scenario" \
+  --fork-ref "$FORK" --out "$TMP/ref-routed.md" 2>&1)"
+ref_routed_rc=$?
+check "a burned paired ref routes a free repo name to -2" 0 "" \
+  test "$ref_routed_rc" -eq 0
+check "the ref-only collision never burns the -1 repo" 1 "" \
+  grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-1" "$TMP/state/calls"
+check "the ref-only collision creates the paired -2 repo" 0 "" \
+  grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-2 --private" "$TMP/state/calls"
+check "a single unavailable pair gets singular wording" 0 \
+  "attempt -1 is unavailable; using -2" printf '%s\n' "$ref_routed_out"
+check "the ref-routed repo and fork ref share -2" 0 \
+  "$FORK/.github/workflows/release.yml@drill/0.7.0-2" \
+  cat "$TMP/ref-routed.md"
+
+stub_reset
+for taken in $(seq 1 10); do
+  seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-$taken"
+done
+: >"$TMP/attempt-exhausted.scenario"
+attempt_exhausted_out="$(run_rehearsal "$TMP/attempt-exhausted.scenario" \
+  --fork-ref "$FORK" --out "$TMP/attempt-exhausted.md" 2>&1)"
+attempt_exhausted_rc=$?
+check "ten burned names refuse" 0 "" test "$attempt_exhausted_rc" -ne 0
+check "the bounded refusal names the whole range" 0 \
+  "tried ceremony-drill-0.7.0-1 through ceremony-drill-0.7.0-10" \
+  printf '%s\n' "$attempt_exhausted_out"
+check "exhaustion attempts exactly ten creates" 0 "10" \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]* --private$" "$1"' \
+  _ "$TMP/state/calls"
+check "exhaustion creates no eleventh repository" 1 "" \
+  test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-11")"
+
+stub_reset
+EXPLICIT="$SCRATCH_OWNER/chosen-by-hand"
+seed_taken_repo "$EXPLICIT"
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
+seed_taken_ref "drill/0.7.0-2"
+: >"$TMP/explicit-taken.scenario"
+explicit_taken_out="$(run_rehearsal "$TMP/explicit-taken.scenario" \
+  --fork-ref "$FORK" --repo-name chosen-by-hand \
+  --candidate-ref 'build/ref with space;still-one-arg' \
+  --out "$TMP/explicit taken.md" 2>&1)"
+explicit_taken_rc=$?
+check "an explicit taken name still refuses" 0 "" test "$explicit_taken_rc" -ne 0
+check "the refusal substitutes the free repo name" 0 \
+  "--repo-name ceremony-drill-0.7.0-3" printf '%s\n' "$explicit_taken_out"
+check "the refusal substitutes the matching fork ref" 0 \
+  "--fork-ref $FORK@drill/0.7.0-3" printf '%s\n' "$explicit_taken_out"
+retry_command="$(sed -n 's/^drill: .*Retry with: //p' <<<"$explicit_taken_out")"
+retry_argv="$TMP/retry.argv"
+bash -c 'record_args() { printf "%s\n" "$@"; }; '"${retry_command/drill\/rehearsal.sh/record_args}" \
+  >"$retry_argv"
+{
+  printf '%s\n' \
+    --owner "$SCRATCH_OWNER" \
+    --version 0.7.0 \
+    --fork-ref "$FORK@drill/0.7.0-3" \
+    --candidate-sha "$CAND_SHA" \
+    --repo-name ceremony-drill-0.7.0-3 \
+    --candidate-ref 'build/ref with space;still-one-arg' \
+    --out "$TMP/explicit taken.md" \
+    --date 2026-08-09
+} >"$TMP/retry.expected"
+check "the printed retry invocation round-trips every argument and value" 0 "" \
+  diff -u "$TMP/retry.expected" "$retry_argv"
+check "the explicit-name refusal creates no suggested repo" 1 "" \
+  test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-3")"
+
+stub_reset
+green_scenario "$TMP/explicit-free.scenario"
+run_rehearsal "$TMP/explicit-free.scenario" \
+  --fork-ref "$FORK" --repo-name chosen-by-hand \
+  --out "$TMP/explicit-free.md" >/dev/null 2>&1
+explicit_free_rc=$?
+check "a free explicit name is used verbatim" 0 "" test "$explicit_free_rc" -eq 0
+check "an explicit free name does no numbered-name read probe" 1 "" \
+  grep -q "^api repos/$SCRATCH_OWNER/ceremony-drill-0.7.0-" "$TMP/state/calls"
+check "an explicit free name is created only once" 0 "1" \
+  bash -c 'grep -c "^repo create drillowner/chosen-by-hand --private$" "$1"' \
+  _ "$TMP/state/calls"
+check "an arbitrary explicit name records a numeric attempt" 0 \
+  'Attempt **`1`**' cat "$TMP/explicit-free.md"
+check "an arbitrary explicit name gets the numeric default fork ref" 0 \
+  "$FORK/.github/workflows/release.yml@drill/0.7.0-1" \
+  cat "$TMP/explicit-free.md"
+
+stub_reset
+: >"$TMP/explicit-create-failure.scenario"
+DRILL_STUB_REPO_CREATE_ERROR="GraphQL: service unavailable" \
+  run_rehearsal "$TMP/explicit-create-failure.scenario" \
+    --fork-ref "$FORK" --repo-name chosen-by-hand \
+    --out "$TMP/explicit-create-failure.md" \
+    >"$TMP/explicit-create-failure.out" 2>&1
+explicit_create_failure_rc=$?
+check "a non-collision explicit create failure stays non-zero" 0 "" \
+  test "$explicit_create_failure_rc" -ne 0
+check "an explicit create failure leaves abort evidence" 0 \
+  '- **Step:** `scratch_create`' cat "$TMP/explicit-create-failure.aborted-1.md"
+check "the explicit create abort records the service failure" 0 \
+  "service unavailable" cat "$TMP/explicit-create-failure.aborted-1.md"
+check "an explicit create abort claims no repo that was not created" 1 "" \
+  grep -qF 'Scratch repo:' "$TMP/explicit-create-failure.aborted-1.md"
+
+stub_reset
+printf '%s\n' "$CAND_SHA" >"$TMP/state/$(san "$FORK")/refs/$(san "heads/$FORK_REF")"
+existing_ref_out="$(
+  export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
+  export DRILL_STUB_SCENARIO="$TMP/empty.scenario" DRILL_STUB_FAULTS="$FAULTS"
+  export DRILL_READ_NAP_SECONDS=0
+  fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/existing-ref-work" 2>&1
+)"
+existing_ref_rc=$?
+check "an explicit existing fork ref still refuses" 0 "" test "$existing_ref_rc" -eq 1
+check "the existing-ref refusal stays byte-identical" 0 \
+  "drill: refusing to prepare '$FORK@$FORK_REF' — the ref already exists at $CAND_SHA. Delete it or name another --fork-ref; the drill will not rewrite a ref it did not create." \
+  printf '%s\n' "$existing_ref_out"
+
 # ---------------------------------------------------------------------------
 # Setup aborts are evidence, but never the release record (#370). Each case
 # drives the real rehearsal against the recording stub: the wrapper must keep
@@ -657,6 +832,8 @@ check "the abort marker is the artifact's first line" 0 \
 check "the fixture abort names its setup step" 0 "scratch_commit" \
   cat "$TMP/setup-fixture.aborted-1.md"
 check "the fixture abort keeps the command's message" 0 "fixture commit refused" \
+  cat "$TMP/setup-fixture.aborted-1.md"
+check "the fixture abort records its scratch attempt" 0 '- Attempt: `1`' \
   cat "$TMP/setup-fixture.aborted-1.md"
 check "a setup abort contains no probe verdict row" 1 "" \
   grep -qE '^\| [0-9]+ \|' "$TMP/setup-fixture.aborted-1.md"
@@ -733,6 +910,8 @@ check "the pre-scratch abort names the step and message" 0 \
   "authentication read failed" cat "$TMP/setup-pre-scratch.aborted-1.md"
 check "the pre-scratch abort claims no scratch repo" 1 "" \
   grep -qF 'Scratch repo:' "$TMP/setup-pre-scratch.aborted-1.md"
+check "the pre-scratch abort claims no attempt that was never picked" 1 "" \
+  grep -qF 'Attempt:' "$TMP/setup-pre-scratch.aborted-1.md"
 check "the pre-scratch abort claims no disposal" 1 "" \
   grep -qF 'Disposal' "$TMP/setup-pre-scratch.aborted-1.md"
 check "the pre-scratch abort never calls archive" 1 "" \
@@ -1091,7 +1270,7 @@ check "the record it emits is the clean run's, unchanged" 0 "" \
 # `…-rehearsal-2@main` held the commit it said had not landed.
 stub_reset
 BOOTSTRAP="$SCRATCH_OWNER/bootstrap-probe"
-with_stub scratch_create "$BOOTSTRAP" >/dev/null 2>&1
+with_stub scratch_create_attempt "$BOOTSTRAP" >/dev/null 2>&1
 printf '0.7.0-dev\n' >"$TMP/seed-version"
 printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/boot.manifest"
 faults "1	99	GET repos/$BOOTSTRAP/git/ref/heads/main	404	Not Found"
@@ -1212,7 +1391,7 @@ check "and no commit was built on a tree that never landed" 0 "" \
 # contents PUT. A fresh repo, so the path is reached at all.
 stub_reset
 PUTPROBE="$SCRATCH_OWNER/put-probe"
-with_stub scratch_create "$PUTPROBE" >/dev/null 2>&1
+with_stub scratch_create_attempt "$PUTPROBE" >/dev/null 2>&1
 faults "0	1	PUT repos/*/contents/*	500	Internal Server Error"
 : >"$TMP/state/calls"
 with_stub scratch_commit "$PUTPROBE" main "the armed fixture at 0.7.0-dev" \
@@ -1550,7 +1729,7 @@ check "and both of them spent the budget rather than believing the first 404" 0 
 # each is asserted absent as well as the honest one asserted present.
 stub_reset
 SEEDED="$SCRATCH_OWNER/seeded-probe"
-with_stub scratch_create "$SEEDED" >/dev/null 2>&1
+with_stub scratch_create_attempt "$SEEDED" >/dev/null 2>&1
 printf '# Changelog\n' >"$TMP/seed-changelog"
 printf 'Fragments live here.\n' >"$TMP/seed-readme"
 {
@@ -1695,8 +1874,8 @@ check "no arguments prints usage" 2 "usage: drill/rehearsal.sh" rehearsal_args
 check "an rc version is never the candidate version" 1 "not a bare X.Y.Z" \
   rehearsal_args --owner o --version 0.7.0-rc1 --fork-ref "$FORK@$FORK_REF" \
   --candidate-sha "$CAND_SHA"
-check "a fork-ref with no ref is refused" 1 "is not 'owner/repo@ref'" \
-  rehearsal_args --owner o --version 0.7.0 --fork-ref forkowner/ceremony \
+check "a fork-ref with no repository is refused" 1 "is not 'owner/repo[@ref]'" \
+  rehearsal_args --owner o --version 0.7.0 --fork-ref forkowner \
   --candidate-sha "$CAND_SHA"
 
 summary

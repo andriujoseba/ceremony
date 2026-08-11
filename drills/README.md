@@ -32,7 +32,17 @@ so partial setup evidence cannot satisfy the release gate.
 
 ## The rehearsal
 
-1. Create a scratch **private** repo. It is disposable by design — but the
+1. Create a scratch **private** repo. With no explicit `--repo-name`, the
+   instrument numbers attempts from 1 and claims the first pair whose
+   `ceremony-drill-<version>-<n>` repo name and `drill/<version>-<n>` fork ref
+   are both free, bounded at ten candidates. An explicit repo name with a
+   default fork ref gets the first free numbered ref and records that numeric
+   attempt. Burned names are routed around and never reclaimed: an explicit
+   repo name still refuses if it exists and prints the complete invocation
+   for the next free numbered pair, while an explicit fork ref is always
+   honored exactly.
+
+   The repo is disposable by design — but the
    disposal is split, because the builder cannot perform the delete: at the
    end the builder **archives** it (`PATCH /repos/{owner}/{repo}` with
    `archived: true`, inside the `repo` scope every fleet identity holds),

@@ -10,7 +10,8 @@ its own run by the script that drove it.
 
 ## Where
 
-Disposable **private** repo `drillowner/ceremony-drill-0.7.0`, created 2026-08-09T00:00:00Z. It carries the
+Attempt **`1`** used disposable **private** repo `drillowner/ceremony-drill-0.7.0-1`, created
+2026-08-09T00:00:00Z. It carries the
 `docs/CONSUMERS.md` release caller verbatim (`version-source: file`) over a
 fragment-mode fixture armed at `0.7.0-dev`: a preamble-only
 `CHANGELOG.md`, `changelog.d/README.md` plus three fragments, and a
@@ -52,24 +53,24 @@ probe below was therefore fetched from the 0.7.0 candidate tree.
 ## Probes
 
 One row per probe, in doctrine order, each written from its own run. Runs are
-in `drillowner/ceremony-drill-0.7.0`. The two count columns are the measurement every refusal
+in `drillowner/ceremony-drill-0.7.0-1`. The two count columns are the measurement every refusal
 probe is asserted on: a refusal that leaves a tag or a release behind is a
 failed probe, and the assertion is these numbers, not the prose beside them.
 
 | # | probe | run | tags | releases | result |
 |---|---|---|---|---|---|
-| 1 | merge-door ceremony | [1001](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1001) | 0 → 1 | 0 → 1 | ✅ exactly one release |
-| 2 | mislabeled ordinary PR | [1002](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1002) | 1 → 1 | 1 → 1 | ✅ green NOTICE no-op |
-| 3 | bare-version PR without `release` | [1003](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1003) | 1 → 1 | 1 → 1 | ✅ refused at decide |
-| 4 | re-run of the completed ceremony | [1001](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1001) (attempt 2) | 1 → 1 | 1 → 1 | ✅ refused at the assert |
-| 5 | tag-door release from a manual tag | [1005](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1005) | 1 → 2 | 1 → 2 | ✅ published from its own section |
-| 6 | mismatched tag | [1006](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1006) | 2 → 2 | 2 → 2 | ✅ refused before publication |
-| 7 | rc cut, tag-only and marked prerelease | [1007](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1007) | 2 → 3 | 2 → 3 | ✅ published as a prerelease, changelog byte-identical |
-| 8 | promotion of the rc to the final version | [1008](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1008) | 3 → 4 | 3 → 4 | ✅ the assembled section stamped, the candidate still a prerelease |
+| 1 | merge-door ceremony | [1001](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1001) | 0 → 1 | 0 → 1 | ✅ exactly one release |
+| 2 | mislabeled ordinary PR | [1002](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1002) | 1 → 1 | 1 → 1 | ✅ green NOTICE no-op |
+| 3 | bare-version PR without `release` | [1003](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1003) | 1 → 1 | 1 → 1 | ✅ refused at decide |
+| 4 | re-run of the completed ceremony | [1001](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1001) (attempt 2) | 1 → 1 | 1 → 1 | ✅ refused at the assert |
+| 5 | tag-door release from a manual tag | [1005](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1005) | 1 → 2 | 1 → 2 | ✅ published from its own section |
+| 6 | mismatched tag | [1006](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1006) | 2 → 2 | 2 → 2 | ✅ refused before publication |
+| 7 | rc cut, tag-only and marked prerelease | [1007](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1007) | 2 → 3 | 2 → 3 | ✅ published as a prerelease, changelog byte-identical |
+| 8 | promotion of the rc to the final version | [1008](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1008) | 3 → 4 | 3 → 4 | ✅ the assembled section stamped, the candidate still a prerelease |
 
 ## Setup, and the runs that are not probes
 
-- **[1000](https://github.com/drillowner/ceremony-drill-0.7.0/actions/runs/1000)** (success) — the caller landing on an armed tree
+- **[1000](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1000)** (success) — the caller landing on an armed tree
 
 ## What the rehearsal establishes
 
