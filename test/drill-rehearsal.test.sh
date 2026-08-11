@@ -671,6 +671,53 @@ check "the first default attempt says what it picked" 0 \
   "attempt -1 repo and fork ref are free; using -1" printf '%s\n' "$attempt_one_out"
 check "the first default attempt is recorded in Where" 0 \
   'Attempt **`1`**' cat "$TMP/attempt-one.md"
+check "the default creation argv omits --private" 0 "" \
+  grep -qxF "repo create $SCRATCH" "$TMP/state/calls"
+check "the default record says public" 0 \
+  "disposable **public** repo" cat "$TMP/attempt-one.md"
+check "the public record carries no owner-only warning" 1 "" \
+  grep -qF "links resolve only for the repo owner" "$TMP/attempt-one.md"
+
+stub_reset
+green_scenario "$TMP/private.scenario"
+private_out="$(run_rehearsal "$TMP/private.scenario" --private \
+  --out "$TMP/private.md" 2>&1)"
+private_rc=$?
+check "the private opt-in completes" 0 "" test "$private_rc" -eq 0
+check "the private creation argv carries --private" 0 "" \
+  grep -qxF "repo create $SCRATCH --private" "$TMP/state/calls"
+check "the private creation warns about unreadable links" 0 \
+  "warning: created private scratch repo $SCRATCH; its record links resolve only for the repo owner" \
+  printf '%s\n' "$private_out"
+check "the private record says private" 0 \
+  "disposable **private** repo" cat "$TMP/private.md"
+check "the private record carries the owner-only sentence" 0 \
+  "Because this repo is private, its run links resolve only for the repo owner." \
+  cat "$TMP/private.md"
+
+stub_reset
+green_scenario "$TMP/opposite-public.scenario"
+DRILL_STUB_PRIVATE_OVERRIDE=true \
+  run_rehearsal "$TMP/opposite-public.scenario" \
+    --out "$TMP/opposite-public.md" >/dev/null 2>&1
+opposite_public_rc=$?
+check "an observed private repo overrides public intent" 0 "" \
+  test "$opposite_public_rc" -eq 0
+check "the public-intent record follows the private read-back" 0 \
+  "disposable **private** repo" cat "$TMP/opposite-public.md"
+
+stub_reset
+green_scenario "$TMP/opposite-private.scenario"
+DRILL_STUB_PRIVATE_OVERRIDE=false \
+  run_rehearsal "$TMP/opposite-private.scenario" --private \
+    --out "$TMP/opposite-private.md" >/dev/null 2>&1
+opposite_private_rc=$?
+check "an observed public repo overrides private intent" 0 "" \
+  test "$opposite_private_rc" -eq 0
+check "the private-intent record follows the public read-back" 0 \
+  "disposable **public** repo" cat "$TMP/opposite-private.md"
+check "the owner-only record sentence follows observation, not private intent" 1 "" \
+  grep -qF "Because this repo is private" "$TMP/opposite-private.md"
 
 stub_reset
 seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
@@ -734,7 +781,7 @@ seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
 seed_taken_ref "drill/0.7.0-2"
 : >"$TMP/explicit-taken.scenario"
 explicit_taken_out="$(run_rehearsal "$TMP/explicit-taken.scenario" \
-  --fork-ref "$FORK" --repo-name chosen-by-hand \
+  --fork-ref "$FORK" --repo-name chosen-by-hand --private \
   --candidate-ref 'build/ref with space;still-one-arg' \
   --out "$TMP/explicit taken.md" 2>&1)"
 explicit_taken_rc=$?
@@ -755,6 +802,7 @@ bash -c 'record_args() { printf "%s\n" "$@"; }; '"${retry_command/drill\/rehears
     --candidate-sha "$CAND_SHA" \
     --repo-name ceremony-drill-0.7.0-3 \
     --candidate-ref 'build/ref with space;still-one-arg' \
+    --private \
     --out "$TMP/explicit taken.md" \
     --date 2026-08-09
 } >"$TMP/retry.expected"
@@ -997,6 +1045,11 @@ check "the drill never deleted any repository" 1 "" \
   grep -qE "^api (-X|--method) DELETE repos/[^/]+/[^/]+$" "$TMP/state/calls"
 check "the operator's delete step is printed, not run" 0 \
   "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$green_out"
+check "the emitted record keeps exactly eleven run links" 0 "11" \
+  bash -c 'grep -oE "/actions/runs/[0-9]+" "$1" | wc -l | tr -d " "' \
+  _ "$TMP/emitted.md"
+check "the drill contains no post-create visibility flip" 1 "" \
+  grep -R -n -E 'archived: false|--visibility' "$ROOT/drill"
 check "the caller landed after the fixture, never before" 0 "" bash -c '
   fixture=$(grep -n "the armed fixture at" "$1" | head -n1 | cut -d: -f1)
   caller=$(grep -n "install the docs/CONSUMERS.md release caller" "$1" | head -n1 | cut -d: -f1)
@@ -1834,7 +1887,7 @@ check "the read names itself on stderr, where the record could not see it" 0 \
 # sentence in the record instead, and this is what says so.
 stub_reset
 green_scenario "$TMP/disposal.scenario"
-faults "1	99	GET repos/$SCRATCH	500	Internal Server Error"
+faults "2	99	GET repos/$SCRATCH	500	Internal Server Error"
 disposal_out="$(run_rehearsal "$TMP/disposal.scenario" --out "$TMP/disposal.md" 2>&1)"
 disposal_rc=$?
 check "a disposal read that never answers still emits the record" 0 "" \
@@ -1865,7 +1918,7 @@ check "with all eight probe rows in it too" 0 "probes passed 8/8, failed 0" \
 check "and the record says the archive did not land" 0 \
   "the archive did not land, and the repository is still live" \
   cat "$TMP/unarchived.md"
-check "quoting the flag it actually read" 0 "archived=false private=true" \
+check "quoting the flag it actually read" 0 "archived=false private=false" \
   cat "$TMP/unarchived.md"
 check "it never files an answered read as one that never answered" 1 "" \
   grep -qF 'never answered' "$TMP/unarchived.md"

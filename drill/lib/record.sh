@@ -392,7 +392,11 @@ version to inspect — the script refuses to install the caller against a tree
 with no fixture in it.
 EOF
 
-[ "$private" != true ] || printf 'Because this repo is private, its run links resolve only for the repo owner.\n\n'
+if [ "$private" = true ]; then
+  printf '\nBecause this repo is private, its run links resolve only for the repo owner.\n\n'
+else
+  printf '\n'
+fi
 
 cat <<EOF
 The rc legs run one rung further along the ladder — \`$rc-dev\` →
