@@ -1824,6 +1824,56 @@ check "a tree that genuinely lacks the fixture still says which files" 1 \
   "is missing the armed fixture: VERSION CHANGELOG.md changelog.d/README.md" \
   with_stub fixture_assert_seeded "$FORK" main
 
+# A fragment filter is allowed to find nothing, but only after its tree read
+# answered. The old pipeline collapsed that distinction and let two failed
+# reads compare equal (#375 D1).
+fragment_paths_of() { # <repo> <ref> — list on stdout
+  with_stub probe_fragment_paths "$1" "$2" "$TMP/frags.read" || return 1
+  cat "$TMP/frags.read"
+}
+faults
+FRAGS="$SCRATCH_OWNER/fragments-probe"
+with_stub scratch_create_attempt "$FRAGS" >/dev/null 2>&1
+printf '# A fragment.\n' >"$TMP/seed-fragment"
+{
+  printf 'A\tVERSION\t%s\n' "$TMP/seed-version"
+  printf 'A\tCHANGELOG.md\t%s\n' "$TMP/seed-changelog"
+  printf 'A\tchangelog.d/README.md\t%s\n' "$TMP/seed-readme"
+  printf 'A\tchangelog.d/10.md\t%s\n' "$TMP/seed-fragment"
+} >"$TMP/frags.manifest"
+with_stub scratch_commit "$FRAGS" main "a tree with fragments on it" \
+  "$TMP/frags.manifest" >/dev/null 2>&1
+check "the fragment list this case is about is genuinely there" 0 \
+  "changelog.d/10.md" fragment_paths_of "$FRAGS" main
+faults "0\t2\tGET repos/*/git/trees/*\t404\tNot Found"
+check "a fragment list that answers stale twice still reads back" 0 \
+  "changelog.d/10.md" fragment_paths_of "$FRAGS" main
+faults "0\t99\tGET repos/*/git/trees/*\t404\tNot Found"
+: >"$TMP/frags.out"
+with_stub probe_fragment_paths "$FRAGS" main "$TMP/frags.out" \
+  >"$TMP/frags.err" 2>&1
+frags_rc=$?
+check "a fragment list that never answers is a failed read, not an empty set" 0 "" \
+  test "$frags_rc" -eq 1
+check "the failed fragment read names its target" 0 \
+  "the tree of main on $FRAGS did not read back after 10 attempts" \
+  cat "$TMP/frags.err"
+check "the failed fragment read leaves no comparable list" 0 "" \
+  test ! -s "$TMP/frags.out"
+faults
+NOFRAGS="$SCRATCH_OWNER/nofragments-probe"
+with_stub scratch_create_attempt "$NOFRAGS" >/dev/null 2>&1
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/nofrags.manifest"
+with_stub scratch_commit "$NOFRAGS" main "a tree with no fragments on it" \
+  "$TMP/nofrags.manifest" >/dev/null 2>&1
+: >"$TMP/nofrags.out"
+check "a read tree with no fragments is a successful empty list" 0 "" \
+  with_stub probe_fragment_paths "$NOFRAGS" main "$TMP/nofrags.out"
+check "the successful no-match creates an empty out-file" 0 "" \
+  test -f "$TMP/nofrags.out"
+check "the successful no-match out-file contains nothing" 0 "" \
+  test ! -s "$TMP/nofrags.out"
+
 stub_reset
 mkdir -p "$TMP/prepare-work"
 faults "0	2	GET repos/*/contents/*	404	Not Found"
@@ -1887,6 +1937,83 @@ check "and not one of the four records a version it never read" 1 "" \
 check "the read names itself on stderr, where the record could not see it" 0 \
   "VERSION at $SCRATCH@main did not read back after 10 attempts" \
   cat "$TMP/rearm.out"
+
+# A scored read must have happened. Each fault is aimed at one exact call in
+# the green rehearsal, and each row is checked in isolation so restoring any
+# one swallowed-status form restores its old wrong answer (#375 D2-D8).
+faulted_probe_run() { # <name> <fault-rule>
+  local name="$1" rule="$2"
+  stub_reset
+  green_scenario "$TMP/$name.scenario"
+  faults "$rule"
+  run_rehearsal "$TMP/$name.scenario" --out "$TMP/$name.md" \
+    >"$TMP/$name.out" 2>&1
+}
+
+# Tree reads in the green call order: fixture check, probe 7 before, probe 7
+# after, probe 8 after. Ten failures exhaust exactly one retrying read.
+faulted_probe_run fragment-before \
+  "1\t10\tGET repos/$SCRATCH/git/trees/main*\t500\tInternal Server Error"
+check "probe 7 reds when its before-fragment list never reads" 0 \
+  "the fragment list did not read back at $SCRATCH@main before the rc cut" \
+  probe_row "$TMP/fragment-before.md" 7
+check "the before-read failure never claims the fragment set changed" 1 "" \
+  probe_row "$TMP/fragment-before.md" 7 | grep -qF 'the fragment set changed'
+
+faulted_probe_run fragment-after \
+  "2\t10\tGET repos/$SCRATCH/git/trees/main*\t500\tInternal Server Error"
+check "probe 7 reds when its after-fragment list never reads" 0 \
+  "the fragment list did not read back at $SCRATCH@main after the rc cut" \
+  probe_row "$TMP/fragment-after.md" 7
+check "the after-read failure never claims the fragment set changed" 1 "" \
+  probe_row "$TMP/fragment-after.md" 7 | grep -qF 'the fragment set changed'
+
+faulted_probe_run fragment-promotion \
+  "3\t10\tGET repos/$SCRATCH/git/trees/main*\t500\tInternal Server Error"
+check "probe 8 reds when its fragment list never reads" 0 \
+  "the fragment list did not read back at $SCRATCH@main after the promotion" \
+  probe_row "$TMP/fragment-promotion.md" 8
+check "the unread promotion list produces exactly one row problem" 1 "" \
+  probe_row "$TMP/fragment-promotion.md" 8 | grep -qF ';'
+check "the unread promotion list never accuses the marker" 1 "" \
+  probe_row "$TMP/fragment-promotion.md" 8 | \
+    grep -qF 'changelog.d/README.md is gone after the promotion'
+check "the unread promotion list never accuses leftovers" 1 "" \
+  probe_row "$TMP/fragment-promotion.md" 8 | grep -qF 'fragments survived the promotion'
+
+# Release endpoint call indices that search a completed list rather than count
+# it: probes 1, 5, 6, 7 and 8. These are hard reads, so one failure is enough.
+while IFS=$'\t' read -r release_name release_skip release_probe release_when release_old; do
+  faulted_probe_run "$release_name" \
+    "$release_skip\t1\tGET repos/$SCRATCH/releases*\t500\tInternal Server Error"
+  check "probe $release_probe reds when its release list fails" 0 \
+    "the release list did not read back at $SCRATCH $release_when" \
+    probe_row "$TMP/$release_name.md" "$release_probe"
+  check "probe $release_probe does not restore its old release verdict" 1 "" \
+    probe_row "$TMP/$release_name.md" "$release_probe" | grep -qF "$release_old"
+done <<'RELEASE_CASES'
+release-1	3	1	after the ceremony	no '0.7.0' release exists
+release-5	16	5	after the tag door ran	no '0.7.1' release exists
+release-6	20	6	after the mismatched tag	a '9.9.9' release exists
+release-7	24	7	after the rc cut	no '0.7.2-rc1' release exists
+release-8	29	8	after the promotion	no '0.7.2' release exists
+RELEASE_CASES
+
+# The fourth matching ref read is probe 1's setup read. Exhaust it, then prove
+# the row, every later probe, disposal and the final record all survive.
+faulted_probe_run branch-sha \
+  "3\t10\tGET repos/$SCRATCH/git/ref/heads/main\t500\tInternal Server Error"
+check "a branch-SHA failure becomes probe 1's read-named row" 0 \
+  "the branch SHA did not read back at $SCRATCH@main before probe 1" \
+  probe_row "$TMP/branch-sha.md" 1
+check "a branch-SHA failure still leaves all eight rows" 0 "8" \
+  bash -c 'grep -cE "^\| [1-8] \|" "$1"' _ "$TMP/branch-sha.md"
+check "the last probe still runs after a branch-SHA failure" 0 "" \
+  probe_row "$TMP/branch-sha.md" 8
+check "the branch-SHA failure still archives the scratch repo" 0 \
+  "archived=true" cat "$TMP/branch-sha.md"
+check "the branch-SHA failure still emits a valid record" 0 \
+  "eight probe rows" record_check "$TMP/branch-sha.md"
 
 # The disposal is the last thing the instrument does, and it sits after eight
 # probes under `set -euo pipefail`. An exhausted read there used to be the end
