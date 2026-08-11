@@ -161,3 +161,54 @@ non-empty even though neither release door reads that file (#217, #237).
 missing or blank. A waived drill is still a record: the file says WAIVED and
 why — a maintainer's call, visible and reviewable in the release PR's diff,
 never a silent skip.
+
+## The round trip: how a rehearsal record is graded
+
+A **rehearsal** record is `drill/rehearsal.sh`'s emission, not a hand-written
+account of it (#313 D2). CI holds that claim by re-rendering the committed
+file: `.github/scripts/record-roundtrip.sh` parses the record back into the
+three inputs `record_render` consumes, renders them, and requires the bytes
+back. It is keyed exactly as `drill-recorded` is — a `-dev` tree skips and
+says so, a bare-version tree must pass — and it runs in this repository's
+`self-guards` job rather than inside the vendored action, which is ported
+into repos that have no `drill/lib` to re-render with (#373 D3).
+
+It grades **authorship**, which is a different claim from the shape check
+`record_check` runs at emission time. Everything the record *derives* from
+its measurements has to follow from them:
+
+- **every sentence of prose.** The preamble's run count, the "every probe
+  passed" line, the door sentences, the per-probe claims and the
+  not-established tail are all written from the probe rows. Add a sentence,
+  soften one, or change a count in the conclusion, and the re-render does not
+  write it back.
+- **the order of the fields.** The parse finds each field by its own
+  sentence and does not care what order they come in; the re-render puts them
+  back in the render's order, so a moved field is a difference.
+- **each run cell's internal agreement.** `record_run_cell` builds the link
+  text and the URL out of one run ID, so a cell where they disagree is
+  refused by the parse, by line number.
+- **anything a second renderer would write differently**, including this
+  repository's own renderer at an older commit: a record emitted before a
+  render change is stale, and the guard reds on the PR that makes the change
+  rather than at the next cut.
+
+What it does **not** grade, stated so the guarantee is not read wider than it
+is:
+
+- **the measurements themselves.** A before/after count, or a run ID
+  rewritten consistently on both sides of its link, is *data*: the file is
+  then exactly what the renderer emits for that data, and no self-describing
+  record can say otherwise. #373 D4 records why the alternative was
+  rejected — committing the render inputs beside the record puts an
+  unguarded second file in the tree and reintroduces the same bug one level
+  down. The run link is what a reader checks a run ID against.
+- **whether a probe's verdict is true.** That is what the probe's own
+  before/after counts are for, and `record_check` grades that they are there.
+- **the other two record shapes.** *Doors unchanged* and *WAIVED* are
+  judgement, not automation, and the round trip runs only where a rehearsal
+  record is what the tree carries.
+
+A record that cannot be parsed **fails and names the line that defeated it**.
+There is no "unparseable therefore fine" path: that would be the silent skip
+this guard exists to close (#373 D5).
