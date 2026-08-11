@@ -1941,10 +1941,15 @@ check "the read names itself on stderr, where the record could not see it" 0 \
 # A scored read must have happened. Each fault is aimed at one exact call in
 # the green rehearsal, and each row is checked in isolation so restoring any
 # one swallowed-status form restores its old wrong answer (#375 D2-D8).
-faulted_probe_run() { # <name> <fault-rule>
-  local name="$1" rule="$2"
+faulted_probe_run() { # <name> <fault-rule> [unconsumed-scenario-line]
+  local name="$1" rule="$2" unconsumed="${3:-}"
   stub_reset
   green_scenario "$TMP/$name.scenario"
+  if [ -n "$unconsumed" ]; then
+    awk -v n="$unconsumed" 'NR != n' "$TMP/$name.scenario" \
+      >"$TMP/$name.scenario.tmp"
+    mv "$TMP/$name.scenario.tmp" "$TMP/$name.scenario"
+  fi
   faults "$rule"
   run_rehearsal "$TMP/$name.scenario" --out "$TMP/$name.md" \
     >"$TMP/$name.out" 2>&1
@@ -2005,7 +2010,9 @@ RELEASE_CASES
 # 1 remains available for probe 4's deliberate re-run, keeping that later
 # probe's own setup independent of the fault under test.
 printf -v branch_fault '4\t10\tGET repos/%s/git/ref/heads/main\t500\tInternal Server Error' "$SCRATCH"
-faulted_probe_run branch-sha "$branch_fault"
+# Probe 2's branch read fails before its merge-door run, so its third queued
+# scenario event is deliberately unconsumed and omitted from this fixture.
+faulted_probe_run branch-sha "$branch_fault" 3
 check "a branch-SHA failure becomes probe 2's read-named row" 0 \
   "the branch SHA did not read back at $SCRATCH@main before probe 2" \
   probe_row "$TMP/branch-sha.md" 2
