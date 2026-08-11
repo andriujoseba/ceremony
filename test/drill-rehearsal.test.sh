@@ -671,7 +671,6 @@ green_scenario "$TMP/attempt-three.scenario"
 attempt_three_out="$(run_rehearsal "$TMP/attempt-three.scenario" \
   --fork-ref "$FORK" --out "$TMP/attempt-three.md" 2>&1)"
 attempt_three_rc=$?
-ATTEMPT_THREE="$SCRATCH_OWNER/ceremony-drill-0.7.0-3"
 check "two burned names route the run to -3" 0 "" test "$attempt_three_rc" -eq 0
 check "the creation calls try exactly -1, -2, then -3" 0 "3" \
   bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123] --private$" "$1"' \
@@ -714,9 +713,9 @@ explicit_taken_out="$(run_rehearsal "$TMP/explicit-taken.scenario" \
 explicit_taken_rc=$?
 check "an explicit taken name still refuses" 0 "" test "$explicit_taken_rc" -ne 0
 check "the refusal substitutes the free repo name" 0 \
-  "--repo-name 'ceremony-drill-0.7.0-3'" printf '%s\n' "$explicit_taken_out"
+  "--repo-name ceremony-drill-0.7.0-3" printf '%s\n' "$explicit_taken_out"
 check "the refusal substitutes the matching fork ref" 0 \
-  "--fork-ref '$FORK@drill/0.7.0-3'" printf '%s\n' "$explicit_taken_out"
+  "--fork-ref $FORK@drill/0.7.0-3" printf '%s\n' "$explicit_taken_out"
 retry_command="$(sed -n 's/^drill: .*Retry with: //p' <<<"$explicit_taken_out")"
 check "the printed retry invocation parses as a shell command" 0 "" \
   bash -n -c "$retry_command"
@@ -725,8 +724,8 @@ check "the explicit-name refusal creates no suggested repo" 1 "" \
 
 stub_reset
 green_scenario "$TMP/explicit-free.scenario"
-explicit_free_out="$(run_rehearsal "$TMP/explicit-free.scenario" \
-  --repo-name chosen-by-hand --out "$TMP/explicit-free.md" 2>&1)"
+run_rehearsal "$TMP/explicit-free.scenario" \
+  --repo-name chosen-by-hand --out "$TMP/explicit-free.md" >/dev/null 2>&1
 explicit_free_rc=$?
 check "a free explicit name is used verbatim" 0 "" test "$explicit_free_rc" -eq 0
 check "an explicit free name does no numbered-name read probe" 1 "" \

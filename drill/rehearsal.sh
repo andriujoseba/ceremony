@@ -252,10 +252,18 @@ if [ -n "$repo_name" ]; then
   explicit_rc=0
   scratch_create_attempt "$DRILL_REPO" || explicit_rc=$?
   if [ "$explicit_rc" -eq 3 ]; then
+    retry_args=()
     suggestion="$(attempt_first_free "$owner" "$version")" || exit 1
     suggested_ref="$fork_ref"
     [ "$fork_ref_explicit" -eq 1 ] || suggested_ref="drill/$version-$suggestion"
-    refuse "--repo-name '$repo_name' is already taken. Retry with: drill/rehearsal.sh --owner '$owner' --version '$version' --fork-ref '$fork_repo@$suggested_ref' --candidate-sha '$candidate_sha' --repo-name 'ceremony-drill-$version-$suggestion'${candidate_ref:+ --candidate-ref '$candidate_ref'}${out:+ --out '$out'}${stamp:+ --date '$stamp'}"
+    retry_args=(drill/rehearsal.sh --owner "$owner" --version "$version"
+      --fork-ref "$fork_repo@$suggested_ref" --candidate-sha "$candidate_sha"
+      --repo-name "ceremony-drill-$version-$suggestion")
+    [ -z "$candidate_ref" ] || retry_args+=(--candidate-ref "$candidate_ref")
+    [ -z "$out" ] || retry_args+=(--out "$out")
+    [ -z "$stamp" ] || retry_args+=(--date "$stamp")
+    printf -v retry_command '%q ' "${retry_args[@]}"
+    refuse "--repo-name '$repo_name' is already taken. Retry with: ${retry_command% }"
   fi
   [ "$explicit_rc" -eq 0 ] || exit "$explicit_rc"
   scratch_created=1
