@@ -196,7 +196,15 @@ scratch_blob() {
 scratch_commit() {
   local repo="${1:?}" branch="${2:?}" message="${3:?}" manifest="${4:?}"
   local base_sha base_tree="" entries="[]" op path file blob tree_sha commit_sha
-  base_sha="$(scratch_ref_sha "$repo" "$branch")"
+  # `any`, because a branch nobody has created yet is a real answer here and
+  # the bootstrap below is what that answer means. But *empty* and *never
+  # answered* are the two things D2 exists to keep apart, and this assignment
+  # is the one place in the changed surface that could throw the distinction
+  # away one line after it is made: without the `|| return 1`, an exhausted
+  # failed read leaves `base_sha` empty and the bootstrap writes — the
+  # contents PUT carries `branch`, so it commits to a branch that already has
+  # a head, on a read that never answered.
+  base_sha="$(scratch_ref_sha "$repo" "$branch")" || return 1
   if [ -z "$base_sha" ]; then
     # A freshly created repository refuses the git data API outright —
     # `Git Repository is empty. (HTTP 409)`: blobs and trees need a first

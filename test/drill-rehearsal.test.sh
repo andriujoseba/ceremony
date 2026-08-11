@@ -1145,6 +1145,60 @@ check "a base-tree read that never answers aborts, naming the read" 1 \
 check "and no tree was written under a base it never read" 0 "" \
   calls_are 0 "git/trees --input -"
 
+# The other read in the same function, and the one round 2 found: the
+# does-it-exist read at the top. It is `any` on purpose — a branch nobody
+# created is a real answer, and the bootstrap below is what that answer means
+# — but `any` distinguishes absent from failed only if the caller keeps the
+# status. Without the `|| return 1` on that assignment, ten exhausted 500s
+# leave `base_sha` empty and are read as "this repo has no commits": the
+# bootstrap's contents PUT carries `branch`, so it commits to a branch that
+# already has a head, built from the manifest's first `A` line alone, and only
+# the guarded re-read afterwards aborts. The write is the assertion here. An
+# rc check alone stays green under the bug, because the function does return 1
+# — twenty reads and one write later.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+faults "0	99	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+: >"$TMP/state/calls"
+# Called the way every probe calls it — through a substitution, which is what
+# suppresses errexit inside the function and made the swallowed status matter.
+baseread_caller() {
+  local sha
+  sha="$(with_stub scratch_commit "$FORK" main "a commit whose base read never answers" \
+    "$TMP/basetree.manifest")" || return 1
+  printf '%s\n' "$sha"
+}
+baseread_caller >"$TMP/baseread.out" 2>"$TMP/baseread.err"
+baseread_rc=$?
+check "a base read that never answers aborts" 0 "" test "$baseread_rc" -eq 1
+check "and names the read, its target and its attempt count" 0 \
+  "refs/heads/main on $FORK did not read back after 10 attempts" cat "$TMP/baseread.err"
+check "and it stopped at its budget rather than reading twice over" 0 "" \
+  calls_are 10 "git/ref/heads/main"
+# The four writes the function can make, each asserted absent by name: a
+# failed existence read must not reach any of them.
+check "no bootstrap PUT went out on a read that never answered" 0 "" \
+  calls_are 0 "contents/VERSION --method PUT"
+check "no tree was written under it" 0 "" calls_are 0 "git/trees --input -"
+check "no commit was built under it" 0 "" calls_are 0 "git/commits --input -"
+check "and the branch it could not read was never created" 0 "" \
+  calls_are 0 "git/refs --input -"
+check "nor moved" 0 "" calls_are 0 "git/refs/heads/main --method PATCH"
+# And the absence this read is `any` for is unchanged: a branch nobody created
+# still answers in one call and still routes to the bootstrap, rather than
+# spending ten calls on a thing that was never written.
+stub_reset
+faults
+: >"$TMP/state/calls"
+check "a branch nobody created still bootstraps, in one read" 0 "" \
+  with_stub scratch_commit "$FORK" main "the first commit on an empty repo" \
+  "$TMP/basetree.manifest"
+# Two, and only two: the pre-read that answered absent in one call, and the
+# guarded re-read after the bootstrap write. A budget spent here would mean
+# `any` had started treating a true absence as something to wait for.
+check "and that read cost one call, not the budget" 0 "" \
+  calls_are 2 "git/ref/heads/main"
+
 # The sites round 1 found still outside the helper: reads that follow a write
 # this instrument made, where a stale 404 escaped drill_gh_soft as exit 0 and
 # empty and the caller took it for an answer.
