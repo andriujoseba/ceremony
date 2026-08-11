@@ -134,6 +134,20 @@ probe_branch() {
   scratch_ref_create "$DRILL_REPO" "refs/heads/${1:?}" "${2:?}"
 }
 
+# probe_branch_from_main <n> <branch> <tags-before> <releases-before> — read
+# main before creating a probe branch. A setup read that did not answer is
+# this probe's failed evidence, not a reason to take the whole record with it
+# through probe_branch's required SHA (#375 D8).
+probe_branch_from_main() {
+  local n="${1:?}" branch="${2:?}" tb="${3:?}" rb="${4:?}" main_sha
+  if ! main_sha="$(scratch_ref_sha "$DRILL_REPO" main)"; then
+    probe_record "$n" '—' 1 FAIL "$tb" "$tb" "$rb" "$rb" \
+      "the branch SHA did not read back at $DRILL_REPO@main before probe $n, so its probe branch was never created"
+    return 1
+  fi
+  probe_branch "$branch" "$main_sha"
+}
+
 # probe_stage <name> — a copy of the mirrored main tree for one probe to edit.
 probe_stage() {
   local dir="$DRILL_WORK/${1:?}"
@@ -169,7 +183,9 @@ probe_trim_blank() {
 # paths at a ref, sorted. The rc leg's "every fragment survives" and the
 # promotion's "fragments consumed" are both this list, compared.
 probe_fragment_paths() {
-  scratch_paths "${1:?}" "${2:?}" | grep '^changelog\.d/' | sort >"${3:?}" || :
+  local repo="${1:?}" ref="${2:?}" out="${3:?}" paths
+  paths="$(scratch_paths "$repo" "$ref" nonempty)" || return 1
+  grep '^changelog\.d/' <<<"$paths" | sort >"$out" || true
 }
 
 # probe_merge_and_wait <branch> <title> <label?> — PR, optional label, merge,
@@ -208,11 +224,11 @@ probe_merge_and_wait() {
 # main to -dev.
 # --------------------------------------------------------------------------
 probe_1_ceremony() {
-  local before after stage manifest run conc tb ta rb ra problems="" frag
+  local before after stage manifest run conc tb ta rb ra problems="" frag tags
   before="$(probe_counts "$DRILL_REPO")"
   tb="$(cut -f1 <<<"$before")"
   rb="$(cut -f2 <<<"$before")"
-  probe_branch probe1-ceremony "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  probe_branch_from_main 1 probe1-ceremony "$tb" "$rb" || return 1
   stage="$(probe_stage probe1)"
   printf '%s\n' "$DRILL_V1" >"$stage/VERSION"
   # The candidate's own assembler, run from the candidate checkout this
@@ -232,8 +248,12 @@ probe_1_ceremony() {
   ta="$(cut -f1 <<<"$after")"
   ra="$(cut -f2 <<<"$after")"
   problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
-  scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_V1" ||
-    problems="$problems; no '$DRILL_V1' release exists after the ceremony"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    grep -qxF "$DRILL_V1" <<<"$tags" ||
+      problems="$problems; no '$DRILL_V1' release exists after the ceremony"
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the ceremony, so the '$DRILL_V1' release was never checked"
+  fi
   # Branched on the read, not on the string it returned. `probe_run` calls each
   # probe as `"$fn" || status=$?`, which suppresses `set -e` inside it — so an
   # exhausted read left `armed` empty here and the probe recorded "main reads
@@ -270,7 +290,7 @@ probe_2_mislabeled() {
   before="$(probe_counts "$DRILL_REPO")"
   tb="$(cut -f1 <<<"$before")"
   rb="$(cut -f2 <<<"$before")"
-  probe_branch probe2-mislabeled "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  probe_branch_from_main 2 probe2-mislabeled "$tb" "$rb" || return 1
   stage="$(probe_stage probe2)"
   printf -- '- Ordinary work under the release label, shipping nothing (#313).\n' \
     >"$stage/changelog.d/9.md"
@@ -301,7 +321,7 @@ probe_3_bare() {
   before="$(probe_counts "$DRILL_REPO")"
   tb="$(cut -f1 <<<"$before")"
   rb="$(cut -f2 <<<"$before")"
-  probe_branch probe3-bare "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  probe_branch_from_main 3 probe3-bare "$tb" "$rb" || return 1
   stage="$(probe_stage probe3)"
   printf '%s\n' "$DRILL_V2" >"$stage/VERSION"
   manifest="$(probe_manifest "$stage" VERSION)"
@@ -370,11 +390,11 @@ probe_4_rerun() {
 # resting on main.
 # --------------------------------------------------------------------------
 probe_5_tag() {
-  local before after stage manifest run conc tb ta rb ra problems sha armed
+  local before after stage manifest run conc tb ta rb ra problems sha armed tags
   before="$(probe_counts "$DRILL_REPO")"
   tb="$(cut -f1 <<<"$before")"
   rb="$(cut -f2 <<<"$before")"
-  probe_branch probe5-tag "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  probe_branch_from_main 5 probe5-tag "$tb" "$rb" || return 1
   stage="$(probe_stage probe5)"
   printf '%s\n' "$DRILL_V2" >"$stage/VERSION"
   ceremony_assemble "$stage" "$DRILL_V2" "$DRILL_DATE" "$DRILL_ROOT" || return 1
@@ -389,8 +409,12 @@ probe_5_tag() {
   ta="$(cut -f1 <<<"$after")"
   ra="$(cut -f2 <<<"$after")"
   problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
-  scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_V2" ||
-    problems="$problems; no '$DRILL_V2' release exists after the tag door ran"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    grep -qxF "$DRILL_V2" <<<"$tags" ||
+      problems="$problems; no '$DRILL_V2' release exists after the tag door ran"
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the tag door ran, so the '$DRILL_V2' release was never checked"
+  fi
   if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
     [ "$armed" = "$DRILL_V2-dev" ] ||
       problems="$problems; main reads '$armed' after the tag door, expected it untouched at '$DRILL_V2-dev'"
@@ -412,11 +436,11 @@ probe_5_tag() {
 # nothing.
 # --------------------------------------------------------------------------
 probe_6_mismatched_tag() {
-  local before after stage manifest run conc tb ta rb ra problems sha
+  local before after stage manifest run conc tb ta rb ra problems sha tags
   before="$(probe_counts "$DRILL_REPO")"
   tb="$(cut -f1 <<<"$before")"
   rb="$(cut -f2 <<<"$before")"
-  probe_branch probe6-mismatch "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  probe_branch_from_main 6 probe6-mismatch "$tb" "$rb" || return 1
   stage="$(probe_stage probe6)"
   printf 'A tree whose VERSION is not 9.9.9.\n' >"$stage/PROBE6.md"
   manifest="$(probe_manifest "$stage" PROBE6.md)"
@@ -432,8 +456,12 @@ probe_6_mismatched_tag() {
   # something.
   ta=$((ta - 1))
   problems="$(probe_verdict failure "$conc" "$tb" "$ta" "$rb" "$ra" 0 0)"
-  if scratch_release_tags "$DRILL_REPO" | grep -qxF 9.9.9; then
-    problems="$problems; a '9.9.9' release exists — the door published from a mismatched tag"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    if grep -qxF 9.9.9 <<<"$tags"; then
+      problems="$problems; a '9.9.9' release exists — the door published from a mismatched tag"
+    fi
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the mismatched tag, so 'no 9.9.9 release' was never checked"
   fi
   scratch_ref_delete "$DRILL_REPO" tags/9.9.9 || return 1
   if [ -z "$problems" ]; then
@@ -464,7 +492,7 @@ probe_6_mismatched_tag() {
 # --------------------------------------------------------------------------
 probe_7_rc_cut() {
   local before after stage manifest run conc tb ta rb ra problems=""
-  local arm_sha arm_run arm_conc prerelease armed
+  local arm_sha arm_run arm_conc prerelease armed tags fragments_before_read=1
   local changelog_before="$DRILL_WORK/probe7-changelog.before"
   local changelog_after="$DRILL_WORK/probe7-changelog.after"
   local frags_before="$DRILL_WORK/probe7-fragments.before"
@@ -491,9 +519,12 @@ probe_7_rc_cut() {
   # `nonempty`: main was written by the arming commit a few lines up, so an
   # empty answer here is a stale index and not a repo without a CHANGELOG.
   scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_before" nonempty || return 1
-  probe_fragment_paths "$DRILL_REPO" main "$frags_before"
+  if ! probe_fragment_paths "$DRILL_REPO" main "$frags_before"; then
+    problems="$problems; the fragment list did not read back at $DRILL_REPO@main before the rc cut, so the fragment comparison was never taken"
+    fragments_before_read=0
+  fi
 
-  probe_branch probe7-rc-cut "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  probe_branch_from_main 7 probe7-rc-cut "$tb" "$rb" || return 1
   stage="$(probe_stage probe7)"
   printf '%s\n' "$DRILL_RC1" >"$stage/VERSION"
   # The version and the rc's own drill record, and nothing else: an rc stamps
@@ -513,8 +544,12 @@ probe_7_rc_cut() {
   ta="$(cut -f1 <<<"$after")"
   ra="$(cut -f2 <<<"$after")"
   problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
-  scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_RC1" ||
-    problems="$problems; no '$DRILL_RC1' release exists after the rc cut"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    grep -qxF "$DRILL_RC1" <<<"$tags" ||
+      problems="$problems; no '$DRILL_RC1' release exists after the rc cut"
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the rc cut, so the '$DRILL_RC1' release was never checked"
+  fi
   prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_RC1")" || prerelease="unread"
   [ "$prerelease" = true ] ||
     problems="$problems; the '$DRILL_RC1' release reports isPrerelease: $prerelease, expected true"
@@ -524,9 +559,12 @@ probe_7_rc_cut() {
   else
     problems="$problems; CHANGELOG.md did not read back after the rc cut, so the byte comparison was never taken"
   fi
-  probe_fragment_paths "$DRILL_REPO" main "$frags_after"
-  cmp -s "$frags_before" "$frags_after" ||
-    problems="$problems; the fragment set changed across the rc cut ($(tr '\n' ' ' <"$frags_before")→ $(tr '\n' ' ' <"$frags_after")) — an rc assembles its notes and consumes nothing"
+  if ! probe_fragment_paths "$DRILL_REPO" main "$frags_after"; then
+    problems="$problems; the fragment list did not read back at $DRILL_REPO@main after the rc cut, so the fragment comparison was never taken"
+  elif [ "$fragments_before_read" = 1 ]; then
+    cmp -s "$frags_before" "$frags_after" ||
+      problems="$problems; the fragment set changed across the rc cut ($(tr '\n' ' ' <"$frags_before")→ $(tr '\n' ' ' <"$frags_after")) — an rc assembles its notes and consumes nothing"
+  fi
   if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
     [ "$armed" = "$DRILL_RC2-dev" ] ||
       problems="$problems; main reads '$armed' after the rc cut, expected '$DRILL_RC2-dev'"
@@ -553,7 +591,7 @@ probe_7_rc_cut() {
 # --------------------------------------------------------------------------
 probe_8_promotion() {
   local before after stage manifest run conc tb ta rb ra problems=""
-  local frag prerelease armed leftover
+  local frag prerelease armed leftover tags
   local expected="$DRILL_WORK/probe8-notes.expected"
   local stamped="$DRILL_WORK/probe8-notes.stamped"
   local changelog_after="$DRILL_WORK/probe8-changelog.after"
@@ -561,7 +599,7 @@ probe_8_promotion() {
   before="$(probe_counts "$DRILL_REPO")"
   tb="$(cut -f1 <<<"$before")"
   rb="$(cut -f2 <<<"$before")"
-  probe_branch probe8-promotion "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
+  probe_branch_from_main 8 probe8-promotion "$tb" "$rb" || return 1
   stage="$(probe_stage probe8)"
   printf '%s\n' "$DRILL_V3" >"$stage/VERSION"
   # Read before the assembler consumes anything: this is the body the rc
@@ -582,8 +620,12 @@ probe_8_promotion() {
   ta="$(cut -f1 <<<"$after")"
   ra="$(cut -f2 <<<"$after")"
   problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
-  scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_V3" ||
-    problems="$problems; no '$DRILL_V3' release exists after the promotion"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    grep -qxF "$DRILL_V3" <<<"$tags" ||
+      problems="$problems; no '$DRILL_V3' release exists after the promotion"
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the promotion, so the '$DRILL_V3' release was never checked"
+  fi
   prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_V3")" || prerelease="unread"
   [ "$prerelease" = false ] ||
     problems="$problems; the '$DRILL_V3' release reports isPrerelease: $prerelease, expected false — the promotion is the final version"
@@ -598,12 +640,15 @@ probe_8_promotion() {
   else
     problems="$problems; CHANGELOG.md did not read back after the promotion, so the stamped section was never compared"
   fi
-  probe_fragment_paths "$DRILL_REPO" main "$frags_after"
-  grep -qxF changelog.d/README.md "$frags_after" ||
-    problems="$problems; changelog.d/README.md is gone after the promotion — the directory's marker survives the consumption"
-  leftover="$(grep -vxF changelog.d/README.md "$frags_after" | tr '\n' ' ')"
-  [ -z "$leftover" ] ||
-    problems="$problems; fragments survived the promotion ($leftover) — a final consumes them"
+  if probe_fragment_paths "$DRILL_REPO" main "$frags_after"; then
+    grep -qxF changelog.d/README.md "$frags_after" ||
+      problems="$problems; changelog.d/README.md is gone after the promotion — the directory's marker survives the consumption"
+    leftover="$(grep -vxF changelog.d/README.md "$frags_after" | tr '\n' ' ')"
+    [ -z "$leftover" ] ||
+      problems="$problems; fragments survived the promotion ($leftover) — a final consumes them"
+  else
+    problems="$problems; the fragment list did not read back at $DRILL_REPO@main after the promotion, so the marker and leftover fragment checks were never taken"
+  fi
   if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
     [ "$armed" = "$DRILL_V4-dev" ] ||
       problems="$problems; main reads '$armed' after the promotion, expected '$DRILL_V4-dev'"
