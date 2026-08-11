@@ -1044,6 +1044,42 @@ check "a write that fails once aborts rather than retrying" 0 "" test "$write_rc
 check "exactly one commit was attempted" 0 "" calls_are 1 "git/commits --input -"
 check "and exactly one tree was written under it" 0 "" calls_are 1 "git/trees --input -"
 
+# The other two writes in the same function, each failing in its own case,
+# because a write only proves it was not retried by failing: the tree count
+# above and the bootstrap count further up are both taken on writes that
+# *succeeded*, so a retry added to either would have left them green. The
+# sweep found exactly that — mutations giving the tree write and the bootstrap
+# PUT a retry loop red nothing without these two.
+faults "0	1	POST repos/*/git/trees	500	Internal Server Error"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$FORK" main "a commit whose tree write fails once" \
+  "$TMP/write.manifest" >"$TMP/treewrite.out" 2>&1
+tree_write_rc=$?
+check "a tree write that fails once aborts rather than retrying" 0 "" \
+  test "$tree_write_rc" -eq 1
+check "exactly one tree was attempted" 0 "" calls_are 1 "git/trees --input -"
+check "and no commit was built on a tree that never landed" 0 "" \
+  calls_are 0 "git/commits --input -"
+
+# The bootstrap's own write, on the one door an empty repository opens: the
+# contents PUT. A fresh repo, so the path is reached at all.
+stub_reset
+PUTPROBE="$SCRATCH_OWNER/put-probe"
+with_stub scratch_create "$PUTPROBE" >/dev/null 2>&1
+faults "0	1	PUT repos/*/contents/*	500	Internal Server Error"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$PUTPROBE" main "the armed fixture at 0.7.0-dev" \
+  "$TMP/boot.manifest" >"$TMP/putwrite.out" 2>&1
+put_write_rc=$?
+check "a bootstrap write that fails once aborts rather than retrying" 0 "" \
+  test "$put_write_rc" -eq 1
+check "exactly one bootstrap PUT was attempted" 0 "" \
+  calls_are 1 "contents/VERSION --method PUT"
+# One ref read: the does-it-exist read that sent us down the bootstrap path.
+# A second would mean the re-read ran under a write that never landed.
+check "and the re-read never ran under a write that failed" 0 "" \
+  calls_are 1 "git/ref/heads/main"
+
 # The base-tree read, which is the call the 0.7.0 cut's third abort came from
 # — `409 Git Repository is empty.` from the git data API about a repo
 # `gh repo create` had just returned — and the one routing in this change that
