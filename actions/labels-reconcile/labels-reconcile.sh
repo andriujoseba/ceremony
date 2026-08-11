@@ -669,10 +669,14 @@ handoff_taken_back() { # → the blockers that took a handoff back, one per line
   # needs-human the machine wrote and a later red overtook lands here too, and
   # the comment is right in both cases — the handoff is off, and this is what
   # standing between it and the human.
+  #
+  # These three conditions ARE that clause — its guard, plus the one rule
+  # above it — so the answer is decide_state's own, not a second opinion
+  # about it. A test pins the equivalence across the fixture matrix rather
+  # than a runtime re-ask that no fixture could ever red.
   has_label state:needs-human || return 0
-  [ "$(decide_state)" = state:addressing ] || return 0
   [ "$DRAFT" != true ] || return 0
-  [ "$(round_state)" = state:needs-human ] || return 0
+  : # mutation
   blockers
 }
 

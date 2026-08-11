@@ -1041,6 +1041,15 @@ expect "a directed hold degrades out of needs-human" yes \
   "$(grep -q 'state -> state:addressing' <<<"$held" && echo yes || echo no)"
 expect "...silently: blocked is its own visible carrier" 0 "$(posted_count 96)"
 
+# A red head UNDER a standing block: the state was already the agent's for
+# the round's reason, so :597 never fired and nothing was taken back. The
+# builder is owed "a reviewer blocked", which the round already says.
+mixed="$(takeback_probe 99 state:needs-human tbhead1 block FAILURE)"
+expect "a blocked round on a red head degrades" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$mixed" && echo yes || echo no)"
+expect "...silently: the round moved the state, the blocker only rode along" 0 \
+  "$(posted_count 99)"
+
 clean="$(takeback_probe 97 state:needs-human tbhead1 approve SUCCESS)"
 expect "a clear branch keeps needs-human" no \
   "$(grep -q 'state -> state:addressing' <<<"$clean" && echo yes || echo no)"
@@ -1080,6 +1089,70 @@ expect "a set is canonicalized by sort, so emitter order cannot re-fire it" \
   "$(printf 'blocker:ci-red\nblocker:conflict\n' | handoff_takeback_set)"
 expect "...joined with commas, sorted" 'blocker:ci-red,blocker:conflict' \
   "$(printf 'blocker:conflict\nblocker:ci-red\n' | handoff_takeback_set)"
+
+# -- the identity the predicate rests on ------------------------------------
+# handoff_taken_back is decide_state's :597 clause asked as a question, not a
+# second opinion about it: it re-states that clause's guard plus the one rule
+# above it. So over any fixture, a reported take-back must be a state
+# decide_state really did move to addressing — a precedence edit that broke
+# the identity would otherwise surface only as a comment about a take-back
+# that never happened, on a live PR.
+tb_at="$(iso_at $((RNOW - 3600)))"
+tb_approve="$(reviews \
+  "$(rev "$BOT1" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+tb_block="$(reviews \
+  "$(rev "$BOT1" CHANGES_REQUESTED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+tb_comment="$(reviews \
+  "$(rev "$BOT1" COMMENTED tbhead1 "looks fine" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+tb_stale="$(reviews \
+  "$(rev "$BOT1" APPROVED oldhead "" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+
+takeback_equivalence() { # → "<take-backs reported> <disagreements with decide_state>"
+  local draft checks mergeable labels round human fired=0 disagreed=0
+  HEAD_SHA=tbhead1
+  for draft in true false; do
+    for checks in SUCCESS FAILURE; do
+      for mergeable in MERGEABLE CONFLICTING; do
+        for round in approve block comment stale; do
+          for human in "" "$HUMAN"; do
+            # The needs-ruling and blocked variants are deliberately not on
+            # this axis: both sit BELOW :597, so they are only ever reached
+            # with no blocker standing and can never report a take-back to
+            # check. Their silence is pinned by its own probe above.
+            for labels in state:needs-human state:bots-reviewing; do
+              DRAFT="$draft" CHECKS="$checks" MERGEABLE="$mergeable"
+              LABELS="$labels" REQUESTED="$human"
+              case "$round" in
+                approve) REVIEWS_JSON="$tb_approve" ;;
+                block) REVIEWS_JSON="$tb_block" ;;
+                comment) REVIEWS_JSON="$tb_comment" ;;
+                stale) REVIEWS_JSON="$tb_stale" ;;
+              esac
+              [ -n "$(handoff_taken_back)" ] || continue
+              fired=$((fired + 1))
+              [ "$(decide_state)" = state:addressing ] || disagreed=$((disagreed + 1))
+            done
+          done
+        done
+      done
+    done
+  done
+  printf '%s %s\n' "$fired" "$disagreed"
+}
+
+read -r tb_fired tb_disagreed <<<"$(takeback_equivalence)"
+expect "every reported take-back is a state decide_state moved to addressing" 0 \
+  "$tb_disagreed"
+expect "...over a matrix that actually reaches the take-back" yes \
+  "$([ "$tb_fired" -gt 0 ] && echo yes || echo no)"
 
 # -- the sweep wiring observes the existing per-PR skip without writing -------
 blind_main_probe() {
