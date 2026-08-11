@@ -142,7 +142,7 @@ probe_branch_from_main() {
   local n="${1:?}" branch="${2:?}" tb="${3:?}" rb="${4:?}" main_sha
   if ! main_sha="$(scratch_ref_sha "$DRILL_REPO" main)"; then
     probe_record "$n" '—' 1 FAIL "$tb" "$tb" "$rb" "$rb" \
-      "the branch SHA did not read back at $DRILL_REPO@main before probe $n, so its probe branch was never created"
+      "aborted before it reached a verdict: the branch SHA did not read back at $DRILL_REPO@main before probe $n, so its probe branch was never created"
     return 1
   fi
   probe_branch "$branch" "$main_sha"
