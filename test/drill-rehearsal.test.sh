@@ -1931,6 +1931,285 @@ check "it never files an answered read as one that never answered" 1 "" \
   grep -qF 'never answered' "$TMP/unarchived.md"
 
 # ---------------------------------------------------------------------------
+# The round trip (#373): the record graded by RE-RENDER rather than by shape.
+#
+# The measurement this section exists to invert is @claude-bot-andresmgsl's,
+# from the 0.7.0 panel round: a copy of the committed record with one
+# hand-added sentence in its preamble passes `record_check`, exit 0. Every
+# must-fail case below is therefore asserted twice — that the shape check
+# still passes it, and that the round trip does not — because a check which
+# passes everything would pass these too, and only the pair measures the gap.
+#
+# Every mutation is taken from the 0.7.0 FIXTURE and never from
+# `drills/0.7.0.md` (D6, D7). The shipped record fails before any mutation is
+# applied — it is an emission at a superseded render shape — so a mutation of
+# it would pass for the wrong reason and prove nothing. That is why the
+# unmutated fixture is asserted to pass in this same suite, immediately below.
+# ---------------------------------------------------------------------------
+FIX="$ROOT/test/fixtures/drill-record-0.7.0.golden.md"
+SHIPPED="$ROOT/drills/0.7.0.md"
+
+# -- must pass --------------------------------------------------------------
+check "the 0.7.0 fixture round-trips byte-identically — the base of every mutation" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$FIX"
+# The fixture's provenance, which is what makes it a re-render of a real
+# ceremony's measurements rather than an authoring (D7). The diff against the
+# shipped record must be the renderer's moves and nothing else. NOTE: D6 names
+# three renderer changes and this diff shows two hunks — `eb15988`'s
+# `$visibility` substitution renders the word `private` here, which is the
+# same word the literal it replaced wrote, so it is present and invisible. The
+# assertion is on the diff's exact contents for exactly that reason: a hunk
+# count would be measuring the coincidence.
+diff "$SHIPPED" "$FIX" | grep '^[<>]' >"$TMP/fixture-provenance.txt"
+cat >"$TMP/fixture-provenance.want" <<'PROV'
+< Disposable **private** repo `cndgrr/ceremony-drill-0.7.0-a3`, created 2026-08-10T16:18:50Z. It carries the
+> Attempt **`3`** used disposable **private** repo `cndgrr/ceremony-drill-0.7.0-a3`, created
+> 2026-08-10T16:18:50Z. It carries the
+> 
+> Because this repo is private, its run links resolve only for the repo owner.
+PROV
+check "the fixture differs from the shipped record by the renderer's moves alone" 0 "" \
+  diff -u "$TMP/fixture-provenance.want" "$TMP/fixture-provenance.txt"
+check "every other line of the fixture is the shipped record's own measurement" 0 "" \
+  bash -c 'diff "$1" "$2" | grep -c "^[<>]" | grep -qx 5' _ "$SHIPPED" "$FIX"
+
+check "a freshly rendered record from the stubbed rehearsal round-trips" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$TMP/emitted.md"
+# The private leg renders a paragraph the public one does not, so it is its
+# own round trip and not a rerun of the previous case.
+check "the private emission round-trips too" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$TMP/private.md"
+check "an aborted probe's record round-trips, dash and all" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$TMP/one-aborted.md"
+
+# A failed drill is a valid record, and its conclusion carries the counts the
+# mutation below edits. Derived from the FIXTURE's own inputs — parsed back
+# out of it, one verdict flipped, re-rendered — so the count case is a
+# mutation of the fixture's data and not of a record from somewhere else.
+record_parse "$FIX" "$TMP/fx-ctx.tsv" "$TMP/fx-probes.tsv" "$TMP/fx-setup.tsv"
+check "the fixture's own inputs parse back out of it" 0 "" \
+  test -s "$TMP/fx-probes.tsv"
+sed 's/\tPASS\t1\t1\t1\t1\trefused at decide/\tFAIL\t1\t2\t1\t1\ttags moved 1→2, expected a delta of 0/' \
+  "$TMP/fx-probes.tsv" >"$TMP/fx-failed.tsv"
+record_render "$TMP/fx-ctx.tsv" "$TMP/fx-failed.tsv" "$TMP/fx-setup.tsv" >"$TMP/rt-failed.md"
+check "a failed drill's record round-trips — a valid record is still an emission" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$TMP/rt-failed.md"
+
+# -- the mutation floor -----------------------------------------------------
+# One sentence added to the preamble. The prose there is computed from the
+# probe rows, so the render will not write this line back and the round trip
+# reports it — while the shape check, which greps that prose rather than
+# deriving it, sees nothing wrong at all.
+sed '7a A reviewer added this sentence by hand.' "$FIX" >"$TMP/rt-preamble.md"
+check "the mutation floor: the shape check passes a hand-added sentence" 0 \
+  "eight probe rows" record_check "$TMP/rt-preamble.md"
+check "the round trip fails it" 1 "A reviewer added this sentence by hand." \
+  record_roundtrip "$TMP/rt-preamble.md"
+check "and names the line it is on" 1 "first difference at line 8" \
+  record_roundtrip "$TMP/rt-preamble.md"
+
+# A reordered context field: the disposal sentence moved above the rc-ladder
+# paragraph. The parse finds each field by its own sentence and does not care
+# what order they come in, so this is caught by the RE-RENDER putting them
+# back — which is the point. The file must be what the renderer writes, not
+# merely something the parse can read.
+{
+  sed -n '1,25p' "$FIX"
+  sed -n '33p' "$FIX"
+  sed -n '26,32p' "$FIX"
+  sed -n '34,$p' "$FIX"
+} >"$TMP/rt-reordered.md"
+check "a reordered context field still passes the shape check" 0 \
+  "eight probe rows" record_check "$TMP/rt-reordered.md"
+check "the round trip fails a reordered context field" 1 \
+  "first difference at line 26" record_roundtrip "$TMP/rt-reordered.md"
+
+# The same, one field deeper: the candidate ref and the candidate SHA swapped
+# in the run sentence. Nothing local catches it — both are free-form strings —
+# but the render writes the SHA twice, and the second copy no longer follows
+# from the first.
+sed -e '4s/`build\/367-cut-0-7-0`/`e6caf31d2c102532efa897ea52903b8a79dd6a65`/' \
+  -e '5s/`e6caf31d2c102532efa897ea52903b8a79dd6a65`/`build\/367-cut-0-7-0`/' \
+  "$FIX" >"$TMP/rt-swapped.md"
+check "the round trip fails a ref and a SHA swapped in the run sentence" 1 \
+  "first difference at line" record_roundtrip "$TMP/rt-swapped.md"
+
+# An edited run ID, INCONSISTENTLY (D8): `record_run_cell` builds the link
+# text and the URL out of one variable, so a record where they disagree is not
+# its output — and that is what a hand edit to a run ID leaves behind. Each
+# side is asserted alone, because "an edited run ID fails" would otherwise be
+# read as more than it proved. It is caught in the PARSE, which is a better
+# diagnostic than the same edit surfacing as a diff.
+sed '66s/\[31408496126\]/[31409999999]/' "$FIX" >"$TMP/rt-runid-text.md"
+check "an edited run ID passes the shape check, which only greps for one" 0 \
+  "eight probe rows" record_check "$TMP/rt-runid-text.md"
+check "the round trip fails a run ID edited in the link text alone" 1 \
+  "link text (31409999999) and its URL's run ID (31408496126) disagree" \
+  record_roundtrip "$TMP/rt-runid-text.md"
+check "and names the line that defeated the parse" 1 \
+  "rt-runid-text.md:66" record_roundtrip "$TMP/rt-runid-text.md"
+sed '66s|runs/31408496126|runs/31409999999|' "$FIX" >"$TMP/rt-runid-url.md"
+check "the round trip fails a run ID edited in the URL alone" 1 \
+  "link text (31408496126) and its URL's run ID (31409999999) disagree" \
+  record_roundtrip "$TMP/rt-runid-url.md"
+check "and names that line too" 1 \
+  "rt-runid-url.md:66" record_roundtrip "$TMP/rt-runid-url.md"
+# The boundary, pinned rather than left to be discovered (D8): a run ID
+# rewritten on BOTH sides is data, not authorship. The file is then exactly
+# what the renderer emits for that data, and no self-describing record can say
+# otherwise — D4 rejects the committed-inputs design that could. The run link
+# is what a reader checks that against, and drills/README.md says so.
+sed '66s/31408496126/31409999999/g' "$FIX" >"$TMP/rt-runid-both.md"
+check "a run ID rewritten on both sides is data, and the round trip says so" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$TMP/rt-runid-both.md"
+
+# A changed count in the conclusion. The conclusion is derived from the probe
+# rows, so the render writes the count the rows imply and the edit cannot
+# survive being regenerated.
+check "the fixture's failed variant states the count that is about to be edited" 0 \
+  "Not established: 1 of the eight" cat "$TMP/rt-failed.md"
+sed 's/Not established: 1 of the eight/Not established: 3 of the eight/' \
+  "$TMP/rt-failed.md" >"$TMP/rt-count.md"
+check "a changed conclusion count still passes the shape check" 0 \
+  "eight probe rows" record_check "$TMP/rt-count.md"
+check "the round trip fails a changed conclusion count" 1 \
+  "Not established: 3 of the eight" record_roundtrip "$TMP/rt-count.md"
+
+# A truncated record: the probe table cut in half. The rows that remain still
+# parse, and the render then writes the conclusion those four rows imply —
+# four claims and four "nothing established" lines — which is not this file.
+grep -vE '^\| [5678] \|' "$FIX" >"$TMP/rt-halved.md"
+check "a halved probe table reds the shape check as it always did" 1 \
+  "the probe table has 4 rows, expected 8" record_check "$TMP/rt-halved.md"
+check "the round trip fails a halved probe table" 1 \
+  "first difference at line" record_roundtrip "$TMP/rt-halved.md"
+
+# -- D5: a valid shape whose parse fails ------------------------------------
+# The failure mode that would quietly re-open the hole is "unparseable
+# therefore fine". Both cases below pass `record_check` — they are shaped like
+# records — and both are refused by the parse, by line number.
+check "a pipe in a probe row's note passes the shape check" 0 "eight probe rows" \
+  bash -c 'sed "66s/refused at decide/refused at decide | by the door/" "$1" >"$2"
+    source "$3/drill/lib/probes.sh"; source "$3/drill/lib/record.sh"
+    record_check "$2"' _ "$FIX" "$TMP/rt-pipe.md" "$ROOT"
+check "the parse refuses it, naming the line and the cell count" 1 \
+  "the probe row has 7 cells, expected 6" record_roundtrip "$TMP/rt-pipe.md"
+check "an unparseable record is a failure and never a skip" 1 \
+  "cannot be parsed back into the inputs that would render it" \
+  record_roundtrip "$TMP/rt-pipe.md"
+# A count column turned into prose: shaped like a table, not a measurement.
+sed '68s/| 1 → 2 | 1 → 2 |/| many | more |/' "$FIX" >"$TMP/rt-prose-counts.md"
+check "the parse refuses a count cell that is prose, naming the line" 1 \
+  "rt-prose-counts.md:68: the tags cell is not a before/after pair" \
+  record_roundtrip "$TMP/rt-prose-counts.md"
+# A record whose sections are gone entirely is refused before any line number
+# can be meaningful, and says which heading it wanted.
+head -n 62 "$FIX" >"$TMP/rt-decapitated.md"
+check "a record missing a whole section names the heading it wanted" 1 \
+  "no '## Setup, and the runs that are not probes' heading" \
+  record_roundtrip "$TMP/rt-decapitated.md"
+check "a record that is not one at all is refused, not skipped" 1 \
+  "too short to be a rendered record" \
+  bash -c 'printf "hello\n" >"$1"
+    source "$2/drill/lib/probes.sh"; source "$2/drill/lib/record.sh"
+    record_roundtrip "$1"' _ "$TMP/rt-notarecord.md" "$ROOT"
+
+# -- D6: no grandfathering --------------------------------------------------
+# The shipped 0.7.0 record is an emission at a SUPERSEDED render shape: three
+# commits moved `## Where` after it was committed. It is not re-rendered to
+# match (a guard never rewrites the evidence it grades) and it is not excused
+# either — `record_roundtrip` carries no version gate and no shape exemption,
+# so this failure IS the criterion. The fixture above is what carries this
+# record's measurements forward.
+check "the shipped 0.7.0 record is classified an emission, not excused as prose" 0 \
+  "" bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_class "$2"; [ "$RECORD_CLASS" = emission ]' _ "$ROOT" "$SHIPPED"
+check "and it FAILS the round trip — a superseded render shape is not grandfathered" 1 \
+  "not the scratch-repo line" record_roundtrip "$SHIPPED"
+check "the failure names the line the render moved" 1 "0.7.0.md:13" \
+  record_roundtrip "$SHIPPED"
+
+# -- D9: the class is read from the record, and it fails closed -------------
+# Two of drills/README.md's three record shapes are hand-written by design, so
+# the step classifies before it grades. The discriminator is the record's own
+# declaration — never a path list or a version list someone must maintain.
+check "a doors-unchanged record declares a scope ruling and is out of scope" 0 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_class "$2"; [ "$RECORD_CLASS" = scope-ruling ]' _ "$ROOT" "$ROOT/drills/0.6.3.md"
+check "the emission class is declared by the instrument's own run sentence" 0 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_class "$2"; [ "$RECORD_CLASS" = emission ]' _ "$ROOT" "$FIX"
+# Fails closed, both directions of ambiguity. A record declaring NEITHER shape
+# is graded as an emission — `drills/0.1.0.md` is the standing instance, from
+# before either convention existed — and so is one declaring BOTH.
+check "a record declaring neither shape is graded as an emission" 0 \
+  "declares NEITHER shape" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_class "$2"; printf "%s: %s\n" "$RECORD_CLASS" "$RECORD_CLASS_WHY"
+    [ "$RECORD_CLASS" = emission ]' _ "$ROOT" "$ROOT/drills/0.1.0.md"
+# Appended rather than inserted, so the case isolates what it is about: the
+# heading lands after the conclusion, where nothing is parsed, so the parse
+# still succeeds and the failure is the round trip's rather than a displaced
+# line's. A record that declared both AND broke the parse would fail for two
+# reasons and measure neither.
+{
+  cat "$FIX"
+  printf '\n## Scope ruling — doors unchanged, no disposable-repo rehearsal\n'
+} >"$TMP/rt-both-classes.md"
+check "a record declaring both shapes is graded as an emission too" 0 \
+  "declares BOTH shapes" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_class "$2"; printf "%s: %s\n" "$RECORD_CLASS" "$RECORD_CLASS_WHY"
+    [ "$RECORD_CLASS" = emission ]' _ "$ROOT" "$TMP/rt-both-classes.md"
+check "and being graded as an emission, it fails the round trip" 1 \
+  "## Scope ruling" record_roundtrip "$TMP/rt-both-classes.md"
+
+# -- the CI guard, keyed on the tree's version (#373 D3, D9) ----------------
+# The step decides in a file a test can drive, so every branch is asserted
+# here rather than only in a workflow run nobody can rehearse.
+GUARD="$ROOT/.github/scripts/record-roundtrip.sh"
+guard_tree() { # <name> <version> [record-source]
+  mkdir -p "$TMP/guard-$1/drills"
+  printf '%s\n' "$2" >"$TMP/guard-$1/VERSION"
+  [ -z "${3-}" ] || cp "$3" "$TMP/guard-$1/drills/$2.md"
+}
+guard_tree dev 0.7.1-dev
+check "a -dev tree skips the round trip" 0 \
+  "version '0.7.1-dev' is a development tree" bash "$GUARD" "$TMP/guard-dev"
+# The skip is visible in the step's output rather than silent: an operator
+# reading a green log must be able to tell a guard that passed from one that
+# decided the tree was not its business.
+check "and says out loud that it decided the tree was not its business" 0 \
+  "nothing to grade; only ceremony trees ship a record" bash "$GUARD" "$TMP/guard-dev"
+guard_tree bare 9.9.9 "$FIX"
+check "a bare-version tree runs the round trip and passes a real emission" 0 \
+  "graded as an emission" bash "$GUARD" "$TMP/guard-bare"
+guard_tree edited 9.9.9 "$TMP/rt-preamble.md"
+check "a bare-version tree fails the job when the round trip fails" 1 \
+  "A reviewer added this sentence by hand." bash "$GUARD" "$TMP/guard-edited"
+check "and says the unblock is to re-run the instrument, not to edit harder" 1 \
+  "The unblock is not to edit the record until it passes" \
+  bash "$GUARD" "$TMP/guard-edited"
+# D9's standing instance: the release immediately before 0.7.0 is a
+# doors-unchanged record, and as this guard was first specced it would have
+# red a legitimate release.
+guard_tree ruling 0.6.3 "$ROOT/drills/0.6.3.md"
+check "a doors-unchanged release passes the step without being graded" 0 \
+  "is NOT" bash "$GUARD" "$TMP/guard-ruling"
+check "and the step says which branch it took" 0 \
+  "it declares a scope ruling" bash "$GUARD" "$TMP/guard-ruling"
+check "and says why the round trip does not apply to it" 0 \
+  "the only shape with a renderer to re-run" bash "$GUARD" "$TMP/guard-ruling"
+guard_tree unclassifiable 9.9.9 "$ROOT/drills/0.1.0.md"
+check "an unclassifiable record is graded as an emission, not skipped" 1 \
+  "declares NEITHER shape" bash "$GUARD" "$TMP/guard-unclassifiable"
+guard_tree missing 9.9.9
+check "a bare-version tree with no record at all fails" 1 \
+  "there is no drill" bash "$GUARD" "$TMP/guard-missing"
+check "a tree with no version source is an error, never a silent pass" 1 \
+  "cannot read the version" bash "$GUARD" "$TMP/guard-nonesuch"
+
+# ---------------------------------------------------------------------------
 # Argument refusals: the CLI is a door too.
 # ---------------------------------------------------------------------------
 rehearsal_args() { (cd "$ROOT" && ./drill/rehearsal.sh "$@"); }

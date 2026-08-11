@@ -88,6 +88,15 @@ jobs:
       - uses: ./actions/changelog-assembled
       - uses: ./actions/drill-recorded
       - uses: ./actions/runner-isolated
+      # The record's round trip (issue #373), keyed on a bare version exactly
+      # as drill-recorded is, and deliberately NOT inside it: that action is
+      # vendored into box, rig and cast, and those consumers have no
+      # `drill/lib` to re-render with. So the authorship grading lands here,
+      # on this repository's real tree, beside the existence guard it
+      # complements — a `run:` step and not a `uses:` one, because it reads
+      # this repo's own internals and is not a thing a consumer can call.
+      - name: Drill record round trip
+        run: bash .github/scripts/record-roundtrip.sh
 
   # Exercises changelog-monotonic the way a consumer does, against a
   # CONSTRUCTED history. The self-guards job above runs the same action on

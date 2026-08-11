@@ -600,3 +600,609 @@ record_check() {
     echo "record_check: $word probe rows — $exempt aborted before reaching a run and $carries the aborted mark in place of a run ID, the rest carry a run ID and their before/after counts — and a conclusion that claims only what they measured."
   fi
 }
+
+# ---------------------------------------------------------------------------
+# The round trip (#373) — the record graded by re-render.
+#
+# `record_check` grades SHAPE, and a shape is what a hand edit leaves intact:
+# a copy of the committed 0.7.0 record with one sentence added to its preamble
+# passes it, exit 0 (@claude-bot-andresmgsl, the 0.7.0 panel round). Row
+# counts, run IDs, before/after counts and the door sentence are all still
+# there after a prose edit, so all of them still pass. The comment above
+# `record_check` conceded the shape of it — "a hand-touched record, or a
+# second renderer, gets the same grading the table has always had" — and a
+# code comment naming a hazard is not a guard against it.
+#
+# What actually discharged #313's "the script's emission, not a hand-written
+# record" at the 0.7.0 cut was two reviewers rebuilding the render inputs from
+# the record's own stated measurements, re-rendering and diffing. That worked
+# and it is not a mechanism: it was done by hand, twice, at one cut, and
+# nothing would have done it at the next.
+#
+# So the grading moves from shape to AUTHORSHIP. Parse the record back into
+# the three inputs `record_render` consumes, render those, demand the bytes
+# back. A hand-added sentence, a reordered field, an edited count: none of
+# them survive being regenerated from what the file itself claims, because
+# the render writes that prose from the measurements and not from the file.
+# ---------------------------------------------------------------------------
+
+# The parse helpers hand back through a global rather than on stdout, and the
+# exit status says which of the two it is holding: the recovered value on 0,
+# the reason it could not recover one on 1. Command substitution would run
+# them in a subshell, and a refusal owes the caller the reason AND the line
+# number it happened on — only the caller knows the second, so the reason has
+# to survive the return. Read it on the line after the call, never further.
+RECORD_PARSE_OUT=''
+
+# record_parse_die <file> <lineno> <why> <line> — D5's contract: a record that
+# cannot be parsed FAILS and says which line defeated it. "Unparseable
+# therefore fine" is the silent skip that would re-open the hole this closes,
+# so there is no path here that returns 0 without a value.
+record_parse_die() {
+  printf 'record_parse: %s:%s: %s\n' "${1:?}" "${2:?}" "${3:?}" >&2
+  printf '  | %s\n' "${4-}" >&2
+  return 1
+}
+
+# record_parse_run_cell <cell> <scratch-repo> — a rendered run cell back into
+# `<run><TAB><attempt>`, or the reason it is not one, in RECORD_PARSE_OUT.
+#
+# The inversion is total on purpose. `record_run_cell` can only emit a cell
+# whose link text, whose URL's run ID and whose URL's repo all agree — it
+# builds all three out of two variables — so a cell where they disagree is
+# not this renderer's output. That matters because it is the commonest hand
+# edit a record can suffer: a run ID retyped on one side of the link. Caught
+# here it is a parse failure naming the line, which is a better diagnostic
+# than the same edit surfacing as a diff several sections down.
+record_parse_run_cell() {
+  local cell="${1-}" repo="${2:?}" attempt=1 text url_repo url_run
+  local link='^\[([0-9]+)\]\(https://github\.com/(.+)/actions/runs/([0-9]+)\)$'
+  local suffix='^(.*) \(attempt ([0-9]+)\)$'
+  # A probe that aborted before any run existed has no run to link, and
+  # `record_run_cell` renders both the empty run and an explicit dash the
+  # same way, so the dash is what inverts to.
+  if [ "$cell" = '—' ]; then
+    RECORD_PARSE_OUT="—"$'\t'"1"
+    return 0
+  fi
+  if [[ "$cell" =~ $suffix ]]; then
+    cell="${BASH_REMATCH[1]}"
+    attempt="${BASH_REMATCH[2]}"
+    # The suffix is emitted only above 1, so `(attempt 1)` is a cell the
+    # renderer would never have written.
+    if [ "$attempt" -le 1 ]; then
+      RECORD_PARSE_OUT="the run cell carries '(attempt $attempt)', which record_run_cell emits only above attempt 1"
+      return 1
+    fi
+  fi
+  if [[ ! "$cell" =~ $link ]]; then
+    RECORD_PARSE_OUT="the run cell is not a run link: '$cell'"
+    return 1
+  fi
+  text="${BASH_REMATCH[1]}"
+  url_repo="${BASH_REMATCH[2]}"
+  url_run="${BASH_REMATCH[3]}"
+  if [ "$text" != "$url_run" ]; then
+    RECORD_PARSE_OUT="the run cell's link text ($text) and its URL's run ID ($url_run) disagree — one side was edited"
+    return 1
+  fi
+  if [ "$url_repo" != "$repo" ]; then
+    RECORD_PARSE_OUT="the run link points at $url_repo, but this record's scratch repo is $repo"
+    return 1
+  fi
+  RECORD_PARSE_OUT="$text"$'\t'"$attempt"
+}
+
+# record_parse <record-file> <ctx-out> <probes-out> <setup-out> — invert
+# `record_render` into the three TSVs the instrument writes (#373 D1).
+#
+# Only the render's INPUTS are recovered here. Everything the render computes
+# — the preamble's run count, the failed count, the door sentences, the
+# per-probe claims, the not-established tail — is deliberately not read: it is
+# regenerated from the probe rows, which is exactly what makes an edited count
+# show up as a difference instead of being parsed back in and re-emitted.
+#
+# Everything it needs is in the file by construction, the record being
+# generated from precisely this data. Where that stops being true the RENDER
+# is what moves, never the tolerance here.
+#
+# The regexes below are the render's own sentences, so they are single-quoted
+# and they carry backticks and dollars as literal bytes of the record — never
+# as expansions. Function-scoped rather than per-line: every one of them is
+# the same deliberate quoting, and eight repetitions of the directive would
+# be harder to read than the rule stated once.
+# shellcheck disable=SC2016
+record_parse() {
+  local file="${1:?record_parse: record file required}"
+  local ctx_out="${2:?record_parse: ctx output required}"
+  local probes_out="${3:?record_parse: probes output required}"
+  local setup_out="${4:?record_parse: setup output required}"
+  if [ ! -f "$file" ]; then
+    printf 'record_parse: %s: no such file\n' "$file" >&2
+    return 1
+  fi
+
+  local -a lines=()
+  local line
+  # `|| [ -n "$line" ]` keeps a final unterminated line: the render always
+  # ends with a newline, so a record that does not is already not its output
+  # and the difference should be reported, not silently absorbed.
+  while IFS= read -r line || [ -n "$line" ]; do lines+=("$line"); done <"$file"
+  local total="${#lines[@]}"
+  if [ "$total" -lt 6 ]; then
+    printf 'record_parse: %s: %s line(s) — too short to be a rendered record\n' \
+      "$file" "$total" >&2
+    return 1
+  fi
+
+  # -- the fixed opening ----------------------------------------------------
+  # Lines 1 and 3-5 are literal in the render's first heredoc, so their shape
+  # is not a guess: a record whose opening is not this was not rendered here.
+  local ver stamp runner candidate_ref candidate_sha
+  local re
+  re='^# (.+) — drill record$'
+  [[ "${lines[0]}" =~ $re ]] ||
+    record_parse_die "$file" 1 "not the record heading" "${lines[0]}" || return 1
+  ver="${BASH_REMATCH[1]}"
+  [ -z "${lines[1]}" ] ||
+    record_parse_die "$file" 2 "expected a blank line after the heading" "${lines[1]}" || return 1
+  re='^Run (.+) by `(.+)` with `drill/rehearsal\.sh` against the (.+)$'
+  [[ "${lines[2]}" =~ $re ]] ||
+    record_parse_die "$file" 3 "not the run sentence's first line" "${lines[2]}" || return 1
+  stamp="${BASH_REMATCH[1]}"
+  runner="${BASH_REMATCH[2]}"
+  if [ "${BASH_REMATCH[3]}" != "$ver" ]; then
+    record_parse_die "$file" 3 \
+      "the run sentence names version ${BASH_REMATCH[3]}, the heading names $ver" \
+      "${lines[2]}" || return 1
+  fi
+  re='^candidate, candidate ref `(.+)`, canonical candidate SHA$'
+  [[ "${lines[3]}" =~ $re ]] ||
+    record_parse_die "$file" 4 "not the candidate-ref line" "${lines[3]}" || return 1
+  candidate_ref="${BASH_REMATCH[1]}"
+  re='^`(.+)`\.$'
+  [[ "${lines[4]}" =~ $re ]] ||
+    record_parse_die "$file" 5 "not the candidate-SHA line" "${lines[4]}" || return 1
+  candidate_sha="${BASH_REMATCH[1]}"
+
+  # -- the sections ---------------------------------------------------------
+  # The five headings are constants in the render and they come in one order.
+  # Finding them first turns every field lookup below into a bounded search,
+  # so a sentence added to one section cannot be answered by a line in
+  # another.
+  local -a want=('## Where' '## Candidate-ref deviation' '## Probes'
+    '## Setup, and the runs that are not probes' '## What the rehearsal establishes')
+  local -a at=()
+  local h i seen
+  for h in "${want[@]}"; do
+    seen=-1
+    for ((i = 5; i < total; i++)); do
+      [ "${lines[i]}" = "$h" ] || continue
+      if [ "$seen" -ge 0 ]; then
+        record_parse_die "$file" "$((i + 1))" "'$h' appears more than once" "${lines[i]}" ||
+          return 1
+      fi
+      seen="$i"
+    done
+    if [ "$seen" -lt 0 ]; then
+      printf "record_parse: %s: no '%s' heading — not a rendered record\\n" "$file" "$h" >&2
+      return 1
+    fi
+    at+=("$seen")
+  done
+  for ((i = 1; i < ${#at[@]}; i++)); do
+    if [ "${at[i]}" -le "${at[i - 1]}" ]; then
+      record_parse_die "$file" "$((at[i] + 1))" \
+        "'${want[i]}' comes before '${want[i - 1]}'" "${lines[at[i]]}" || return 1
+    fi
+  done
+  local where_at="${at[0]}" deviation_at="${at[1]}" probes_at="${at[2]}"
+  local setup_at="${at[3]}" establishes_at="${at[4]}"
+
+  # -- ## Where -------------------------------------------------------------
+  local attempt visibility private scratch created rc_version disposal
+  local w=$((where_at + 2))
+  re='^Attempt \*\*`(.+)`\*\* used disposable \*\*(private|public)\*\* repo `(.+)`, created$'
+  [[ "${lines[w]-}" =~ $re ]] ||
+    record_parse_die "$file" "$((w + 1))" "not the scratch-repo line" "${lines[w]-}" || return 1
+  attempt="${BASH_REMATCH[1]}"
+  visibility="${BASH_REMATCH[2]}"
+  scratch="${BASH_REMATCH[3]}"
+  private=true
+  [ "$visibility" = private ] || private=false
+  re='^(.+)\. It carries the$'
+  [[ "${lines[w + 1]-}" =~ $re ]] ||
+    record_parse_die "$file" "$((w + 2))" "not the creation-stamp line" "${lines[w + 1]-}" || return 1
+  created="${BASH_REMATCH[1]}"
+
+  re='^The rc legs run one rung further along the ladder — `(.+)-dev` →$'
+  record_parse_one "$file" "$where_at" "$deviation_at" "$re" 'the rc ladder line' || return 1
+  rc_version="$RECORD_PARSE_OUT"
+  re='^\*\*Disposal, as this run observed it\*\*: (.+)\.$'
+  record_parse_one "$file" "$where_at" "$deviation_at" "$re" 'the disposal line' || return 1
+  disposal="$RECORD_PARSE_OUT"
+
+  # -- ## Candidate-ref deviation -------------------------------------------
+  local fork_repo fork_ref fork_head pin
+  re='^`(.+)/\.github/workflows/release\.yml@(.+)`\. That fork ref was$'
+  record_parse_one "$file" "$deviation_at" "$probes_at" "$re" 'the caller pin line' 2 || return 1
+  fork_repo="${RECORD_PARSE_OUT%%$'\t'*}"
+  fork_ref="${RECORD_PARSE_OUT#*$'\t'}"
+  re='^additional commit \(`(.+)`\) rewrites every workflow carrying$'
+  record_parse_one "$file" "$deviation_at" "$probes_at" "$re" 'the fork-head line' || return 1
+  fork_head="$RECORD_PARSE_OUT"
+  re='^`CEREMONY_SELF_REF` to the rewritten pin `(.+)`\. The pins were read back$'
+  record_parse_one "$file" "$deviation_at" "$probes_at" "$re" 'the rewritten-pin line' || return 1
+  pin="$RECORD_PARSE_OUT"
+
+  # -- the probe table ------------------------------------------------------
+  local -a rows=()
+  local n name cell counts_t counts_r result verdict note tb ta rb ra
+  local header='| # | probe | run | tags | releases | result |'
+  local rule='|---|---|---|---|---|---|'
+  local header_seen=0 rule_seen=0
+  for ((i = probes_at + 1; i < setup_at; i++)); do
+    line="${lines[i]}"
+    case "$line" in
+      "$header")
+        header_seen=1
+        continue
+        ;;
+      "$rule")
+        rule_seen=1
+        continue
+        ;;
+      '| '*) ;;
+      *) continue ;;
+    esac
+    if [ "$rule_seen" = 0 ]; then
+      record_parse_die "$file" "$((i + 1))" \
+        'a probe row before the table header' "$line" || return 1
+    fi
+    # The row is split on the render's own ' | ' separator rather than on a
+    # bare '|': a cell containing a pipe would break the table for every
+    # reader, and here it lands as a field count that is not six — a refusal
+    # naming the line, which is the point of D5.
+    local row="${line#| }"
+    row="${row% |}"
+    local -a f=()
+    IFS=$'\t' read -r -a f <<<"${row// | /$'\t'}"
+    if [ "${#f[@]}" -ne 6 ]; then
+      record_parse_die "$file" "$((i + 1))" \
+        "the probe row has ${#f[@]} cells, expected 6" "$line" || return 1
+    fi
+    n="${f[0]}"
+    name="${f[1]}"
+    cell="${f[2]}"
+    counts_t="${f[3]}"
+    counts_r="${f[4]}"
+    result="${f[5]}"
+    if ! record_parse_counts "$counts_t"; then
+      record_parse_die "$file" "$((i + 1))" \
+        "the tags cell is not a before/after pair: '$counts_t'" "$line" || return 1
+    fi
+    tb="${RECORD_PARSE_OUT%%$'\t'*}"
+    ta="${RECORD_PARSE_OUT#*$'\t'}"
+    if ! record_parse_counts "$counts_r"; then
+      record_parse_die "$file" "$((i + 1))" \
+        "the releases cell is not a before/after pair: '$counts_r'" "$line" || return 1
+    fi
+    rb="${RECORD_PARSE_OUT%%$'\t'*}"
+    ra="${RECORD_PARSE_OUT#*$'\t'}"
+    # `record_probe_rows` prints the mark and the note as two arguments with
+    # one space between them, and the mark is a two-way function of the
+    # verdict, so the verdict inverts exactly. The note is taken by stripping
+    # the mark as a literal prefix rather than by slicing a character off the
+    # front: the marks are multi-byte, and `${result:0:1}` is a character
+    # under a UTF-8 locale and a byte under LC_ALL=C.
+    case "$result" in
+      '✅ '*)
+        verdict=PASS
+        note="${result#✅ }"
+        ;;
+      '❌ '*)
+        verdict=FAIL
+        note="${result#❌ }"
+        ;;
+      *)
+        record_parse_die "$file" "$((i + 1))" \
+          "the result cell opens with neither ✅ nor ❌: '$result'" "$line" || return 1
+        ;;
+    esac
+    if ! record_parse_run_cell "$cell" "$scratch"; then
+      record_parse_die "$file" "$((i + 1))" "$RECORD_PARSE_OUT" "$line" || return 1
+    fi
+    rows+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+      "$n" "$name" "${RECORD_PARSE_OUT%%$'\t'*}" "${RECORD_PARSE_OUT#*$'\t'}" \
+      "$verdict" "$tb" "$ta" "$rb" "$ra" "$note")")
+  done
+  if [ "$header_seen" = 0 ] || [ "$rule_seen" = 0 ]; then
+    printf 'record_parse: %s: the Probes section has no table header\n' "$file" >&2
+    return 1
+  fi
+  if [ "${#rows[@]}" -eq 0 ]; then
+    printf 'record_parse: %s: the probe table has no rows\n' "$file" >&2
+    return 1
+  fi
+
+  # -- the setup rows -------------------------------------------------------
+  local -a setups=()
+  local none='None: every run on the scratch repo is a probe row above.'
+  local none_seen=0 conclusion what rest
+  for ((i = setup_at + 1; i < establishes_at; i++)); do
+    line="${lines[i]}"
+    [ -n "$line" ] || continue
+    if [ "$line" = "$none" ]; then
+      none_seen=1
+      continue
+    fi
+    case "$line" in
+      '- **'*) ;;
+      *)
+        record_parse_die "$file" "$((i + 1))" \
+          'not a setup row and not the no-setup sentence' "$line" || return 1
+        ;;
+    esac
+    rest="${line#- \*\*}"
+    cell="${rest%%\*\* (*}"
+    if [ "$cell" = "$rest" ]; then
+      record_parse_die "$file" "$((i + 1))" \
+        'the setup row has no (conclusion) after its run link' "$line" || return 1
+    fi
+    rest="${rest#"$cell"\*\* (}"
+    conclusion="${rest%%) — *}"
+    if [ "$conclusion" = "$rest" ]; then
+      record_parse_die "$file" "$((i + 1))" \
+        'the setup row has no em-dash separator after its conclusion' "$line" || return 1
+    fi
+    what="${rest#"$conclusion") — }"
+    if ! record_parse_run_cell "$cell" "$scratch"; then
+      record_parse_die "$file" "$((i + 1))" "$RECORD_PARSE_OUT" "$line" || return 1
+    fi
+    # `record_setup_rows` renders every setup run at attempt 1 and writes no
+    # attempt of its own, so there is nothing to invert and a cell carrying
+    # one is not its output.
+    if [ "${RECORD_PARSE_OUT#*$'\t'}" != 1 ]; then
+      record_parse_die "$file" "$((i + 1))" \
+        'a setup row carries an attempt, which record_setup_rows never renders' "$line" || return 1
+    fi
+    setups+=("$(printf '%s\t%s\t%s' "${RECORD_PARSE_OUT%%$'\t'*}" "$conclusion" "$what")")
+  done
+  if [ "${#setups[@]}" -gt 0 ] && [ "$none_seen" = 1 ]; then
+    printf 'record_parse: %s: the Setup section says there are none and then lists some\n' \
+      "$file" >&2
+    return 1
+  fi
+  if [ "${#setups[@]}" -eq 0 ] && [ "$none_seen" = 0 ]; then
+    printf 'record_parse: %s: the Setup section has neither rows nor the no-setup sentence\n' \
+      "$file" >&2
+    return 1
+  fi
+
+  # -- the three TSVs, in the shapes the instrument writes ------------------
+  {
+    printf 'version\t%s\n' "$ver"
+    printf 'rc_version\t%s\n' "$rc_version"
+    printf 'scratch\t%s\n' "$scratch"
+    printf 'attempt\t%s\n' "$attempt"
+    printf 'created\t%s\n' "$created"
+    printf 'private\t%s\n' "$private"
+    printf 'candidate_sha\t%s\n' "$candidate_sha"
+    printf 'candidate_ref\t%s\n' "$candidate_ref"
+    printf 'fork_repo\t%s\n' "$fork_repo"
+    printf 'fork_ref\t%s\n' "$fork_ref"
+    printf 'fork_head\t%s\n' "$fork_head"
+    printf 'pin\t%s\n' "$pin"
+    printf 'disposal\t%s\n' "$disposal"
+    printf 'runner\t%s\n' "$runner"
+    printf 'stamp\t%s\n' "$stamp"
+  } >"$ctx_out"
+  printf '%s\n' "${rows[@]}" >"$probes_out"
+  : >"$setup_out"
+  [ "${#setups[@]}" -eq 0 ] || printf '%s\n' "${setups[@]}" >"$setup_out"
+}
+
+# record_parse_counts <cell> — `<before><TAB><after>` out of a `N → M` cell.
+# The two count columns are what every refusal probe is asserted on, so a
+# cell that is prose rather than a pair is a parse failure and not a zero.
+record_parse_counts() {
+  local cell="${1-}" re='^([^ ]+) → ([^ ]+)$'
+  [[ "$cell" =~ $re ]] || return 1
+  RECORD_PARSE_OUT="${BASH_REMATCH[1]}"$'\t'"${BASH_REMATCH[2]}"
+}
+
+# record_parse_one <file> <from> <to> <regex> <what> [captures] — the captures
+# of the ONE line between two headings matching <regex>, tab-joined into
+# RECORD_PARSE_OUT.
+#
+# Exactly one match is required in both directions. None means the sentence
+# the render always writes is not there; more than one means a section was
+# duplicated — neither is something `record_render` emits, and answering a
+# lookup from the first of two matches is how a parse quietly tolerates a
+# record it should have refused.
+#
+# It reads `lines` out of `record_parse`'s scope rather than taking the file
+# again: bash scopes dynamically, the array is the caller's `local`, and
+# re-reading the file per field would make the line numbers in the
+# diagnostics disagree with the ones the caller already reported.
+record_parse_one() {
+  local file="${1:?}" from="${2:?}" to="${3:?}" re="${4:?}" what="${5:?}"
+  # Not `want`: record_parse holds an array by that name, and bash's dynamic
+  # scoping makes the two the same name to a reader and to shellcheck.
+  local captures="${6:-1}"
+  local i seen=-1 out='' c
+  for ((i = from; i < to; i++)); do
+    [[ "${lines[i]}" =~ $re ]] || continue
+    if [ "$seen" -ge 0 ]; then
+      record_parse_die "$file" "$((i + 1))" "$what appears more than once" "${lines[i]}"
+      return 1
+    fi
+    seen="$i"
+    out=''
+    for ((c = 1; c <= captures; c++)); do
+      [ "$c" = 1 ] || out="$out"$'\t'
+      out="$out${BASH_REMATCH[c]}"
+    done
+  done
+  if [ "$seen" -lt 0 ]; then
+    printf 'record_parse: %s: %s is missing between lines %s and %s\n' \
+      "$file" "$what" "$((from + 1))" "$to" >&2
+    return 1
+  fi
+  RECORD_PARSE_OUT="$out"
+}
+
+# ---------------------------------------------------------------------------
+# Which record shape this is (#373 D9) — because the round trip grades
+# EMISSIONS, and two of the three shapes drills/README.md sanctions are
+# hand-written by design.
+#
+# `drills/0.6.2.md` and `drills/0.6.3.md` are doors-unchanged scope rulings
+# (#233), and `drill-recorded` blesses a WAIVED record in its own refusal
+# text. Neither is `record_render`'s output and neither can be. A guard that
+# demanded a round trip of every bare-version tree would red the release
+# immediately before 0.7.0 — two correct guards closing a door on each other.
+#
+# So the class is READ FROM THE RECORD, never from a path list or a version
+# list someone must remember to update: each shape declares itself, and the
+# declaration is written down in drills/README.md so a record author knows
+# which one they are writing.
+# ---------------------------------------------------------------------------
+RECORD_CLASS=''
+RECORD_CLASS_WHY=''
+
+# record_class <record-file> — sets RECORD_CLASS to `emission` or
+# `scope-ruling`, and RECORD_CLASS_WHY to the sentence the step prints.
+#
+# It FAILS CLOSED. A record declaring both shapes, or neither, is graded as an
+# emission and must round-trip: "could not tell" resolving to "allowed" is
+# `drill-recorded`'s own stated hazard and #373 D5's. The four pre-convention
+# records (0.1.0–0.4.0) declare neither and land there by construction; no CI
+# path reads them, because the step reads `drills/$ver.md` and nothing else.
+#
+# SC2016: the discriminator patterns match the record's own Markdown, so their
+# backticks are literal bytes and never expansions — the same rule record_parse
+# states above. SC2034: both variables are the function's whole return value,
+# read by .github/scripts/record-roundtrip.sh and the rehearsal suite.
+# shellcheck disable=SC2016,SC2034
+record_class() {
+  local file="${1:?record_class: record file required}" emission=0 ruling=0
+  if [ ! -f "$file" ]; then
+    printf 'record_class: %s: no such file\n' "$file" >&2
+    return 1
+  fi
+  # The instrument's own run sentence, which `record_render` writes on line 3
+  # of every emission and nothing else writes at all.
+  if grep -qE '^Run .* with `drill/rehearsal\.sh` against the ' "$file"; then
+    emission=1
+  fi
+  # The heading a doors-unchanged or WAIVED record opens its claim with.
+  if grep -qE '^## Scope ruling — ' "$file"; then
+    ruling=1
+  fi
+  if [ "$emission" = 1 ] && [ "$ruling" = 1 ]; then
+    RECORD_CLASS=emission
+    RECORD_CLASS_WHY="it declares BOTH shapes — the instrument's run sentence and a scope ruling — so it cannot be classified, and an unclassifiable record is graded as an emission"
+    return 0
+  fi
+  if [ "$emission" = 1 ]; then
+    RECORD_CLASS=emission
+    RECORD_CLASS_WHY="it carries drill/rehearsal.sh's own run sentence and declares no scope ruling"
+    return 0
+  fi
+  if [ "$ruling" = 1 ]; then
+    RECORD_CLASS=scope-ruling
+    RECORD_CLASS_WHY="it declares a scope ruling — a doors-unchanged or WAIVED record under drills/README.md, hand-written by design"
+    return 0
+  fi
+  RECORD_CLASS=emission
+  RECORD_CLASS_WHY="it declares NEITHER shape — no instrument run sentence and no scope ruling — so it cannot be classified, and an unclassifiable record is graded as an emission"
+}
+
+# record_roundtrip <record-file> — the check (#373 D2): the record passes when
+# `record_render(record_parse(file))` is byte-identical to the file.
+#
+# That is a grading of authorship. Any hand-added sentence, any reordered
+# field, any second renderer's output fails it, because none of them survive
+# being regenerated from what the file itself claims.
+record_roundtrip() {
+  local file="${1:?record_roundtrip: record file required}" work rc=0
+  if [ ! -f "$file" ]; then
+    printf 'record_roundtrip: %s: no such file\n' "$file" >&2
+    return 1
+  fi
+  work="$(mktemp -d)" || return 1
+  # The parse's own refusal already names the line that defeated it, so
+  # nothing is layered on top of it — the second sentence only says which
+  # check was asking.
+  if ! record_parse "$file" "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv"; then
+    rm -rf "$work"
+    printf 'record_roundtrip: %s cannot be parsed back into the inputs that would render it, so it cannot be graded as this script'"'"'s emission.\n' \
+      "$file" >&2
+    return 1
+  fi
+  if ! record_render "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv" >"$work/rendered.md"; then
+    rm -rf "$work"
+    printf 'record_roundtrip: %s: record_render refused the inputs parsed back out of it.\n' \
+      "$file" >&2
+    return 1
+  fi
+  if cmp -s "$file" "$work/rendered.md"; then
+    rm -rf "$work"
+    echo "record_roundtrip: $file is byte-identical to record_render's output from the inputs the file itself states — the script's emission, not a hand-written record."
+    return 0
+  fi
+  record_roundtrip_report "$file" "$work/rendered.md"
+  rc=$?
+  rm -rf "$work"
+  [ "$rc" = 0 ] || return "$rc"
+  return 1
+}
+
+# record_roundtrip_report <record-file> <re-rendered> — the first differing
+# line, with both sides. One line and not a whole diff: the re-render's prose
+# is computed from the rows, so a single edited count moves several sentences
+# and a full diff buries the edit that caused them under its consequences.
+record_roundtrip_report() {
+  local file="${1:?}" rendered="${2:?}" i max a b
+  local -a want=() got=()
+  mapfile -t want <"$file"
+  mapfile -t got <"$rendered"
+  max="${#want[@]}"
+  [ "${#got[@]}" -le "$max" ] || max="${#got[@]}"
+  printf 'record_roundtrip: %s is not what record_render emits from the inputs it states.\n' \
+    "$file" >&2
+  for ((i = 0; i < max; i++)); do
+    a="${want[i]-}"
+    b="${got[i]-}"
+    [ "$a" != "$b" ] || continue
+    printf '  first difference at line %s:\n' "$((i + 1))" >&2
+    if [ "$i" -ge "${#want[@]}" ]; then
+      printf '    the record:  (ends at line %s)\n' "${#want[@]}" >&2
+    else
+      printf '    the record:  %s\n' "$a" >&2
+    fi
+    if [ "$i" -ge "${#got[@]}" ]; then
+      printf '    the re-render: (ends at line %s)\n' "${#got[@]}" >&2
+    else
+      printf '    the re-render: %s\n' "$b" >&2
+    fi
+    record_roundtrip_why >&2
+    return 0
+  done
+  # Every line agrees and the bytes do not: the record's final newline is the
+  # only thing left, and the render always writes one.
+  printf '  every line agrees, so the difference is the trailing newline the render always writes.\n' >&2
+  record_roundtrip_why >&2
+}
+
+# record_roundtrip_why — the sentence that turns a diff into a diagnosis.
+record_roundtrip_why() {
+  cat <<'EOF'
+  A record is graded by re-render (#373): it must be regenerable from its own
+  stated measurements. So this is a line record_render would not have written
+  from what this file says — a hand edit, a field out of order, or a count
+  that no longer follows from the rows above it. The prose is computed from
+  the probe table, so fix the measurement and the sentence follows.
+EOF
+}
