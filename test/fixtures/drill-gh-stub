@@ -98,22 +98,80 @@ path="${path#/}"
 out() {
   if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$1"; else printf '%s\n' "$1"; fi
 }
-missing() {
-  # gh applies --jq to the error body too, so a missing ref answers `null`
-  # rather than nothing. Modelled deliberately: it is the shape that makes
-  # exit status the only honest existence test.
+# fail_http <status> <message> — how `gh api` fails: the error body on stdout,
+# filtered by --jq exactly as a success body would be, and the status only on
+# stderr. Modelled deliberately: it is the shape that makes exit status the
+# only honest existence test.
+fail_http() {
   if [ -n "$jqexpr" ]; then
-    jq -r "$jqexpr" <<<'{"message":"Not Found"}' 2>/dev/null || true
+    jq -r "$jqexpr" <<<"$(jq -n --arg m "$2" '{message: $m}')" 2>/dev/null || true
   else
-    printf '{"message":"Not Found"}\n'
+    jq -n --arg m "$2" '{message: $m}'
   fi
-  echo "gh: Not Found (HTTP 404)" >&2
+  echo "gh: $2 (HTTP $1)" >&2
   exit 1
 }
+missing() { fail_http 404 "Not Found"; }
 qval() {
   printf '%s' "$query" | tr '&' '\n' |
     awk -F= -v k="$1" '$1 == k { sub(/^[^=]*=/, ""); print; exit }'
 }
+
+# ---------------------------------------------------------------------------
+# Fault injection (#369). The stale and transient reads that aborted the 0.7.0
+# cut four times cannot be replayed by state alone — the same request has to
+# answer differently on the second call than on the first. `$DRILL_STUB_FAULTS`
+# is a file of rules, one per line:
+#
+#     <skip><TAB><times><TAB><glob><TAB><status><TAB><message>
+#
+# The glob is matched against `<method> <endpoint-path>`. The first rule that
+# matches consumes one of its `skip`s if any remain — which is how a test aims
+# at the *second* read of an endpoint rather than the first — and otherwise
+# fails the call `times` times before letting it through. Counters are written
+# back to the file, so a rule spans the whole run.
+#
+# These rules inject *failures*. The other half — a write that answered 200
+# while the world says something else — is not expressible here, and gets a
+# knob at each endpoint where it matters:
+#
+#   $DRILL_STUB_ARCHIVE_LAG    how many reads keep saying `archived: false`
+#                              after the PATCH set it, at the
+#                              `repos/<owner>/<name>` GET below.
+#   $DRILL_STUB_LABEL_INSTEAD  the label a PR ends up carrying, whatever the
+#                              write asked for — a PR that carries labels,
+#                              none of them the one the probe is about. That
+#                              is the state 0.6.0's probe 2 merged in, and it
+#                              is the only way to reach `probe_merge_and_wait`'s
+#                              label refusal from a list that genuinely was
+#                              read (#369 D6).
+glob_match() { # <glob> <string>
+  # shellcheck disable=SC2254 # the unquoted pattern IS the feature here
+  case "$2" in $1) return 0 ;; esac
+  return 1
+}
+faults="${DRILL_STUB_FAULTS:-}"
+if [ -n "$faults" ] && [ -s "$faults" ]; then
+  fault_status=""
+  fault_message=""
+  : >"$faults.next"
+  while IFS=$'\t' read -r skip times glob status message; do
+    [ -n "${glob:-}" ] || continue
+    if [ -z "$fault_status" ] && glob_match "$glob" "$method $path"; then
+      if [ "$skip" -gt 0 ]; then
+        skip=$((skip - 1))
+      elif [ "$times" -gt 0 ]; then
+        times=$((times - 1))
+        fault_status="$status"
+        fault_message="$message"
+      fi
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\n' "$skip" "$times" "$glob" "$status" "$message" \
+      >>"$faults.next"
+  done <"$faults"
+  mv "$faults.next" "$faults"
+  [ -z "$fault_status" ] || fail_http "$fault_status" "$fault_message"
+fi
 
 if [ "$path" = user ]; then
   out '{"login":"drill-runner"}'
@@ -225,11 +283,7 @@ main_drop() {
 # A repository with no commits refuses the git data API — the 409 that
 # sends the first commit through the contents endpoint instead. Modelled,
 # because a stub that let blobs land on an empty repo would have hidden it.
-empty_repo_409() {
-  printf '{"message":"Git Repository is empty."}\n'
-  echo "gh: Git Repository is empty. (HTTP 409)" >&2
-  exit 1
-}
+empty_repo_409() { fail_http 409 "Git Repository is empty."; }
 case "$rest" in
   git/blobs | git/trees | git/commits)
     [ -n "$(ls -A "$R/refs" 2>/dev/null)" ] || empty_repo_409
@@ -242,7 +296,23 @@ case "$rest" in
       jq -e '.archived == true' <<<"$body" >/dev/null && printf 'true\n' >"$R/archived"
       out "$(jq -n --arg a "$(cat "$R/archived")" '{archived: ($a == "true"), private: true}')"
     else
-      out "$(jq -n --arg c "$(cat "$R/created_at")" --arg a "$(cat "$R/archived")" \
+      a="$(cat "$R/archived")"
+      # Value staleness, which the fault rules above cannot express: they inject
+      # HTTP failures, and this is the write that landed while the read still
+      # answers the old value. `$DRILL_STUB_ARCHIVE_LAG` is how many reads keep
+      # saying `archived: false` after the PATCH set it — the only kind of
+      # staleness `scratch_archive`'s `select(.archived)` defends against, since
+      # this endpoint answers a formatted string either way and a bounded retry
+      # on failure alone would end on the wrong answer. The countdown lives in
+      # state so successive reads eventually tell the truth, and it only bites
+      # once the flag is actually set, so `scratch_created_at`'s read of the
+      # same endpoint before the archive never spends it.
+      lag="$(cat "$R/archive_lag" 2>/dev/null || printf '%s' "${DRILL_STUB_ARCHIVE_LAG:-0}")"
+      if [ "$a" = true ] && [ "${lag:-0}" -gt 0 ]; then
+        a=false
+        printf '%s\n' "$((lag - 1))" >"$R/archive_lag"
+      fi
+      out "$(jq -n --arg c "$(cat "$R/created_at")" --arg a "$a" \
         '{created_at: $c, archived: ($a == "true"), private: true}')"
     fi
     ;;
@@ -372,7 +442,11 @@ case "$rest" in
     n="${rest#issues/}"
     n="${n%/labels}"
     if [ "$method" = POST ]; then
-      jq -r '.labels[]' <<<"$body" >>"$R/labels/$n"
+      if [ -n "${DRILL_STUB_LABEL_INSTEAD:-}" ]; then
+        printf '%s\n' "$DRILL_STUB_LABEL_INSTEAD" >>"$R/labels/$n"
+      else
+        jq -r '.labels[]' <<<"$body" >>"$R/labels/$n"
+      fi
       out '[]'
     else
       out "$(jq -R -s -c 'split("\n") | map(select(length > 0) | {name: .})' <"$R/labels/$n")"

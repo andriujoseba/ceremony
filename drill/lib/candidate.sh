@@ -65,15 +65,18 @@ pin_rewrite() {
 # tree no consumer could ever have.
 fork_ref_prepare() {
   local repo="${1:?}" ref="${2:?}" sha="${3:?}" work="${4:?}"
-  local branch="${ref#refs/heads/}" existing manifest carriers path local_file head
+  local branch="${ref#refs/heads/}" existing manifest carriers path local_file head encoded
   pin_assert_fork_ref "$repo" "$branch" || return 1
-  existing="$(scratch_ref_sha "$repo" "$branch")"
+  # This one read is not a read-after-write: an absent ref is the answer it is
+  # looking for, so it stays in `any` mode and never spends the retry budget.
+  existing="$(scratch_ref_sha "$repo" "$branch")" || return 1
   if [ -n "$existing" ]; then
     echo "drill: refusing to prepare '$repo@$branch' — the ref already exists at $existing. Delete it or name another --fork-ref; the drill will not rewrite a ref it did not create." >&2
     return 1
   fi
   scratch_ref_create "$repo" "refs/heads/$branch" "$sha" || return 1
-  carriers="$(scratch_paths "$repo" "$branch" | grep '^\.github/workflows/.*\.yml$' || true)"
+  carriers="$(scratch_paths "$repo" "$branch" nonempty)" || return 1
+  carriers="$(grep '^\.github/workflows/.*\.yml$' <<<"$carriers" || true)"
   if [ -z "$carriers" ]; then
     echo "drill: refusing — $repo@$branch carries no .github/workflows/*.yml, so there is no CEREMONY_SELF_REF to rewrite." >&2
     return 1
@@ -84,8 +87,9 @@ fork_ref_prepare() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     local_file="$work/pins/$(printf '%s' "$path" | tr '/' '_')"
-    drill_gh api "repos/$repo/contents/$path?ref=$branch" --jq '.content' |
-      base64 -d >"$local_file" || return 1
+    encoded="$(drill_read nonempty "$path at $repo@$branch" \
+      drill_gh_soft api "repos/$repo/contents/$path?ref=$branch" --jq '.content')" || return 1
+    base64 -d <<<"$encoded" >"$local_file" || return 1
     [ -n "$(pin_read "$local_file")" ] || continue
     pin_rewrite "$local_file" "$sha"
     printf 'A\t%s\t%s\n' "$path" "$local_file" >>"$manifest"
@@ -106,16 +110,30 @@ fork_ref_prepare() {
 # is to be evidence gets measured, not asserted.
 fork_ref_verify() {
   local repo="${1:?}" ref="${2:?}" sha="${3:?}" work="${4:?}"
-  local branch="${ref#refs/heads/}" path local_file pin wrong=""
+  local branch="${ref#refs/heads/}" path local_file pin wrong="" carriers encoded
+  # Every read here follows the rewrite commit this instrument just made, so a
+  # read that fails or answers empty is retried and, if it never answers, said
+  # to be a failed read. It is the read the first 0.7.0 abort got wrong: it
+  # reported a pin that had in fact been rewritten in all three carriers.
+  carriers="$(scratch_paths "$repo" "$branch" nonempty)" || return 1
+  carriers="$(grep '^\.github/workflows/.*\.yml$' <<<"$carriers" || true)"
+  if [ -z "$carriers" ]; then
+    # A verification that read no carrier verifies nothing; passing on an
+    # empty list is the same claim-without-a-measurement this function exists
+    # to refuse.
+    echo "drill: $repo@$branch read back no .github/workflows/*.yml, so there is no rewritten pin to verify." >&2
+    return 1
+  fi
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     local_file="$work/verify_$(printf '%s' "$path" | tr '/' '_')"
-    drill_gh api "repos/$repo/contents/$path?ref=$branch" --jq '.content' |
-      base64 -d >"$local_file" || return 1
+    encoded="$(drill_read nonempty "$path at $repo@$branch" \
+      drill_gh_soft api "repos/$repo/contents/$path?ref=$branch" --jq '.content')" || return 1
+    base64 -d <<<"$encoded" >"$local_file" || return 1
     pin="$(pin_read "$local_file")"
     [ -n "$pin" ] || continue
     [ "$pin" = "$sha" ] || wrong="$wrong $path=$pin"
-  done < <(scratch_paths "$repo" "$branch" | grep '^\.github/workflows/.*\.yml$' || true)
+  done <<<"$carriers"
   if [ -n "$wrong" ]; then
     echo "drill: the rewritten pin does not read the candidate SHA $sha —$wrong" >&2
     return 1

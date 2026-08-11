@@ -175,13 +175,26 @@ probe_fragment_paths() {
 # probe_merge_and_wait <branch> <title> <label?> — PR, optional label, merge,
 # wait. Prints `<run-id><TAB><conclusion>`.
 probe_merge_and_wait() {
-  local branch="${1:?}" title="${2:?}" label="${3:-}" pr merge_sha
+  local branch="${1:?}" title="${2:?}" label="${3:-}" pr merge_sha labels
   pr="$(scratch_pr_create "$DRILL_REPO" "$branch" main "$title")" || return 1
   if [ -n "$label" ]; then
     scratch_pr_label "$DRILL_REPO" "$pr" "$label" || return 1
     # Confirmed, never assumed: 0.6.0's probe 2 merged unlabeled because a
-    # label write failed and the failure was read after the merge.
-    if ! scratch_pr_labels "$DRILL_REPO" "$pr" | grep -qxF "$label"; then
+    # label write failed and the failure was read after the merge. `nonempty`
+    # because this read follows the write directly above it — an empty label
+    # list there is a stale index, and refusing to merge on it would abort a
+    # probe over a read rather than over the label (#369 D3).
+    #
+    # The read is taken before it is judged, rather than piped into the `grep`
+    # that judges it (#369 D6). Left of a pipe the read's exit status is the
+    # `grep`'s, so an exhausted read reached the refusal below and said the PR
+    # did not carry a label nobody had read — the false claim D4 retires, one
+    # layer up. Two refusals now, because they are two different facts.
+    if ! labels="$(scratch_pr_labels "$DRILL_REPO" "$pr" nonempty)"; then
+      echo "drill: the labels on PR #$pr did not read back after the write, so the '$label' label was never checked — refusing to merge on a read that did not answer, which is not the same as a label that is not there." >&2
+      return 1
+    fi
+    if ! grep -qxF "$label" <<<"$labels"; then
       echo "drill: PR #$pr did not carry the '$label' label after the write — refusing to merge an unlabeled tree into a probe that is about the label." >&2
       return 1
     fi
@@ -221,10 +234,19 @@ probe_1_ceremony() {
   problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
   scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_V1" ||
     problems="$problems; no '$DRILL_V1' release exists after the ceremony"
+  # Branched on the read, not on the string it returned. `probe_run` calls each
+  # probe as `"$fn" || status=$?`, which suppresses `set -e` inside it — so an
+  # exhausted read left `armed` empty here and the probe recorded "main reads
+  # '' after the ceremony", a claim about the world derived from a read that
+  # never happened. That is D4's lie one layer up from drill_read, and the
+  # honest message it prints to stderr does not reach the record (#369).
   local armed
-  armed="$(scratch_version "$DRILL_REPO" main)"
-  [ "$armed" = "$DRILL_V2-dev" ] ||
-    problems="$problems; main reads '$armed' after the ceremony, expected '$DRILL_V2-dev'"
+  if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
+    [ "$armed" = "$DRILL_V2-dev" ] ||
+      problems="$problems; main reads '$armed' after the ceremony, expected '$DRILL_V2-dev'"
+  else
+    problems="$problems; VERSION did not read back off main after the ceremony, so the re-arm was never checked"
+  fi
   # The mirror follows what the door did to main: the re-arm is the door's
   # own commit, not the script's.
   printf '%s-dev\n' "$DRILL_V2" >"$DRILL_STAGE/VERSION"
@@ -369,9 +391,12 @@ probe_5_tag() {
   problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
   scratch_release_tags "$DRILL_REPO" | grep -qxF "$DRILL_V2" ||
     problems="$problems; no '$DRILL_V2' release exists after the tag door ran"
-  armed="$(scratch_version "$DRILL_REPO" main)"
-  [ "$armed" = "$DRILL_V2-dev" ] ||
-    problems="$problems; main reads '$armed' after the tag door, expected it untouched at '$DRILL_V2-dev'"
+  if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
+    [ "$armed" = "$DRILL_V2-dev" ] ||
+      problems="$problems; main reads '$armed' after the tag door, expected it untouched at '$DRILL_V2-dev'"
+  else
+    problems="$problems; VERSION did not read back off main after the tag door, so 'main untouched' was never checked"
+  fi
   if [ -z "$problems" ]; then
     probe_record 5 "$run" 1 PASS "$tb" "$ta" "$rb" "$ra" \
       "\`$DRILL_V2\` published from its own changelog section; main untouched"
@@ -463,7 +488,9 @@ probe_7_rc_cut() {
   cp "$stage/changelog.d/10.md" "$DRILL_STAGE/changelog.d/10.md"
 
   # The two states an rc must not disturb, read off main before the cut.
-  scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_before" || return 1
+  # `nonempty`: main was written by the arming commit a few lines up, so an
+  # empty answer here is a stale index and not a repo without a CHANGELOG.
+  scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_before" nonempty || return 1
   probe_fragment_paths "$DRILL_REPO" main "$frags_before"
 
   probe_branch probe7-rc-cut "$(scratch_ref_sha "$DRILL_REPO" main)" || return 1
@@ -491,7 +518,7 @@ probe_7_rc_cut() {
   prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_RC1")" || prerelease="unread"
   [ "$prerelease" = true ] ||
     problems="$problems; the '$DRILL_RC1' release reports isPrerelease: $prerelease, expected true"
-  if scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_after"; then
+  if scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_after" nonempty; then
     cmp -s "$changelog_before" "$changelog_after" ||
       problems="$problems; CHANGELOG.md is not byte-identical across the rc cut — an rc is tag-only and stamps no section"
   else
@@ -500,9 +527,12 @@ probe_7_rc_cut() {
   probe_fragment_paths "$DRILL_REPO" main "$frags_after"
   cmp -s "$frags_before" "$frags_after" ||
     problems="$problems; the fragment set changed across the rc cut ($(tr '\n' ' ' <"$frags_before")→ $(tr '\n' ' ' <"$frags_after")) — an rc assembles its notes and consumes nothing"
-  armed="$(scratch_version "$DRILL_REPO" main)"
-  [ "$armed" = "$DRILL_RC2-dev" ] ||
-    problems="$problems; main reads '$armed' after the rc cut, expected '$DRILL_RC2-dev'"
+  if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
+    [ "$armed" = "$DRILL_RC2-dev" ] ||
+      problems="$problems; main reads '$armed' after the rc cut, expected '$DRILL_RC2-dev'"
+  else
+    problems="$problems; VERSION did not read back off main after the rc cut, so the re-arm was never checked"
+  fi
   # The mirror follows what the door did to main, as probe 1's does.
   printf '%s-dev\n' "$DRILL_RC2" >"$DRILL_STAGE/VERSION"
   if [ -z "$problems" ]; then
@@ -560,7 +590,7 @@ probe_8_promotion() {
   prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_RC1")" || prerelease="unread"
   [ "$prerelease" = true ] ||
     problems="$problems; the '$DRILL_RC1' release reports isPrerelease: $prerelease after the promotion — promoting must not retroactively relabel the candidate"
-  if scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_after"; then
+  if scratch_file "$DRILL_REPO" main CHANGELOG.md "$changelog_after" nonempty; then
     changelog_section "$changelog_after" "$DRILL_V3" >"$stamped"
     if ! cmp -s <(probe_trim_blank "$expected") <(probe_trim_blank "$stamped"); then
       problems="$problems; the '## $DRILL_V3' section on main is not the body its fragments assemble to"
@@ -574,9 +604,12 @@ probe_8_promotion() {
   leftover="$(grep -vxF changelog.d/README.md "$frags_after" | tr '\n' ' ')"
   [ -z "$leftover" ] ||
     problems="$problems; fragments survived the promotion ($leftover) — a final consumes them"
-  armed="$(scratch_version "$DRILL_REPO" main)"
-  [ "$armed" = "$DRILL_V4-dev" ] ||
-    problems="$problems; main reads '$armed' after the promotion, expected '$DRILL_V4-dev'"
+  if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
+    [ "$armed" = "$DRILL_V4-dev" ] ||
+      problems="$problems; main reads '$armed' after the promotion, expected '$DRILL_V4-dev'"
+  else
+    problems="$problems; VERSION did not read back off main after the promotion, so the re-arm was never checked"
+  fi
   if [ -z "$problems" ]; then
     probe_record 8 "$run" 1 PASS "$tb" "$ta" "$rb" "$ra" \
       "\`$DRILL_V3\` published as a full release from the body its fragments assemble to; they are consumed, \`$DRILL_RC1\` is still a prerelease, and main re-armed to \`$DRILL_V4-dev\`"

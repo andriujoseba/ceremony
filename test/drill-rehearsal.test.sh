@@ -514,7 +514,17 @@ mkdir -p "$STUB_BIN"
 cp "$ROOT/test/fixtures/drill-gh-stub" "$STUB_BIN/gh"
 chmod +x "$STUB_BIN/gh"
 
+# The stub's fault rules (#369), cleared by every reset so no case inherits
+# another's. One rule per line: `skip<TAB>times<TAB>glob<TAB>status<TAB>msg`.
+FAULTS="$TMP/faults"
+faults() {
+  local rule
+  : >"$FAULTS"
+  for rule in "$@"; do printf '%s\n' "$rule" >>"$FAULTS"; done
+}
+
 stub_reset() {
+  faults
   rm -rf "$TMP/state"
   mkdir -p "$TMP/state"
   printf '1000\n' >"$TMP/state/counter"
@@ -556,7 +566,8 @@ printf 's9\n' >"$U/refs/heads_main"
 ordering_probe() {
   ( # shellcheck disable=SC2030 # each probe is a subshell on purpose
     export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
-    export DRILL_STUB_SCENARIO="$TMP/scenario"
+    export DRILL_STUB_SCENARIO="$TMP/scenario" DRILL_STUB_FAULTS="$FAULTS"
+    export DRILL_READ_NAP_SECONDS=0
     : >"$TMP/scenario"
     caller_install "$1" main "$TMP/caller-stage" "$FORK" "$FORK_REF" "$TMP"
   )
@@ -594,6 +605,9 @@ run_rehearsal() { # <scenario-file> [extra args…]
     # shellcheck disable=SC2031 # the ordering probe's subshell is unrelated
     export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
     export DRILL_STUB_SCENARIO="$scenario" DRILL_RUN_POLL_SECONDS=0 DRILL_RUN_TRIES=3
+    # The read retry runs at its default try count and no nap: the suite
+    # exercises the retries themselves, and only the sleeping is skipped.
+    export DRILL_STUB_FAULTS="$FAULTS" DRILL_READ_NAP_SECONDS=0
     cd "$ROOT" || exit 1
     ./drill/rehearsal.sh --owner "$SCRATCH_OWNER" --version 0.7.0 \
       --fork-ref "$FORK@$FORK_REF" --candidate-sha "$CAND_SHA" \
@@ -825,6 +839,729 @@ check "the canonical-repo refusal names the shadow-tag rule" 0 "0.1.0 shadow-tag
   printf '%s\n' "$canonical_out"
 check "the canonical-repo refusal creates no scratch repo" 1 "" \
   grep -q "repo create" "$TMP/state/calls"
+
+# ---------------------------------------------------------------------------
+# The read-after-write path retries, and a soft read means one thing (#369).
+#
+# The 0.7.0 cut aborted four times in setup before a probe ran; three were one
+# defect — every read here follows a write, GitHub answered stale or
+# transiently, and nothing retried — and two of those three reported the
+# opposite of what had happened, saying a write had failed when it had landed.
+# So the messages are asserted on as hard as the exit statuses: the wrong
+# message IS the defect, and a test that only checked the status would have
+# passed on 0.7.0's behavior.
+#
+# The stub's fault rules are what make this driveable offline: the same
+# request has to answer differently on the second call than on the first, and
+# no amount of stub *state* produces that.
+# ---------------------------------------------------------------------------
+# A subshell, so the exports land on the call and nothing else. `check` already
+# runs its command in a command substitution, but the handful of direct
+# `with_stub …` calls in this file do not — and an exported PATH and a zeroed
+# nap leaking into whatever gets appended after them is a trap rather than a
+# feature. Every caller's side effects are stub state on disk, so nothing here
+# needs shell state to survive the call; `DRILL_READ_TRIES=0 with_stub …` still
+# works, since a subshell inherits shell variables.
+with_stub() { # <cmd…> — one library call against the stub, nap-free
+  (
+    export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
+    export DRILL_STUB_SCENARIO="$TMP/empty.scenario" DRILL_STUB_FAULTS="$FAULTS"
+    export DRILL_READ_NAP_SECONDS=0
+    "$@"
+  )
+}
+empty_stdout() { # <cmd…> — the command printed nothing on stdout
+  local out
+  out="$("$@" 2>/dev/null)"
+  [ -z "$out" ]
+}
+calls_are() { # <n> <literal> — the call log holds exactly n matching lines
+  test "$(grep -cF -- "$2" "$TMP/state/calls")" -eq "$1"
+}
+calls_at_least() { # <n> <literal> — at least n, for "it spent the budget"
+  test "$(grep -cF -- "$2" "$TMP/state/calls")" -ge "$1"
+}
+
+# D2 — absent and failed, told apart. Both branches carry a test, because the
+# whole defect is that they were one branch.
+stub_reset
+: >"$TMP/empty.scenario"
+check "a 404 answers absent: the call succeeded in saying 'not there'" 0 "" \
+  with_stub drill_gh_soft api "repos/$FORK/git/ref/heads/nosuch" --jq '.object.sha'
+check "and absent prints nothing, so the filtered error body never reads as data" 0 "" \
+  empty_stdout with_stub drill_gh_soft api "repos/$FORK/git/ref/heads/nosuch" --jq '.object.sha'
+faults "0	1	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+check "a non-404 failure is a failed read, not an absence" 1 "Internal Server Error" \
+  with_stub drill_gh_soft api "repos/$FORK/git/ref/heads/main" --jq '.object.sha'
+
+# The genuine 404 does not spend the retry budget waiting for a thing nobody
+# ever wrote — asserted on the call count, since a budget spent silently is
+# exactly what a passing test would otherwise hide.
+stub_reset
+: >"$TMP/state/calls"
+check "a ref that truly does not exist answers absent" 0 "" \
+  empty_stdout with_stub scratch_ref_sha "$FORK" nosuch
+check "and it spent exactly one call doing it" 0 "" calls_are 1 "git/ref/heads/nosuch"
+
+# D1 — a read that fails K < tries times and then succeeds. This is the 0.7.0
+# failure mode itself, replayed.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+faults "0	2	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+: >"$TMP/state/calls"
+check "a read that fails twice and then answers is a read that answered" 0 "$CAND_SHA" \
+  with_stub scratch_ref_sha "$FORK" main
+check "and it took exactly the three calls that took" 0 "" calls_are 3 "git/ref/heads/main"
+
+# D3 — `409 Git Repository is empty` on a repo the instrument has just
+# created is the same "not there *yet*" as a 404: retried where the write is
+# known to have happened, and the bootstrap's own door where it is not.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+faults "0	2	GET repos/*/git/ref/heads/main	409	Git Repository is empty."
+: >"$TMP/state/calls"
+check "a 409 on a just-created repo retries rather than aborting" 0 "$CAND_SHA" \
+  with_stub scratch_ref_sha "$FORK" main nonempty
+check "and the 409 was retried, not reported" 0 "" calls_are 3 "git/ref/heads/main"
+faults "0	1	GET repos/*/git/ref/heads/main	409	Git Repository is empty."
+check "the same 409 still answers absent where absence is the question" 0 "" \
+  empty_stdout with_stub scratch_ref_sha "$FORK" main
+
+# A mode nobody defined is refused rather than read as the weaker one: a
+# misspelled `nonempty` degrading silently to `any` is 0.7.0's defect back
+# with nothing to notice it.
+faults
+check "an unknown read mode is refused, never taken for 'any'" 2 \
+  "unknown mode 'nonemty'" with_stub scratch_ref_sha "$FORK" main nonemty
+
+# The try count is a bound, and a bound of none is one attempt.
+faults "0	99	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+tries_zero() { DRILL_READ_TRIES=0 with_stub scratch_ref_sha "$FORK" main nonempty; }
+check "DRILL_READ_TRIES=0 is one attempt, and says so in the singular" 1 \
+  "did not read back after 1 attempt" tries_zero
+
+# Must-pass, end to end: the bootstrap re-read answers stale twice and the
+# rehearsal proceeds, emitting the record the clean run emitted.
+#
+# The fault is a 404 on a ref that exists, and it is a 404 on purpose. That is
+# the shape of the read this defect is about — GitHub answering "not there"
+# about a commit it is holding — and a 500 here would prove nothing, because
+# a failed read is retried in either mode. Only a stale one tells the two
+# apart, and the `skip` is what aims it past the pre-bootstrap read, whose
+# empty answer is a true one.
+stub_reset
+green_scenario "$TMP/retried.scenario"
+faults "1	2	GET repos/$SCRATCH/git/ref/heads/main	404	Not Found"
+retried_out="$(run_rehearsal "$TMP/retried.scenario" --out "$TMP/retried.md" 2>&1)"
+retried_rc=$?
+check "a bootstrap re-read that answers stale twice does not stop the rehearsal" 0 "" \
+  test "$retried_rc" -eq 0
+check "and all eight probes still ran" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$retried_out"
+check "the record it emits is the clean run's, unchanged" 0 "" \
+  diff -u "$TMP/emitted.md" "$TMP/retried.md"
+
+# Must-fail: the same read never answers. The message is the assertion — it
+# names the read, the target and the attempt count, and says nothing about
+# whether the write landed. "left … with no head" was the 0.7.0 wording, and
+# `…-rehearsal-2@main` held the commit it said had not landed.
+stub_reset
+BOOTSTRAP="$SCRATCH_OWNER/bootstrap-probe"
+with_stub scratch_create "$BOOTSTRAP" >/dev/null 2>&1
+printf '0.7.0-dev\n' >"$TMP/seed-version"
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/boot.manifest"
+faults "1	99	GET repos/$BOOTSTRAP/git/ref/heads/main	404	Not Found"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$BOOTSTRAP" main "the armed fixture at 0.7.0-dev" \
+  "$TMP/boot.manifest" >"$TMP/boot.out" 2>&1
+boot_rc=$?
+check "a bootstrap re-read that never answers aborts" 0 "" test "$boot_rc" -eq 1
+check "and names the read, its target and its attempt count" 0 \
+  "refs/heads/main on $BOOTSTRAP did not read back after 10 attempts" cat "$TMP/boot.out"
+check "the abort never claims the commit left the branch with no head" 1 "" \
+  grep -qF 'no head' "$TMP/boot.out"
+check "it says a failed read is not a failed write" 0 \
+  "a failed read, not a failed write" cat "$TMP/boot.out"
+# D5, first half: the read retried ten times and the write beneath it once.
+check "the bootstrap write was not retried while its read was" 0 "" \
+  calls_are 1 "contents/VERSION --method PUT"
+
+# fork_ref_verify: one 500 and the pin still verifies; a budget of them is a
+# failed read and never the pin's fault.
+stub_reset
+mkdir -p "$TMP/verify-work"
+with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work" >/dev/null 2>&1
+faults "0	1	GET repos/*/contents/*	500	Internal Server Error"
+check "a pin read that 500s once still verifies" 0 "$CAND_SHA" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+faults "0	99	GET repos/*/contents/*	500	Internal Server Error"
+with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work" \
+  >"$TMP/verify.out" 2>&1
+verify_rc=$?
+check "a pin read that never answers aborts" 0 "" test "$verify_rc" -eq 1
+check "and names the read that failed, with its attempt count" 0 \
+  "did not read back after 10 attempts" cat "$TMP/verify.out"
+check "the abort never asserts the pin does not read the candidate SHA" 1 "" \
+  grep -qF 'does not read the candidate SHA' "$TMP/verify.out"
+faults "0	99	GET repos/*/git/trees/*	500	Internal Server Error"
+check "a carrier list that never reads back is a failed read too" 1 \
+  "the tree of $FORK_REF on $FORK did not read back" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+# The stale answers, which is the half a 500 cannot prove: a read that keeps
+# saying "not there" about a tree and a pin this instrument just wrote is not
+# an absence to pass over — a verify that read no bytes verifies nothing, and
+# passing there would be the same claim-without-a-measurement in a new place.
+faults "0	2	GET repos/*/contents/*	404	Not Found"
+check "a pin read that answers stale twice still verifies" 0 "$CAND_SHA" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+faults "0	99	GET repos/*/contents/*	404	Not Found"
+check "a pin that never reads back is a failed read, not a verified pin" 1 \
+  "did not read back after 10 attempts" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+faults "0	99	GET repos/*/git/trees/*	404	Not Found"
+check "a carrier list that never reads back is one too" 1 \
+  "the tree of $FORK_REF on $FORK did not read back" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/verify-work"
+# And the refusal the retry must not have swallowed: a pin that genuinely
+# disagrees keeps its own wording, which is the message the retry replaced
+# only for the case where nothing was read at all.
+faults
+check "a pin that genuinely disagrees still says so, in its own words" 1 \
+  "the rewritten pin does not read the candidate SHA" \
+  with_stub fork_ref_verify "$FORK" "$FORK_REF" \
+  deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$TMP/verify-work"
+# The third answer this read can give, and the one no fault can produce: the
+# tree answered, and what it answered carries no `.github/workflows/*.yml`.
+# Nothing above reaches it — a 404 or a 500 on the tree is a failed read, and
+# an empty carrier list is a successful read of a ref with nothing to verify.
+# Without this the loop runs zero times, `wrong` stays empty, and the function
+# prints the candidate SHA as though it had checked something: the
+# claim-without-a-measurement it exists to refuse.
+CARRIERLESS="$SCRATCH_OWNER/carrierless-fork"
+K="$TMP/state/$(san "$CARRIERLESS")"
+mkdir -p "$K/refs" "$K/commit" "$K/tree" "$K/blob"
+printf 'placeholder\n' >"$K/blob/bk1"
+printf 'README.md\tbk1\n' >"$K/tree/tk1"
+printf 'tk1\n' >"$K/commit/sk1"
+printf 'sk1\n' >"$K/refs/heads_main"
+with_stub fork_ref_verify "$CARRIERLESS" refs/heads/main "$CAND_SHA" \
+  "$TMP/verify-work" >"$TMP/carrierless.out" 2>"$TMP/carrierless.err"
+carrierless_rc=$?
+check "a verify that read no carrier refuses instead of verifying nothing" 0 "" \
+  test "$carrierless_rc" -eq 1
+check "and it says what it read, not what it could not verify" 0 \
+  "read back no .github/workflows/*.yml" cat "$TMP/carrierless.err"
+check "and it never prints the candidate SHA it did not check" 1 "" \
+  grep -qF "$CAND_SHA" "$TMP/carrierless.out"
+
+# D5 — no write path gains a retry. A retried write against the git data API
+# risks a second commit, so a failed write is an abort and stays one.
+stub_reset
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/write.manifest"
+faults "0	1	POST repos/*/git/commits	500	Internal Server Error"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$FORK" main "a commit whose write fails once" \
+  "$TMP/write.manifest" >"$TMP/write.out" 2>&1
+write_rc=$?
+check "a write that fails once aborts rather than retrying" 0 "" test "$write_rc" -eq 1
+check "exactly one commit was attempted" 0 "" calls_are 1 "git/commits --input -"
+check "and exactly one tree was written under it" 0 "" calls_are 1 "git/trees --input -"
+
+# The other two writes in the same function, each failing in its own case,
+# because a write only proves it was not retried by failing: the tree count
+# above and the bootstrap count further up are both taken on writes that
+# *succeeded*, so a retry added to either would have left them green. The
+# sweep found exactly that — mutations giving the tree write and the bootstrap
+# PUT a retry loop red nothing without these two.
+faults "0	1	POST repos/*/git/trees	500	Internal Server Error"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$FORK" main "a commit whose tree write fails once" \
+  "$TMP/write.manifest" >"$TMP/treewrite.out" 2>&1
+tree_write_rc=$?
+check "a tree write that fails once aborts rather than retrying" 0 "" \
+  test "$tree_write_rc" -eq 1
+check "exactly one tree was attempted" 0 "" calls_are 1 "git/trees --input -"
+check "and no commit was built on a tree that never landed" 0 "" \
+  calls_are 0 "git/commits --input -"
+
+# The bootstrap's own write, on the one door an empty repository opens: the
+# contents PUT. A fresh repo, so the path is reached at all.
+stub_reset
+PUTPROBE="$SCRATCH_OWNER/put-probe"
+with_stub scratch_create "$PUTPROBE" >/dev/null 2>&1
+faults "0	1	PUT repos/*/contents/*	500	Internal Server Error"
+: >"$TMP/state/calls"
+with_stub scratch_commit "$PUTPROBE" main "the armed fixture at 0.7.0-dev" \
+  "$TMP/boot.manifest" >"$TMP/putwrite.out" 2>&1
+put_write_rc=$?
+check "a bootstrap write that fails once aborts rather than retrying" 0 "" \
+  test "$put_write_rc" -eq 1
+check "exactly one bootstrap PUT was attempted" 0 "" \
+  calls_are 1 "contents/VERSION --method PUT"
+# One ref read: the does-it-exist read that sent us down the bootstrap path.
+# A second would mean the re-read ran under a write that never landed.
+check "and the re-read never ran under a write that failed" 0 "" \
+  calls_are 1 "git/ref/heads/main"
+
+# The base-tree read, which is the call the 0.7.0 cut's third abort came from
+# — `409 Git Repository is empty.` from the git data API about a repo
+# `gh repo create` had just returned — and the one routing in this change that
+# round 1 found pinned by nothing. Both mutations were green without this:
+# reverting the routing, and flipping only its mode to `any`.
+#
+# The mode is the half that matters, and the assertion is the tree rather than
+# the message. In `any` mode a 409 or 404 there answers *absent*, `base_tree`
+# comes back empty, and the tree POST is built without it while the parent
+# stays — so the commit's tree is the manifest and nothing else, and every file
+# the repo already had is deleted by the drill's own write. Silent corruption:
+# nothing aborts, nothing prints, and the paths are the only witness.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/basetree.manifest"
+faults "0	2	GET repos/*/git/commits/*	409	Git Repository is empty."
+: >"$TMP/state/calls"
+check "a base-tree read answering 409 twice still lands the commit" 0 "" \
+  with_stub scratch_commit "$FORK" main "a commit over a stale base tree" \
+  "$TMP/basetree.manifest"
+check "and it retried that read rather than reporting it, three calls in" 0 "" \
+  calls_are 3 "git/commits/$CAND_SHA"
+check "the write under it still went once" 0 "" calls_are 1 "git/trees --input -"
+with_stub scratch_paths "$FORK" main | sort >"$TMP/basetree.paths"
+printf '%s\n' .github/workflows/ci.yml .github/workflows/labels.yml \
+  .github/workflows/release.yml VERSION | sort >"$TMP/basetree.expected"
+# Compared as a whole list, not searched for a substring: the failure this
+# pins is files *missing*, and a containment check cannot see that.
+check "and every file the repo already had survived it — the base tree was read, not skipped" 0 "" \
+  diff -u "$TMP/basetree.expected" "$TMP/basetree.paths"
+# Named off the head as it stands, because the commit above moved it: the
+# message has to name the commit whose tree was actually asked for.
+BASETREE_HEAD="$(with_stub scratch_ref_sha "$FORK" main)"
+faults "0	99	GET repos/*/git/commits/*	409	Git Repository is empty."
+: >"$TMP/state/calls"
+check "a base-tree read that never answers aborts, naming the read" 1 \
+  "the tree of commit $BASETREE_HEAD on $FORK did not read back after 10 attempts" \
+  with_stub scratch_commit "$FORK" main "a commit whose base tree never reads" \
+  "$TMP/basetree.manifest"
+check "and no tree was written under a base it never read" 0 "" \
+  calls_are 0 "git/trees --input -"
+
+# The other read in the same function, and the one round 2 found: the
+# does-it-exist read at the top. It is `any` on purpose — a branch nobody
+# created is a real answer, and the bootstrap below is what that answer means
+# — but `any` distinguishes absent from failed only if the caller keeps the
+# status. Without the `|| return 1` on that assignment, ten exhausted 500s
+# leave `base_sha` empty and are read as "this repo has no commits": the
+# bootstrap's contents PUT carries `branch`, so it commits to a branch that
+# already has a head, built from the manifest's first `A` line alone, and only
+# the guarded re-read afterwards aborts. The write is the assertion here. An
+# rc check alone stays green under the bug, because the function does return 1
+# — twenty reads and one write later.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+faults "0	99	GET repos/*/git/ref/heads/main	500	Internal Server Error"
+: >"$TMP/state/calls"
+# Called the way every probe calls it — through a substitution, which is what
+# suppresses errexit inside the function and made the swallowed status matter.
+baseread_caller() {
+  local sha
+  sha="$(with_stub scratch_commit "$FORK" main "a commit whose base read never answers" \
+    "$TMP/basetree.manifest")" || return 1
+  printf '%s\n' "$sha"
+}
+baseread_caller >"$TMP/baseread.out" 2>"$TMP/baseread.err"
+baseread_rc=$?
+check "a base read that never answers aborts" 0 "" test "$baseread_rc" -eq 1
+check "and names the read, its target and its attempt count" 0 \
+  "refs/heads/main on $FORK did not read back after 10 attempts" cat "$TMP/baseread.err"
+check "and it stopped at its budget rather than reading twice over" 0 "" \
+  calls_are 10 "git/ref/heads/main"
+# The four writes the function can make, each asserted absent by name: a
+# failed existence read must not reach any of them.
+check "no bootstrap PUT went out on a read that never answered" 0 "" \
+  calls_are 0 "contents/VERSION --method PUT"
+check "no tree was written under it" 0 "" calls_are 0 "git/trees --input -"
+check "no commit was built under it" 0 "" calls_are 0 "git/commits --input -"
+check "and the branch it could not read was never created" 0 "" \
+  calls_are 0 "git/refs --input -"
+check "nor moved" 0 "" calls_are 0 "git/refs/heads/main --method PATCH"
+# And the absence this read is `any` for is unchanged: a branch nobody created
+# still answers in one call and still routes to the bootstrap, rather than
+# spending ten calls on a thing that was never written.
+stub_reset
+faults
+: >"$TMP/state/calls"
+check "a branch nobody created still bootstraps, in one read" 0 "" \
+  with_stub scratch_commit "$FORK" main "the first commit on an empty repo" \
+  "$TMP/basetree.manifest"
+# Two, and only two: the pre-read that answered absent in one call, and the
+# guarded re-read after the bootstrap write. A budget spent here would mean
+# `any` had started treating a true absence as something to wait for.
+check "and that read cost one call, not the budget" 0 "" \
+  calls_are 2 "git/ref/heads/main"
+
+# The sites round 1 found still outside the helper: reads that follow a write
+# this instrument made, where a stale 404 escaped drill_gh_soft as exit 0 and
+# empty and the caller took it for an answer.
+stub_reset
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/read.manifest"
+with_stub scratch_commit "$FORK" main "a file to read back" "$TMP/read.manifest" \
+  >/dev/null 2>&1
+faults "0	2	GET repos/*/contents/VERSION*	404	Not Found"
+check "a VERSION read that answers stale twice reads the version, not an absence" 0 "0.7.0-dev" \
+  with_stub scratch_version "$FORK" main nonempty
+faults "0	99	GET repos/*/contents/VERSION*	404	Not Found"
+with_stub scratch_version "$FORK" main nonempty >"$TMP/version.out" 2>&1
+version_rc=$?
+check "a VERSION read that never answers is a failed read, not a version" 0 "" \
+  test "$version_rc" -eq 1
+check "and it names the read and its attempt count" 0 \
+  "VERSION at $FORK@main did not read back after 10 attempts" cat "$TMP/version.out"
+# The escape this replaces exited 0 with empty stdout, and the probe then
+# recorded a claim about main from that emptiness. The exit status above is
+# what stops it; this is the other half — nothing reaches stdout to be read as
+# a version.
+version_stdout="$(with_stub scratch_version "$FORK" main nonempty 2>/dev/null)"
+check "and prints no version at all, so nothing downstream can assert on one" 0 "" \
+  test -z "$version_stdout"
+
+# `any` is still the mode for the question it answers: a ref that genuinely
+# carries no VERSION is not a stale read to spend ten calls on.
+faults
+: >"$TMP/state/calls"
+check "a VERSION nobody wrote still answers absent" 0 "" \
+  empty_stdout with_stub scratch_version "$FORK" nosuchbranch
+check "and spent exactly one call doing it" 0 "" calls_are 1 "contents/VERSION"
+
+# scratch_file, the same two ways. Its false absence had a message of its own
+# — "has no 'VERSION' to read" — and that message is the thing D4 forbids: a
+# statement about the repo derived from a read that never happened.
+faults "0	2	GET repos/*/contents/VERSION*	404	Not Found"
+check "a file read that answers stale twice still lands the bytes" 0 "" \
+  with_stub scratch_file "$FORK" main VERSION "$TMP/read.out" nonempty
+check "and the bytes it landed are the file's" 0 "0.7.0-dev" cat "$TMP/read.out"
+faults "0	99	GET repos/*/contents/VERSION*	404	Not Found"
+with_stub scratch_file "$FORK" main VERSION "$TMP/read.out" nonempty \
+  >"$TMP/file.out" 2>&1
+file_rc=$?
+check "a file read that never answers aborts" 0 "" test "$file_rc" -eq 1
+check "and names the read rather than the file" 0 \
+  "VERSION at $FORK@main did not read back after 10 attempts" cat "$TMP/file.out"
+check "and never says the ref has no such path, which was the false absence" 1 "" \
+  grep -qF "has no 'VERSION' to read" "$TMP/file.out"
+# And the genuine absence keeps its own wording, as the pin refusal does.
+faults
+check "a path that truly is not there still says so, in its own words" 1 \
+  "has no 'nosuch.md' to read" \
+  with_stub scratch_file "$FORK" main nosuch.md "$TMP/read.out"
+
+# The label verify: 0.6.0's probe 2 merged unlabeled because a label write
+# failed and the failure was read after the merge, so this read is the one the
+# probe refuses to merge on. An empty answer from it, one write later, is a
+# stale index — and refusing there would abort a probe over the read.
+stub_reset
+LABELPR="$(with_stub scratch_pr_create "$FORK" topic main "a labelled PR" 2>/dev/null)"
+with_stub scratch_pr_label "$FORK" "$LABELPR" release >/dev/null 2>&1
+faults "0	2	GET repos/*/issues/*/labels	404	Not Found"
+: >"$TMP/state/calls"
+check "a label read that answers stale twice reads the label back" 0 "release" \
+  with_stub scratch_pr_labels "$FORK" "$LABELPR" nonempty
+check "and took the three calls it took" 0 "" calls_are 3 "issues/$LABELPR/labels"
+faults "0	99	GET repos/*/issues/*/labels	404	Not Found"
+check "a label read that never answers is a failed read" 1 \
+  "the labels on $FORK#$LABELPR did not read back after 10 attempts" \
+  with_stub scratch_pr_labels "$FORK" "$LABELPR" nonempty
+
+# And the caller that turns that read into a claim (#369 D6). The verify used
+# to sit left of a `grep`, which owns the pipeline's exit status, so an
+# exhausted read reached the refusal and reported a PR as unlabeled on a list
+# nobody had read. Both refusals are exercised, because the point is that they
+# are two facts: one says the read did not answer, the other says the label is
+# not there, and only the second may speak about the PR.
+merge_unread_label() {
+  (
+    DRILL_REPO="$FORK"
+    with_stub probe_merge_and_wait probe-label "a labelled PR" release
+  )
+}
+stub_reset
+faults "0	99	GET repos/*/issues/*/labels	404	Not Found"
+merge_unread_label >"$TMP/mergelabel.out" 2>&1
+merge_label_rc=$?
+check "a merge whose label verify never reads back refuses to merge" 0 "" \
+  test "$merge_label_rc" -eq 1
+check "and refuses on the read, naming it" 0 \
+  "did not read back after the write, so the 'release' label was never checked" \
+  cat "$TMP/mergelabel.out"
+check "it never reports the PR as unlabeled on a read that did not answer" 1 "" \
+  grep -qF "did not carry the 'release' label" "$TMP/mergelabel.out"
+check "and it never reached the merge" 0 "" calls_are 0 "/merge"
+# The other side: a list that was read, and genuinely does not carry it. This
+# is 0.6.0's probe 2 — a PR carrying labels, none of them the one the probe is
+# about — and the refusal that must still fire, in its own words.
+merge_lost_label() {
+  (
+    export DRILL_STUB_LABEL_INSTEAD='scope:release-flow'
+    DRILL_REPO="$FORK"
+    with_stub probe_merge_and_wait probe-label "a labelled PR" release
+  )
+}
+stub_reset
+merge_lost_label >"$TMP/lostlabel.out" 2>&1
+lost_label_rc=$?
+check "a merge whose PR reads back without the label refuses too" 0 "" \
+  test "$lost_label_rc" -eq 1
+check "and this one does speak about the PR, because the list was read" 0 \
+  "did not carry the 'release' label after the write" cat "$TMP/lostlabel.out"
+check "it never blames the read that answered perfectly well" 1 "" \
+  grep -qF 'did not read back after the write' "$TMP/lostlabel.out"
+
+# The disposal read. This one is different in kind: it answers a formatted
+# string on a 200 either way, so `nonempty` buys nothing over `any` unless the
+# read selects on the value just written — a stale `archived=false` about a
+# repo the PATCH above archived is non-empty, and a retry that accepts it ends
+# on the wrong answer and puts 0.2.0's record-a-cleanup-that-did-not-happen
+# straight back. The stub's lag knob is what makes that shape reachable; the
+# fault rules inject failures and cannot express it.
+stub_reset
+check "an archive whose flag reads back true reports what it observed" 0 \
+  "archived=true private=true" with_stub scratch_archive "$FORK"
+stub_reset
+archive_lagged() { DRILL_STUB_ARCHIVE_LAG=2 with_stub scratch_archive "$FORK"; }
+check "an archive whose flag reads stale twice waits for the value it wrote" 0 \
+  "archived=true private=true" archive_lagged
+stub_reset
+faults "0	2	GET repos/$FORK	500	Internal Server Error"
+check "a disposal read that 500s twice still reports the flag" 0 \
+  "archived=true private=true" with_stub scratch_archive "$FORK"
+
+# D7 — an answer is not an absence. This read is the one site in the family
+# where the WRONG answer is representable, so its two failures are two
+# dispositions: a flag that reads `false` to the end of the budget is a repo
+# this run knows is not archived, and collapsing it into "the read never
+# answered" throws away what #135 installed the read-back for after 0.2.0
+# shipped a record claiming a cleanup that had not happened.
+stub_reset
+archive_false() { DRILL_STUB_ARCHIVE_LAG=99 with_stub scratch_archive "$FORK"; }
+archive_false >"$TMP/archive-false.out" 2>&1
+archive_false_rc=$?
+check "a flag that reads false to the end of the budget is its own disposition" 0 "" \
+  test "$archive_false_rc" -eq 3
+check "and the answer it kept reading is what it reports" 3 \
+  "archived=false private=true" archive_false
+check "it never claims the archive it did not observe" 1 "" \
+  grep -qF 'archived=true' "$TMP/archive-false.out"
+check "and it spent the whole budget before saying so" 0 "" \
+  calls_at_least 10 '--jq "archived='
+# The other disposition, on the same call: a read that answers nothing at all.
+stub_reset
+faults "0	99	GET repos/$FORK	500	Internal Server Error"
+with_stub scratch_archive "$FORK" >"$TMP/archive-unread.out" 2>&1
+archive_unread_rc=$?
+check "a flag read that never answers is the unread disposition, not the false one" 0 "" \
+  test "$archive_unread_rc" -eq 1
+check "and it names the read and its attempt count" 0 \
+  "the archived flag on $FORK did not read back after 10 attempts" \
+  cat "$TMP/archive-unread.out"
+check "it reports no flag at all, since it read none" 0 "" \
+  empty_stdout with_stub scratch_archive "$FORK"
+
+# The cases above pin the helpers' modes. What they cannot see is whether the
+# *callers* pass the mode — a probe that reverts to the default reads `any`
+# again and the helper is blameless. So the three probe-side read-after-writes
+# are pinned end to end, in one run carrying one fault each: probe 1's re-arm
+# read of VERSION, probe 7's CHANGELOG.md read off main, and probe 1's label
+# verify between the write and the merge.
+#
+# Every one of them is a 404 answering about a file or a label this instrument
+# has just written, and every one of them is silent in `any` mode: the re-arm
+# records "main reads ''", the changelog read reports the file missing, the
+# label verify refuses to merge. All three surface here as a probe row that is
+# not PASS, which is why the assertion is 8/8 and the emitted record rather
+# than any one message. One run rather than three because each fault names its
+# own endpoint, so a regression at any single site reds it.
+stub_reset
+green_scenario "$TMP/probesites.scenario"
+faults \
+  "0	2	GET repos/$SCRATCH/contents/VERSION*	404	Not Found" \
+  "0	2	GET repos/$SCRATCH/contents/CHANGELOG.md*	404	Not Found" \
+  "0	2	GET repos/$SCRATCH/issues/*/labels	404	Not Found"
+sites_out="$(run_rehearsal "$TMP/probesites.scenario" --out "$TMP/probesites.md" 2>&1)"
+sites_rc=$?
+check "stale answers at the probes' own read-after-writes do not stop the rehearsal" 0 "" \
+  test "$sites_rc" -eq 0
+check "and every probe still reached its verdict" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$sites_out"
+check "the record it emits is the clean run's, unchanged" 0 "" \
+  diff -u "$TMP/emitted.md" "$TMP/probesites.md"
+
+# The two changelog reads *after* a door has run — probe 7's across the rc cut
+# and probe 8's across the promotion. They need their own run, because the
+# fault above is spent on probe 7's before-read, and they need the call log
+# rather than the record to tell the modes apart: in `any` mode `scratch_file`
+# returns 1 on the stale answer just as an exhausted read does, so both modes
+# record the same "did not read back" row. What differs is that one of them
+# asked ten times and the other gave up on the first stale 404 — so the budget
+# it spent is the assertion, and a `skip` of one aims the rule past the
+# before-read whose empty answer would be a true one.
+stub_reset
+green_scenario "$TMP/changelog.scenario"
+faults "1	99	GET repos/$SCRATCH/contents/CHANGELOG.md*	404	Not Found"
+changelog_out="$(run_rehearsal "$TMP/changelog.scenario" --out "$TMP/changelog.md" 2>&1)"
+check "a changelog read that never answers fails its probe and no more" 0 \
+  "probes passed 6/8, failed 2" printf '%s\n' "$changelog_out"
+check "probe 7 says the comparison was never taken" 0 \
+  "CHANGELOG.md did not read back after the rc cut" cat "$TMP/changelog.md"
+check "probe 8 says the same of the stamped section" 0 \
+  "CHANGELOG.md did not read back after the promotion" cat "$TMP/changelog.md"
+check "and both of them spent the budget rather than believing the first 404" 0 "" \
+  calls_at_least 20 "contents/CHANGELOG.md"
+
+# Setup's own read-after-writes, which cannot ride a rehearsal because a fault
+# there aborts before a probe runs: the fixture's seeding assertion, and
+# fork_ref_prepare's two reads of the ref it has just created. Each `any`-mode
+# escape has a message of its own that reads as a fact about the repo — "is
+# missing the armed fixture", "carries no .github/workflows/*.yml", "no
+# workflow … carries CEREMONY_SELF_REF" — which is the shape D4 forbids, so
+# each is asserted absent as well as the honest one asserted present.
+stub_reset
+SEEDED="$SCRATCH_OWNER/seeded-probe"
+with_stub scratch_create "$SEEDED" >/dev/null 2>&1
+printf '# Changelog\n' >"$TMP/seed-changelog"
+printf 'Fragments live here.\n' >"$TMP/seed-readme"
+{
+  printf 'A\tVERSION\t%s\n' "$TMP/seed-version"
+  printf 'A\tCHANGELOG.md\t%s\n' "$TMP/seed-changelog"
+  printf 'A\tchangelog.d/README.md\t%s\n' "$TMP/seed-readme"
+} >"$TMP/seeded.manifest"
+with_stub scratch_commit "$SEEDED" main "the armed fixture at 0.7.0-dev" \
+  "$TMP/seeded.manifest" >/dev/null 2>&1
+check "the fixture this case is about is genuinely seeded" 0 "" \
+  with_stub fixture_assert_seeded "$SEEDED" main
+faults "0	2	GET repos/*/git/trees/*	404	Not Found"
+check "a seeding check whose tree read answers stale twice still passes" 0 "" \
+  with_stub fixture_assert_seeded "$SEEDED" main
+faults "0	99	GET repos/*/git/trees/*	404	Not Found"
+with_stub fixture_assert_seeded "$SEEDED" main >"$TMP/seeded.out" 2>&1
+seeded_rc=$?
+check "a seeding check whose tree never reads back aborts" 0 "" test "$seeded_rc" -eq 1
+check "and names the read rather than the fixture" 0 \
+  "the tree of main on $SEEDED did not read back after 10 attempts" cat "$TMP/seeded.out"
+check "it never reports an armed fixture as missing on a read that failed" 1 "" \
+  grep -qF 'is missing the armed fixture' "$TMP/seeded.out"
+# The genuine absence keeps its own words, as every refusal the retry sits in
+# front of does.
+faults
+with_stub scratch_ref_create "$FORK" refs/heads/main "$CAND_SHA" >/dev/null 2>&1
+check "a tree that genuinely lacks the fixture still says which files" 1 \
+  "is missing the armed fixture: VERSION CHANGELOG.md changelog.d/README.md" \
+  with_stub fixture_assert_seeded "$FORK" main
+
+stub_reset
+mkdir -p "$TMP/prepare-work"
+faults "0	2	GET repos/*/contents/*	404	Not Found"
+check "a carrier read that answers stale twice still prepares the pin" 0 "" \
+  with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/prepare-work"
+stub_reset
+faults "0	99	GET repos/*/contents/*	404	Not Found"
+with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/prepare-work" \
+  >"$TMP/prepare.out" 2>&1
+prepare_rc=$?
+check "a carrier read that never answers aborts the preparation" 0 "" \
+  test "$prepare_rc" -eq 1
+check "and names the read, not a pin the workflow supposedly lacks" 0 \
+  "did not read back after 10 attempts" cat "$TMP/prepare.out"
+check "it never claims no workflow carries CEREMONY_SELF_REF" 1 "" \
+  grep -qF 'carries CEREMONY_SELF_REF' "$TMP/prepare.out"
+stub_reset
+faults "0	99	GET repos/*/git/trees/*	404	Not Found"
+with_stub fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/prepare-work" \
+  >"$TMP/prepare-tree.out" 2>&1
+prepare_tree_rc=$?
+check "a carrier list that never reads back aborts the preparation too" 0 "" \
+  test "$prepare_tree_rc" -eq 1
+check "and says so as a failed read" 0 \
+  "the tree of $FORK_REF on $FORK did not read back after 10 attempts" \
+  cat "$TMP/prepare-tree.out"
+check "never as a ref that carries no workflows" 1 "" \
+  grep -qF 'carries no .github/workflows' "$TMP/prepare-tree.out"
+
+# And the other half of that site, which the mode alone does not fix: what the
+# probe RECORDS when the read is exhausted rather than merely slow. `probe_run`
+# calls each probe as `"$fn" || status=$?`, which suppresses `set -e` inside
+# it, so an unbranched `armed="$(scratch_version …)"` left `armed` empty and the
+# row read "main reads '' after the ceremony" — a claim about main derived from
+# a read that never happened, with drill_read's honest message on stderr where
+# the record cannot see it. The row is the assertion here, and the old wording
+# is asserted absent: it is the defect, not a detail of it.
+stub_reset
+green_scenario "$TMP/rearm.scenario"
+faults "0	99	GET repos/$SCRATCH/contents/VERSION*	404	Not Found"
+run_rehearsal "$TMP/rearm.scenario" --out "$TMP/rearm.md" >"$TMP/rearm.out" 2>&1
+check "a re-arm read that never answers still leaves a record behind" 0 "" \
+  test -s "$TMP/rearm.md"
+# One assertion per re-arm site, because each is a separate call site and a
+# family fixed at three of four is the same defect (#369 D6). The four rows
+# differ by the door their probe drove, so a single faulted run grades all
+# four independently: reverting any one branch to `armed="$(scratch_version
+# …)"` reds the line that names it and leaves the other three green.
+check "probe 1's row says the ceremony's re-arm read did not answer" 0 \
+  "VERSION did not read back off main after the ceremony" cat "$TMP/rearm.md"
+check "probe 5's row says the tag door's read did not answer" 0 \
+  "VERSION did not read back off main after the tag door" cat "$TMP/rearm.md"
+check "probe 7's row says the rc cut's re-arm read did not answer" 0 \
+  "VERSION did not read back off main after the rc cut" cat "$TMP/rearm.md"
+check "probe 8's row says the promotion's re-arm read did not answer" 0 \
+  "VERSION did not read back off main after the promotion" cat "$TMP/rearm.md"
+check "and not one of the four records a version it never read" 1 "" \
+  grep -qF "main reads ''" "$TMP/rearm.md"
+# The honest message is still emitted — on stderr, which is exactly where the
+# old shape left it while the record kept the false claim.
+check "the read names itself on stderr, where the record could not see it" 0 \
+  "VERSION at $SCRATCH@main did not read back after 10 attempts" \
+  cat "$TMP/rearm.out"
+
+# The disposal is the last thing the instrument does, and it sits after eight
+# probes under `set -euo pipefail`. An exhausted read there used to be the end
+# of the run — the record those probes filled, lost to a read. It is now a
+# sentence in the record instead, and this is what says so.
+stub_reset
+green_scenario "$TMP/disposal.scenario"
+faults "1	99	GET repos/$SCRATCH	500	Internal Server Error"
+disposal_out="$(run_rehearsal "$TMP/disposal.scenario" --out "$TMP/disposal.md" 2>&1)"
+disposal_rc=$?
+check "a disposal read that never answers still emits the record" 0 "" \
+  test "$disposal_rc" -eq 0
+check "with all eight probe rows in it" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$disposal_out"
+check "and the record says the archive is unobserved rather than claiming it" 0 \
+  "the read afterwards never answered" cat "$TMP/disposal.md"
+check "it never reports an archive it did not observe" 1 "" \
+  grep -qF 'a fresh read afterwards reported' "$TMP/disposal.md"
+check "and it never says the archive did not land, which it did not measure" 1 "" \
+  grep -qF 'the archive did not land' "$TMP/disposal.md"
+
+# The other disposition, in the record this time (#369 D7). Same exhausted
+# read, a different fact behind it: the flag answered, and what it said is
+# that the repository is not archived. The two sentences are different
+# strings, and the softer one may not be reached from the harder fact.
+stub_reset
+green_scenario "$TMP/unarchived.scenario"
+export DRILL_STUB_ARCHIVE_LAG=99
+unarchived_out="$(run_rehearsal "$TMP/unarchived.scenario" --out "$TMP/unarchived.md" 2>&1)"
+unarchived_rc=$?
+unset DRILL_STUB_ARCHIVE_LAG
+check "a disposal that reads back false still emits the record" 0 "" \
+  test "$unarchived_rc" -eq 0
+check "with all eight probe rows in it too" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$unarchived_out"
+check "and the record says the archive did not land" 0 \
+  "the archive did not land, and the repository is still live" \
+  cat "$TMP/unarchived.md"
+check "quoting the flag it actually read" 0 "archived=false private=true" \
+  cat "$TMP/unarchived.md"
+check "it never files an answered read as one that never answered" 1 "" \
+  grep -qF 'never answered' "$TMP/unarchived.md"
 
 # ---------------------------------------------------------------------------
 # Argument refusals: the CLI is a door too.

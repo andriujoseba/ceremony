@@ -54,17 +54,95 @@ drill_gh() {
   gh "$@"
 }
 
-# drill_gh_soft <gh-args...> — stdout only when the call actually succeeded.
+# drill_gh_soft <gh-args...> — absent and failed, told apart.
 #
 # `gh api --jq` applies the filter to the *error* body on a 404 and still
 # prints it, so a missing ref answers `null` and an absent file answers a
 # JSON object; both read as data downstream. Only the exit status tells them
 # apart, so every "does this exist yet" read goes through here.
+#
+# **Absent** is exit 0 and no output: a 404, and equally the `Git Repository
+# is empty. (HTTP 409)` a freshly created repo answers from the git data API
+# — the same "not there *yet*" the bootstrap in scratch_commit anticipates,
+# and a state the caller reaches by retrying, never by aborting. **Failed**
+# is anything else — a 500, a timeout, a refusal — and it is non-zero, for
+# the caller to retry or abort on. Collapsing those two into one answer is
+# how the 0.7.0 cut came to report a write as failed when it had landed
+# (#369): a stale read and a broken one looked identical here.
 drill_gh_soft() {
-  local out rc=0
-  out="$(drill_gh "$@" 2>/dev/null)" || rc=$?
-  [ "$rc" -eq 0 ] || return 0
-  printf '%s\n' "$out"
+  local out err message rc=0
+  err="$(mktemp)"
+  out="$(drill_gh "$@" 2>"$err")" || rc=$?
+  message="$(cat "$err")"
+  rm -f "$err"
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  case "$message" in
+    *"(HTTP 404)"* | *"Git Repository is empty"*) return 0 ;;
+  esac
+  printf '%s\n' "$message" >&2
+  return 1
+}
+
+# drill_read <mode> <what> <read-cmd...> — a bounded retry around one read.
+#
+# The 0.7.0 cut aborted four times in setup before a single probe ran, and
+# three of those were one defect: every read here follows a write, GitHub
+# answered stale or transiently, and nothing in the path retried (#369).
+# Shaped like `scratch_run_for` below, whose 90 × 10s poll already says a
+# workflow run takes time to appear — a commit was the thing assumed to
+# appear instantly. Both bounds are env-overridable so the stubbed suite runs
+# at zero nap.
+#
+# The mode is the caller's judgement about what an empty answer means:
+#
+#   any       retry while the read FAILS; an absent answer ends it. A ref
+#             nobody wrote is answered in one call and spends no budget
+#             waiting for a thing that will never arrive.
+#   nonempty  retry while it fails OR answers empty — for a read that follows
+#             a write this instrument just made, where absence can only be a
+#             stale index.
+#
+# Reads only. A retried write against the git data API risks a second commit,
+# which is why one function does every write here (D5).
+drill_read() {
+  local mode="${1:?drill_read: mode required}"
+  local what="${2:?drill_read: description required}"
+  shift 2
+  local max="${DRILL_READ_TRIES:-10}" nap="${DRILL_READ_NAP_SECONDS:-1}"
+  local tries=0 out rc plural=attempts
+  # A misspelled mode must not read as the weaker one: `nonempty` is the mode
+  # that retries a stale answer, and silently degrading to `any` would put
+  # 0.7.0's defect back with nothing to notice it.
+  case "$mode" in
+    any | nonempty) ;;
+    *)
+      echo "drill_read: unknown mode '$mode' — expected 'any' or 'nonempty'." >&2
+      return 2
+      ;;
+  esac
+  [ "$max" -ge 1 ] || max=1
+  while :; do
+    tries=$((tries + 1))
+    rc=0
+    out="$("$@")" || rc=$?
+    if [ "$rc" -eq 0 ] && { [ "$mode" != nonempty ] || [ -n "$out" ]; }; then
+      [ -z "$out" ] || printf '%s\n' "$out"
+      return 0
+    fi
+    [ "$tries" -lt "$max" ] || break
+    [ "$nap" = 0 ] || sleep "$nap"
+  done
+  # What this message may not do is assert the write failed. Two of 0.7.0's
+  # four aborts said exactly that — "the bootstrap commit left … with no
+  # head", "the rewritten pin does not read the candidate SHA" — about writes
+  # that had landed, and the hour that cost went into re-reading GitHub by
+  # hand to find out (#369).
+  [ "$tries" -ne 1 ] || plural=attempt
+  echo "drill: $what did not read back after $tries $plural — a failed read, not a failed write; the write may well have landed." >&2
+  return 1
 }
 
 # scratch_create <owner/name> — a private, disposable repo.
@@ -79,14 +157,21 @@ scratch_created_at() {
   drill_gh api "repos/${1:?scratch_created_at: repo required}" --jq '.created_at'
 }
 
-# scratch_ref_sha <repo> <branch> — the branch head, empty when it has none.
+# scratch_ref_sha <repo> <branch> [mode] — the branch head, empty when it has
+# none. The mode is drill_read's: `any` (the default) reports a branch nobody
+# created, `nonempty` is for the read that follows a write of this very ref.
 scratch_ref_sha() {
-  drill_gh_soft api "repos/${1:?}/git/ref/heads/${2:?}" --jq '.object.sha'
+  local repo="${1:?}" branch="${2:?}" mode="${3:-any}"
+  drill_read "$mode" "refs/heads/$branch on $repo" \
+    drill_gh_soft api "repos/$repo/git/ref/heads/$branch" --jq '.object.sha'
 }
 
-# scratch_paths <repo> <ref> — every path in the ref's tree, one per line.
+# scratch_paths <repo> <ref> [mode] — every path in the ref's tree, one per
+# line. Same two modes, for the same reason.
 scratch_paths() {
-  drill_gh_soft api "repos/${1:?}/git/trees/${2:?}?recursive=1" \
+  local repo="${1:?}" ref="${2:?}" mode="${3:-any}"
+  drill_read "$mode" "the tree of $ref on $repo" \
+    drill_gh_soft api "repos/$repo/git/trees/$ref?recursive=1" \
     --jq '.tree[] | select(.type == "blob") | .path'
 }
 
@@ -111,7 +196,15 @@ scratch_blob() {
 scratch_commit() {
   local repo="${1:?}" branch="${2:?}" message="${3:?}" manifest="${4:?}"
   local base_sha base_tree="" entries="[]" op path file blob tree_sha commit_sha
-  base_sha="$(scratch_ref_sha "$repo" "$branch")"
+  # `any`, because a branch nobody has created yet is a real answer here and
+  # the bootstrap below is what that answer means. But *empty* and *never
+  # answered* are the two things D2 exists to keep apart, and this assignment
+  # is the one place in the changed surface that could throw the distinction
+  # away one line after it is made: without the `|| return 1`, an exhausted
+  # failed read leaves `base_sha` empty and the bootstrap writes — the
+  # contents PUT carries `branch`, so it commits to a branch that already has
+  # a head, on a read that never answered.
+  base_sha="$(scratch_ref_sha "$repo" "$branch")" || return 1
   if [ -z "$base_sha" ]; then
     # A freshly created repository refuses the git data API outright —
     # `Git Repository is empty. (HTTP 409)`: blobs and trees need a first
@@ -127,12 +220,16 @@ scratch_commit() {
       --arg c "$(base64 <"$seed_file" | tr -d '\n')" \
       '{message: $m, branch: $b, content: $c}' |
       drill_gh api "repos/$repo/contents/$seed_path" --method PUT --input - >/dev/null || return 1
-    base_sha="$(scratch_ref_sha "$repo" "$branch")"
-    [ -n "$base_sha" ] ||
-      { echo "scratch_commit: the bootstrap commit left $repo@$branch with no head." >&2; return 1; }
+    # The write above landed; the read below is the one that can be wrong, so
+    # it retries an empty answer rather than reporting the commit as lost.
+    base_sha="$(scratch_ref_sha "$repo" "$branch" nonempty)" || return 1
   fi
   if [ -n "$base_sha" ]; then
-    base_tree="$(drill_gh api "repos/$repo/git/commits/$base_sha" --jq '.tree.sha')" || return 1
+    # `Git Repository is empty. (HTTP 409)` against a repo `gh repo create`
+    # had just returned is what aborted the third 0.7.0 attempt, and it is
+    # this read — the base tree of a commit the instrument had just made.
+    base_tree="$(drill_read nonempty "the tree of commit $base_sha on $repo" \
+      drill_gh_soft api "repos/$repo/git/commits/$base_sha" --jq '.tree.sha')" || return 1
   fi
   while IFS=$'\t' read -r op path file; do
     [ -n "${op:-}" ] || continue
@@ -202,10 +299,14 @@ scratch_pr_label() {
     drill_gh api "repos/${1:?}/issues/${2:?}/labels" --input - >/dev/null
 }
 
-# scratch_pr_labels <repo> <number> — the labels actually on the PR, so the
-# probe can confirm rather than assume.
+# scratch_pr_labels <repo> <number> [mode] — the labels actually on the PR, so
+# the probe can confirm rather than assume. drill_read's modes again: `any` for
+# "what is on this PR", `nonempty` for the read that follows a label write of
+# this instrument's own, where an empty answer can only be a stale index.
 scratch_pr_labels() {
-  drill_gh api "repos/${1:?}/issues/${2:?}/labels" --jq '.[].name'
+  local repo="${1:?}" number="${2:?}" mode="${3:-any}"
+  drill_read "$mode" "the labels on $repo#$number" \
+    drill_gh_soft api "repos/$repo/issues/$number/labels" --jq '.[].name'
 }
 
 # scratch_pr_merge <repo> <number> — prints the merge commit SHA.
@@ -250,16 +351,23 @@ scratch_release_prerelease() {
   esac
 }
 
-# scratch_file <repo> <ref> <path> <out-file> — the file's bytes at a ref,
-# put where a byte comparison can reach them.
+# scratch_file <repo> <ref> <path> <out-file> [mode] — the file's bytes at a
+# ref, put where a byte comparison can reach them.
 #
 # `scratch_version` below strips whitespace because a version is a token;
 # this one strips nothing, because the rc cut's changelog claim is `cmp` and
 # not prose (#321 D3): "byte-identical before and after" is only a
 # measurement if the bytes are what was compared.
+#
+# The mode is drill_read's, and it defaults to `any` because "is this path
+# here" is a real question. Every caller reading a file back off main after a
+# release door wrote it passes `nonempty` instead: a 404 there is GitHub being
+# stale about a file it holds, and taking it at face value reports the file
+# missing — the false absence D1 exists to retire.
 scratch_file() {
-  local repo="${1:?}" ref="${2:?}" path="${3:?}" out="${4:?}" encoded
-  encoded="$(drill_gh_soft api "repos/$repo/contents/$path?ref=$ref" --jq '.content')"
+  local repo="${1:?}" ref="${2:?}" path="${3:?}" out="${4:?}" mode="${5:-any}" encoded
+  encoded="$(drill_read "$mode" "$path at $repo@$ref" \
+    drill_gh_soft api "repos/$repo/contents/$path?ref=$ref" --jq '.content')" || return 1
   if [ -z "$encoded" ]; then
     echo "scratch_file: $repo@$ref has no '$path' to read." >&2
     return 1
@@ -267,11 +375,17 @@ scratch_file() {
   base64 -d <<<"$encoded" >"$out"
 }
 
-# scratch_version <repo> <ref> — the tree's VERSION at a ref, for the
-# re-arm assertions.
+# scratch_version <repo> <ref> [mode] — the tree's VERSION at a ref, for the
+# re-arm assertions. Same two modes as scratch_file, for the same reason: the
+# re-arm reads are `nonempty`, because the door has just written that file and
+# an empty answer about it is a stale index rather than a repo without a
+# VERSION. A caller that reads this in `any` mode and then asserts on the
+# result is asserting on a read that may not have happened — which is why the
+# re-arm sites branch on the exit status rather than on the string.
 scratch_version() {
-  local encoded
-  encoded="$(drill_gh_soft api "repos/${1:?}/contents/VERSION?ref=${2:?}" --jq '.content')"
+  local repo="${1:?}" ref="${2:?}" mode="${3:-any}" encoded
+  encoded="$(drill_read "$mode" "VERSION at $repo@$ref" \
+    drill_gh_soft api "repos/$repo/contents/VERSION?ref=$ref" --jq '.content')" || return 1
   [ -n "$encoded" ] || return 0
   base64 -d <<<"$encoded" 2>/dev/null | tr -d '[:space:]'
 }
@@ -333,10 +447,65 @@ scratch_run_rerun() {
 # scratch_archive <repo> — archive, then read the flag back. The record
 # states the disposal its author observed, never the one it asked for: 0.2.0
 # shipped a record asserting a cleanup that had not happened (#135).
+#
+# That read is read-after-write like any other, so it goes through the helper
+# (D3). What makes `nonempty` bite here is `scratch_archived_flag` printing
+# only an answer that reads back `archived=true`: the API answers with a
+# formatted string either way, so a stale `archived=false` about a repo the
+# PATCH above just archived is non-empty and would end the retry on the wrong
+# answer — the one shape of staleness this call can suffer. Withholding an
+# answer that does not carry the value just written turns it back into the
+# empty answer `nonempty` retries, exactly as the bootstrap's ref re-read does.
+#
+# And this is the one site in that family where the *wrong* answer is
+# representable, so an answer may not be filed as an absence (D7). A read that
+# says `archived=false` ten times knows the archive did not land; folding it
+# into "the read never answered" throws away exactly what #135 installed the
+# read-back for, after 0.2.0 shipped a record asserting a cleanup that had not
+# happened. Three dispositions, and the caller states the one it has:
+#
+#   0  archived, and observed so — the flag is on stdout
+#   3  read, and it says the repo is NOT archived — the last answer is on
+#      stdout, and the archive did not land
+#   1  never answered — nothing on stdout, and nothing may be claimed
 scratch_archive() {
-  local repo="${1:?}" observed
+  local repo="${1:?}" observed raw last rc=0
   jq -n '{archived: true}' |
     drill_gh api "repos/$repo" --method PATCH --input - >/dev/null || return 1
-  observed="$(drill_gh api "repos/$repo" --jq '"archived=\(.archived) private=\(.private)"')" || return 1
-  printf '%s\n' "$observed"
+  raw="$(mktemp)"
+  observed="$(drill_read nonempty "the archived flag on $repo" \
+    scratch_archived_flag "$repo" "$raw")" || rc=$?
+  last="$(cat "$raw")"
+  rm -f "$raw"
+  if [ "$rc" -eq 0 ]; then
+    printf '%s\n' "$observed"
+    return 0
+  fi
+  # The reads answered, and what they answered was `archived=false`. That is a
+  # measurement, not a missing one.
+  if [ -n "$last" ]; then
+    printf '%s\n' "$last"
+    return 3
+  fi
+  return 1
+}
+
+# scratch_archived_flag <repo> <raw-file> — one read of the archive flag,
+# recording the whole answer and printing only the archived one.
+#
+# The split is what keeps D7's two dispositions apart: the raw file holds the
+# last answer the read actually got, so an exhausted retry can tell "it said
+# false every time" from "it never said anything", while stdout stays empty on
+# a false so `drill_read nonempty` goes on retrying the staleness it is there
+# for. The file is truncated on a failed read, because a disposition is only
+# ever claimed from the answer this attempt got.
+scratch_archived_flag() {
+  local repo="${1:?}" raw="${2:?}" answer
+  : >"$raw"
+  answer="$(drill_gh_soft api "repos/$repo" \
+    --jq '"archived=\(.archived) private=\(.private)"')" || return 1
+  printf '%s' "$answer" >"$raw"
+  case "$answer" in
+    archived=true*) printf '%s\n' "$answer" ;;
+  esac
 }
