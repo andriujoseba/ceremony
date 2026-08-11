@@ -841,14 +841,27 @@ tree_version() { # $1 = ref → that tree's version via the API, or nothing
   return 0
 }
 
-reconcile_handoff_takeback() { # $1 = PR number; at most one comment per episode (#377)
+reconcile_handoff_takeback() { # $1 = PR number, $2 = did the converge edit take it back?; at most one comment per episode (#377)
   # The defect this closes is not the take-back — that rule is correct and
   # unchanged — but its silence: `log` writes to the labels workflow's run
   # log, and a builder driving a PR reads the PR. On incubator#94 a hand-set
   # label vanished 45 seconds later with no comment three times running, and
   # writing it again is the rational answer to a write that disappears
   # without a reason.
-  local n="$1" standing joined marker bodies b pretty=""
+  local n="$1" cleared="$2" standing joined marker bodies b pretty=""
+
+  # D1's trigger is the replacement that LANDED, not the one attempted. The
+  # caller passes the answer because only it knows: a `gh issue edit` that
+  # failed, or one skipped because the repo's taxonomy has no
+  # `state:addressing`, leaves `state:needs-human` standing on the PR — and
+  # "the state is state:addressing again" would then be false ABOUT A LABEL
+  # STILL THERE, which is the loudest way to be wrong here. Worse than the
+  # falsehood is its durability: the marker such a comment records suppresses
+  # the true one at that (set, head) forever, so the pass where the edit does
+  # land would say nothing. Not a comment condition so much as the definition
+  # of the event — nothing was taken back until the label came off.
+  [ "$cleared" = true ] || return 0
+
   standing="$(handoff_taken_back)"
   [ -n "$standing" ] || return 0
   joined="$(handoff_takeback_set <<<"$standing")"
@@ -871,7 +884,7 @@ reconcile_handoff_takeback() { # $1 = PR number; at most one comment per episode
     pretty="${pretty:+$pretty, }\`$b\`"
   done <<<"$standing"
 
-  run gh issue comment "$n" -R "$REPO" --body "$marker
+  if run gh issue comment "$n" -R "$REPO" --body "$marker
 \`state:needs-human\` was taken back on this PR — the state is
 \`state:addressing\` again. That is not a machine error, and re-setting the
 label will not stick: the label means a human could merge this **right now**,
@@ -888,8 +901,13 @@ by itself; setting it by hand only earns another take-back
 (heavy-duty/ceremony#377).
 
 *One comment per episode: a new head, or a different blocker set, says this
-again — the same head with the same blockers never does.*" >/dev/null
-  log "#$n: handoff taken back ($joined at $HEAD_SHA) — commented"
+again — the same head with the same blockers never does.*" >/dev/null; then
+    log "#$n: handoff taken back ($joined at $HEAD_SHA) — commented"
+  else
+    # A failed post recorded no marker, so the next sweep retries the episode;
+    # only this log line would have lied about it.
+    log "#$n: WARNING: handoff taken back ($joined at $HEAD_SHA) — the comment failed to post; the next sweep retries"
+  fi
 }
 
 reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
@@ -965,22 +983,23 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
       log "#$n: WARNING: missing label(s)$missing — state still converged; dispatch the workflow to bootstrap"
     fi
   fi
+  # Whether THIS pass took a hand-set handoff back — the fact #377's comment
+  # speaks for, and knowable only here: it needs the edit to have run, to have
+  # succeeded, and to have carried `state:needs-human` on its removal side.
+  # "The edit returned 0" is not the same claim and would still be true on a
+  # pass that removed something else entirely.
+  local handoff_cleared=false
   if [ "$skip_edit" = false ] && { ! has_label "$desired" || [ -n "$remove" ] || [ -n "$add" ]; }; then
     args=(--add-label "$desired${add:+,$add}")
     [ -n "$remove" ] && args+=(--remove-label "$remove")
     if run gh issue edit "$n" -R "$REPO" "${args[@]}" >/dev/null; then
       log "#$n: state -> $desired${add:+ +$add}${remove:+ (cleared $remove)}"
+      case ",$remove," in *,state:needs-human,*) handoff_cleared=true ;; esac
     else
       # a deleted label must not wedge the sweep — dispatch heals the taxonomy
       log "#$n: WARNING: label edit failed (missing label? run the workflow manually to bootstrap)"
     fi
   fi
-
-  # ---- say why a handoff was taken back (#377) -------------------------
-  # After the converge edit, never inside it: the state and the blockers ride
-  # ONE edit call so a PR never flickers through a half-applied board, and a
-  # comment posted between them would split exactly that.
-  reconcile_handoff_takeback "$n"
 
   # ---- the release-shape guard (#130): a warning, never a write --------
   # Drafts are exempt (the build phase is the builder's); the version
@@ -1024,6 +1043,17 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
     run gh issue edit "$n" -R "$REPO" --add-label stale >/dev/null
     log "#$n: stale ($((age / 3600))h quiet)"
   fi
+
+  # ---- say why a handoff was taken back (#377) -------------------------
+  # Two constraints put it exactly here. After the converge edit, never inside
+  # it: state and blockers ride ONE edit call so the board never half-applies,
+  # and a comment between them would split exactly that. And after the
+  # `last_activity` read, where reconcile_ruling's comments already sit: a
+  # machine comment must not count as the PR's own activity in the pass that
+  # posts it, or the sweep reads its own noise as a sign of life and holds
+  # `stale` off. Bounded by the per-episode guard either way, but the sweep
+  # should not have to be saved by a guard from believing itself.
+  reconcile_handoff_takeback "$n" "$handoff_cleared"
 
   # ---- the ruling invariants (#52): the bare-flag check + the 7-day nudge --
   # The stale EXEMPTION above is #51's; these are the sweep halves that ride
