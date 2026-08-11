@@ -2000,13 +2000,15 @@ release-7	24	7	after the rc cut	no '0.7.2-rc1' release exists
 release-8	29	8	after the promotion	no '0.7.2' release exists
 RELEASE_CASES
 
-# The fourth matching ref read is probe 1's setup read. Exhaust it, then prove
-# the row, every later probe, disposal and the final record all survive.
-printf -v branch_fault '3\t10\tGET repos/%s/git/ref/heads/main\t500\tInternal Server Error' "$SCRATCH"
+# The fifth matching ref read is probe 2's setup read. Exhaust it, then prove
+# the row, every later probe, disposal and the final record all survive. Probe
+# 1 remains available for probe 4's deliberate re-run, keeping that later
+# probe's own setup independent of the fault under test.
+printf -v branch_fault '4\t10\tGET repos/%s/git/ref/heads/main\t500\tInternal Server Error' "$SCRATCH"
 faulted_probe_run branch-sha "$branch_fault"
-check "a branch-SHA failure becomes probe 1's read-named row" 0 \
-  "the branch SHA did not read back at $SCRATCH@main before probe 1" \
-  probe_row "$TMP/branch-sha.md" 1
+check "a branch-SHA failure becomes probe 2's read-named row" 0 \
+  "the branch SHA did not read back at $SCRATCH@main before probe 2" \
+  probe_row "$TMP/branch-sha.md" 2
 check "a branch-SHA failure still leaves all eight rows" 0 "8" \
   bash -c 'grep -cE "^\| [1-8] \|" "$1"' _ "$TMP/branch-sha.md"
 check "the last probe still runs after a branch-SHA failure" 0 "" \

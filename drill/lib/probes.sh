@@ -492,7 +492,7 @@ probe_6_mismatched_tag() {
 # --------------------------------------------------------------------------
 probe_7_rc_cut() {
   local before after stage manifest run conc tb ta rb ra problems=""
-  local arm_sha arm_run arm_conc prerelease armed tags fragments_before_read=1
+  local arm_sha arm_run arm_conc prerelease armed tags verdict fragments_before_read=1
   local changelog_before="$DRILL_WORK/probe7-changelog.before"
   local changelog_after="$DRILL_WORK/probe7-changelog.after"
   local frags_before="$DRILL_WORK/probe7-fragments.before"
@@ -543,7 +543,8 @@ probe_7_rc_cut() {
   after="$(probe_counts "$DRILL_REPO")"
   ta="$(cut -f1 <<<"$after")"
   ra="$(cut -f2 <<<"$after")"
-  problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
+  verdict="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
+  [ -z "$verdict" ] || problems="$problems; $verdict"
   if tags="$(scratch_release_tags "$DRILL_REPO")"; then
     grep -qxF "$DRILL_RC1" <<<"$tags" ||
       problems="$problems; no '$DRILL_RC1' release exists after the rc cut"
