@@ -87,10 +87,18 @@ record_abort_path() {
   stem="${out%.md}"
   while :; do
     candidate="$stem.aborted-$n.md"
+    if [ -e "$candidate" ]; then
+      n=$((n + 1))
+      continue
+    fi
     if (set -o noclobber; : >"$candidate") 2>/dev/null; then
       printf '%s\n' "$candidate"
       return 0
     fi
+    # A racer may have reserved the same number after the existence check.
+    # Any other refusal (missing directory, permissions) is a real write
+    # failure, not a collision to spin on forever.
+    [ -e "$candidate" ] || return 1
     n=$((n + 1))
   done
 }
@@ -108,8 +116,8 @@ record_abort_render() {
   disposal="$(record_ctx "$ctx" disposal)"
 
   printf '%s\n\n' '**Aborted in setup — no probe ran.**'
-  printf -- '- **Step:** `%s`\n' "$step"
-  printf -- '- **Exit status:** `%s`\n' "$status"
+  printf -- "- **Step:** \`%s\`\n" "$step"
+  printf -- "- **Exit status:** \`%s\`\n" "$status"
   printf -- '- **Message:**\n'
   if [ -n "$message" ]; then
     while IFS= read -r line; do printf '  > %s\n' "$line"; done <<<"$message"
@@ -118,12 +126,12 @@ record_abort_render() {
   fi
 
   printf '\n## Known context\n\n'
-  [ -z "$candidate_sha" ] || printf -- '- Candidate SHA: `%s`\n' "$candidate_sha"
+  [ -z "$candidate_sha" ] || printf -- "- Candidate SHA: \`%s\`\n" "$candidate_sha"
   if [ -n "$fork_repo" ] && [ -n "$fork_ref" ]; then
-    printf -- '- Fork ref: `%s@%s`\n' "$fork_repo" "$fork_ref"
+    printf -- "- Fork ref: \`%s@%s\`\n" "$fork_repo" "$fork_ref"
   fi
-  [ -z "$scratch" ] || printf -- '- Scratch repo: `%s`\n' "$scratch"
-  [ -z "$created" ] || printf -- '- Created: `%s`\n' "$created"
+  [ -z "$scratch" ] || printf -- "- Scratch repo: \`%s\`\n" "$scratch"
+  [ -z "$created" ] || printf -- "- Created: \`%s\`\n" "$created"
 
   if [ -n "$scratch" ] && [ -s "$setup" ]; then
     printf '\n## Setup rows recorded before the abort\n\n'

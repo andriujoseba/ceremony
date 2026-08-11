@@ -161,13 +161,13 @@ archive_disposal() { # print the disposal this run observed; always return 0
   local observed archive_rc=0
   observed="$(scratch_archive "$DRILL_REPO")" || archive_rc=$?
   if [ "$archive_rc" -eq 0 ]; then
-    printf 'the repository is **archived** — `PATCH /repos/%s` with `archived: true`, and a fresh read afterwards reported `%s`' \
+    printf "the repository is **archived** — \`PATCH /repos/%s\` with \`archived: true\`, and a fresh read afterwards reported \`%s\`" \
       "$DRILL_REPO" "$observed"
   elif [ "$archive_rc" -eq 3 ]; then
-    printf 'the repository is **not archived** — `PATCH /repos/%s` with `archived: true` was sent, and every read afterwards reported `%s`; the archive did not land, and the repository is still live' \
+    printf "the repository is **not archived** — \`PATCH /repos/%s\` with \`archived: true\` was sent, and every read afterwards reported \`%s\`; the archive did not land, and the repository is still live" \
       "$DRILL_REPO" "$observed"
   else
-    printf 'the repository was sent `PATCH /repos/%s` with `archived: true`, but the read afterwards never answered — the archive may well have landed; it is unobserved, and this record does not claim it did' \
+    printf "the repository was sent \`PATCH /repos/%s\` with \`archived: true\`, but the read afterwards never answered — the archive may well have landed; it is unobserved, and this record does not claim it did" \
       "$DRILL_REPO"
   fi
 }
@@ -208,16 +208,31 @@ setup_capture() { # <variable> <step> <command> [args...]
   set -e
   cat "$stderr" >&2
   [ "$status" -eq 0 ] || setup_abort "$step" "$status" "$stderr"
-  printf -v "$variable" '%s' "$(cat "$stdout")"
+  [ "$variable" = _ ] || printf -v "$variable" '%s' "$(cat "$stdout")"
 }
 
 setup_run() { # <step> <command> [args...]
-  local ignored
-  setup_capture ignored "$@"
+  setup_capture _ "$@"
+}
+
+fixture_manifest_write() {
+  local paths path
+  fixture_write "$DRILL_STAGE" "$DRILL_V1"
+  paths="$(fixture_paths "$DRILL_V1")" || return 1
+  : >"$fixture_manifest"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    printf 'A\t%s\t%s\n' "$path" "$DRILL_STAGE/$path" >>"$fixture_manifest"
+  done <<<"$paths"
 }
 
 scratch_created=0
 created=""
+runner=""
+fork_head=""
+pin=""
+caller_sha=""
+baseline=""
 setup_capture runner authenticated_login drill_gh api user --jq '.login'
 
 printf 'drill: %s rehearsal — scratch %s, candidate %s, fork %s@%s\n' \
@@ -229,12 +244,8 @@ scratch_created=1
 setup_capture created scratch_created_at scratch_created_at "$DRILL_REPO"
 
 # ---- the armed fixture, BEFORE the caller (the 0.4.0 lesson) --------------
-setup_run fixture_write fixture_write "$DRILL_STAGE" "$DRILL_V1"
 fixture_manifest="$DRILL_WORK/fixture.manifest"
-: >"$fixture_manifest"
-while IFS= read -r path; do
-  printf 'A\t%s\t%s\n' "$path" "$DRILL_STAGE/$path" >>"$fixture_manifest"
-done < <(fixture_paths "$DRILL_V1")
+setup_run fixture_manifest fixture_manifest_write
 setup_run scratch_commit scratch_commit "$DRILL_REPO" main \
   "the armed fixture at $DRILL_V1-dev" "$fixture_manifest"
 
