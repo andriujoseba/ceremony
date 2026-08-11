@@ -762,7 +762,8 @@ check "the explicit-name refusal creates no suggested repo" 1 "" \
 stub_reset
 green_scenario "$TMP/explicit-free.scenario"
 run_rehearsal "$TMP/explicit-free.scenario" \
-  --repo-name chosen-by-hand --out "$TMP/explicit-free.md" >/dev/null 2>&1
+  --fork-ref "$FORK" --repo-name chosen-by-hand \
+  --out "$TMP/explicit-free.md" >/dev/null 2>&1
 explicit_free_rc=$?
 check "a free explicit name is used verbatim" 0 "" test "$explicit_free_rc" -eq 0
 check "an explicit free name does no numbered-name read probe" 1 "" \
@@ -787,7 +788,7 @@ explicit_create_failure_rc=$?
 check "a non-collision explicit create failure stays non-zero" 0 "" \
   test "$explicit_create_failure_rc" -ne 0
 check "an explicit create failure leaves abort evidence" 0 \
-  'setup aborted in `scratch_create`' cat "$TMP/explicit-create-failure.aborted-1.md"
+  '- **Step:** `scratch_create`' cat "$TMP/explicit-create-failure.aborted-1.md"
 check "the explicit create abort records the service failure" 0 \
   "service unavailable" cat "$TMP/explicit-create-failure.aborted-1.md"
 check "an explicit create abort claims no repo that was not created" 1 "" \
