@@ -240,13 +240,14 @@ check "a probe row whose counts are prose reds the shape check" 1 \
   printf 'scratch\t%s\n' "$SCRATCH"
   printf 'attempt\t1\n'
   printf 'created\t2026-08-09T00:00:00Z\n'
+  printf 'private\tfalse\n'
   printf 'candidate_sha\t%s\n' "$CAND_SHA"
   printf 'candidate_ref\tbuild/313-drill-rehearsal\n'
   printf 'fork_repo\t%s\n' "$FORK"
   printf 'fork_ref\t%s\n' "$FORK_REF"
   printf 'fork_head\tdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
   printf 'pin\t%s\n' "$CAND_SHA"
-  printf 'disposal\tthe repository is **archived** — a fresh read afterwards reported `archived=true private=true`\n'
+  printf 'disposal\tthe repository is **archived** — a fresh read afterwards reported `archived=true private=false`\n'
   printf 'runner\tdrill-runner\n'
   printf 'stamp\t2026-08-09\n'
 } >"$TMP/ctx.tsv"
@@ -537,6 +538,7 @@ stub_reset() {
   mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
   printf '2026-08-09T00:00:00Z\n' >"$R/created_at"
   printf 'false\n' >"$R/archived"
+  printf 'true\n' >"$R/private"
   : >"$R/tags"
   : >"$R/releases"
   : >"$R/runs"
@@ -558,6 +560,7 @@ U="$TMP/state/$(san "$UNSEEDED")"
 mkdir -p "$U/refs" "$U/commit" "$U/tree" "$U/blob" "$U/pulls" "$U/labels"
 printf '2026-08-09T00:00:00Z\n' >"$U/created_at"
 printf 'false\n' >"$U/archived"
+printf 'true\n' >"$U/private"
 : >"$U/tags"
 : >"$U/releases"
 : >"$U/runs"
@@ -642,6 +645,7 @@ seed_taken_repo() { # <owner/name> — enough state for createRepository to coll
   mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
   printf '2026-08-08T00:00:00Z\n' >"$R/created_at"
   printf 'true\n' >"$R/archived"
+  printf 'true\n' >"$R/private"
   : >"$R/tags"
   : >"$R/releases"
   : >"$R/runs"
@@ -677,7 +681,7 @@ attempt_three_out="$(run_rehearsal "$TMP/attempt-three.scenario" \
 attempt_three_rc=$?
 check "two burned names route the run to -3" 0 "" test "$attempt_three_rc" -eq 0
 check "the creation calls try exactly -1, -2, then -3" 0 "3" \
-  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123] --private$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123]$" "$1"' \
   _ "$TMP/state/calls"
 check "the picked repo and default fork ref share -3" 0 \
   "$FORK/.github/workflows/release.yml@drill/0.7.0-3" cat "$TMP/attempt-three.md"
@@ -698,7 +702,7 @@ check "a burned paired ref routes a free repo name to -2" 0 "" \
 check "the ref-only collision never burns the -1 repo" 1 "" \
   grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-1" "$TMP/state/calls"
 check "the ref-only collision creates the paired -2 repo" 0 "" \
-  grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-2 --private" "$TMP/state/calls"
+  grep -qF "repo create $SCRATCH_OWNER/ceremony-drill-0.7.0-2" "$TMP/state/calls"
 check "a single unavailable pair gets singular wording" 0 \
   "attempt -1 is unavailable; using -2" printf '%s\n' "$ref_routed_out"
 check "the ref-routed repo and fork ref share -2" 0 \
@@ -718,7 +722,7 @@ check "the bounded refusal names the whole range" 0 \
   "tried ceremony-drill-0.7.0-1 through ceremony-drill-0.7.0-10" \
   printf '%s\n' "$attempt_exhausted_out"
 check "exhaustion attempts exactly ten creates" 0 "10" \
-  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]* --private$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]*$" "$1"' \
   _ "$TMP/state/calls"
 check "exhaustion creates no eleventh repository" 1 "" \
   test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-11")"
@@ -769,7 +773,7 @@ check "a free explicit name is used verbatim" 0 "" test "$explicit_free_rc" -eq 
 check "an explicit free name does no numbered-name read probe" 1 "" \
   grep -q "^api repos/$SCRATCH_OWNER/ceremony-drill-0.7.0-" "$TMP/state/calls"
 check "an explicit free name is created only once" 0 "1" \
-  bash -c 'grep -c "^repo create drillowner/chosen-by-hand --private$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/chosen-by-hand$" "$1"' \
   _ "$TMP/state/calls"
 check "an arbitrary explicit name records a numeric attempt" 0 \
   'Attempt **`1`**' cat "$TMP/explicit-free.md"
@@ -842,7 +846,7 @@ check "an abort record cannot pass the rehearsal shape check" 1 \
 check "a fixture abort archives the scratch repo" 0 "" \
   grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
 check "the abort record states the disposal it observed" 0 \
-  "archived=true private=true" cat "$TMP/setup-fixture.aborted-1.md"
+  "archived=true private=false" cat "$TMP/setup-fixture.aborted-1.md"
 check "the abort output prints the operator's delete step" 0 \
   "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$fixture_abort_out"
 cp "$TMP/setup-fixture.aborted-1.md" "$TMP/setup-fixture.first"
@@ -955,7 +959,7 @@ check "the record names the fork ref and the rewritten pin" 0 \
 check "the record names the canonical candidate SHA as the rewritten pin" 0 \
   "the rewritten pin \`$CAND_SHA\`" cat "$TMP/emitted.md"
 check "the record states the disposal as observed, archived and pending" 0 \
-  "archived=true private=true" cat "$TMP/emitted.md"
+  "archived=true private=false" cat "$TMP/emitted.md"
 check "the probes ran in doctrine order" 0 $'1\n2\n3\n4\n5\n6\n7\n8' \
   bash -c 'awk -F"|" "/^\\| [1-8] \\|/ { gsub(/ /, \"\", \$2); print \$2 }" "$1"' \
   _ "$TMP/emitted.md"

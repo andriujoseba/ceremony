@@ -32,7 +32,11 @@ so partial setup evidence cannot satisfy the release gate.
 
 ## The rehearsal
 
-1. Create a scratch **private** repo. With no explicit `--repo-name`, the
+1. Create a scratch repo. It is **public by default**, disposable, archived by
+   the instrument, and deleted by the operator; it never carries anything that
+   is not already public. A builder who needs private evidence passes
+   `--private`, accepts the creation warning, and the record discloses that its
+   run links resolve only for the repo owner. With no explicit `--repo-name`, the
    instrument numbers attempts from 1 and claims the first pair whose
    `ceremony-drill-<version>-<n>` repo name and `drill/<version>-<n>` fork ref
    are both free, bounded at ten candidates. An explicit repo name with a
@@ -54,7 +58,7 @@ so partial setup evidence cannot satisfy the release gate.
    in `state:building` re-trying a 403 that cannot succeed, the other wrote
    a record asserting a delete that had not happened. **Cleanup gates
    nothing** — not ready-for-review, not the review panel, not the merge.
-   The archived leftover is safe to leave: private, no consumers, and
+   The archived leftover has no consumers and is
    outside `heavy-duty/ceremony`'s ref namespace — the namespace the
    "never a branch named like the tag" rule below protects.
 2. Install the docs/CONSUMERS.md caller stubs, pinned to a fork ref carrying

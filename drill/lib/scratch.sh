@@ -150,6 +150,21 @@ scratch_created_at() {
   drill_gh api "repos/${1:?scratch_created_at: repo required}" --jq '.created_at'
 }
 
+# scratch_private <owner/name> — the visibility observed after creation.
+scratch_private() {
+  local repo="${1:?scratch_private: repo required}" private
+  private="$(drill_read nonempty "the visibility of $repo" \
+    drill_gh_soft api "repos/$repo" --jq '.private')" || return 1
+  case "$private" in
+    true | false) printf '%s\n' "$private" ;;
+    *)
+      printf "scratch_private: %s did not answer with a private flag ('%s').\n" \
+        "$repo" "$private" >&2
+      return 1
+      ;;
+  esac
+}
+
 # scratch_ref_sha <repo> <branch> [mode] — the branch head, empty when it has
 # none. The mode is drill_read's: `any` (the default) reports a branch nobody
 # created, `nonempty` is for the read that follows a write of this very ref.

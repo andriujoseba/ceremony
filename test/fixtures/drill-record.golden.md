@@ -10,7 +10,7 @@ its own run by the script that drove it.
 
 ## Where
 
-Attempt **`1`** used disposable **private** repo `drillowner/ceremony-drill-0.7.0-1`, created
+Attempt **`1`** used disposable **public** repo `drillowner/ceremony-drill-0.7.0-1`, created
 2026-08-09T00:00:00Z. It carries the
 `docs/CONSUMERS.md` release caller verbatim (`version-source: file`) over a
 fragment-mode fixture armed at `0.7.0-dev`: a preamble-only
@@ -28,7 +28,7 @@ has released. An rc that ships carries its own drill record, so the rc cut's
 ceremony PR carries **`drills/0.7.2-rc1.md`** and that is the path the rc
 version's record lives at.
 
-**Disposal, as this run observed it**: the repository is **archived** — a fresh read afterwards reported `archived=true private=true`.
+**Disposal, as this run observed it**: the repository is **archived** — a fresh read afterwards reported `archived=true private=false`.
 
 It is **pending the operator's delete**, which no builder can perform:
 `delete_repo` is absent from fleet tokens by doctrine (#135). No delete was attempted and none is

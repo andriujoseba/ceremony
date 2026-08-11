@@ -10,15 +10,23 @@
 
 DRILL_ATTEMPT_LIMIT=10
 
-# scratch_create_attempt <owner/name> — create, or return 3 for a collision.
+# scratch_create_attempt <owner/name> [private] — create, or return 3 for a collision.
 scratch_create_attempt() {
-  local repo="${1:?scratch_create_attempt: owner/name required}" err rc=0 message
+  local repo="${1:?scratch_create_attempt: owner/name required}" private="${2:-0}"
+  local err rc=0 message
+  local -a create_args=(repo create "$repo")
+  [ "$private" -eq 0 ] || create_args+=(--private)
   err="$(mktemp)"
-  drill_gh repo create "$repo" --private >/dev/null 2>"$err" || rc=$?
+  drill_gh "${create_args[@]}" >/dev/null 2>"$err" || rc=$?
   message="$(cat "$err")"
   rm -f "$err"
   if [ "$rc" -eq 0 ]; then
-    printf 'drill: created private scratch repo %s\n' "$repo" >&2
+    if [ "$private" -eq 0 ]; then
+      printf 'drill: created public scratch repo %s\n' "$repo" >&2
+    else
+      printf 'drill: warning: created private scratch repo %s; its record links resolve only for the repo owner.\n' \
+        "$repo" >&2
+    fi
     return 0
   fi
   case "$message" in
@@ -77,10 +85,11 @@ attempt_first_free_ref() {
   return 1
 }
 
-# attempt_create_default <owner> <version> [fork-repo] — claim the first pair.
+# attempt_create_default <owner> <version> [fork-repo] [private] — claim the first pair.
 # The fork repo is omitted when the invocation supplied an explicit ref.
 attempt_create_default() {
-  local owner="${1:?}" version="${2:?}" fork_repo="${3:-}" n repo rc
+  local owner="${1:?}" version="${2:?}" fork_repo="${3:-}" private="${4:-0}"
+  local n repo rc
   n=1
   while [ "$n" -le "$DRILL_ATTEMPT_LIMIT" ]; do
     if [ -n "$fork_repo" ]; then
@@ -94,7 +103,7 @@ attempt_create_default() {
     fi
     repo="$owner/ceremony-drill-$version-$n"
     rc=0
-    scratch_create_attempt "$repo" || rc=$?
+    scratch_create_attempt "$repo" "$private" || rc=$?
     case "$rc" in
       0)
         if [ "$n" -eq 1 ]; then
