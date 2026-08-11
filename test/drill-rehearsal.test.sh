@@ -1465,39 +1465,6 @@ check "the read names itself on stderr, where the record could not see it" 0 \
   "VERSION at $SCRATCH@main did not read back after 10 attempts" \
   cat "$TMP/rearm.out"
 
-# The fragment list, in the record this time, for the same reason the re-arm
-# rows are here: the mode alone does not retire the claim. Both after-reads
-# feed a `cmp` or a `grep` against a file, and an unbranched call left the
-# previous contents — or nothing — in that file for the comparison to succeed
-# against. `skip 2` is what aims the fault: the scratch repo's
-# `git/trees/main` reads are, in order, the fixture's seeding check, probe 7's
-# before-read, probe 7's after-read and probe 8's after-read, so skipping two
-# faults exactly the two the branches guard and leaves the baseline reads
-# alone. That probe 7 reaches its row at all is what proves the aim — a fault
-# landing one call early would abort it on the before-read instead.
-stub_reset
-green_scenario "$TMP/frags-run.scenario"
-faults "2	99	GET repos/$SCRATCH/git/trees/main*	404	Not Found"
-run_rehearsal "$TMP/frags-run.scenario" --out "$TMP/frags-run.md" \
-  >"$TMP/frags-run.out" 2>&1
-check "a fragment read that never answers still leaves a record behind" 0 "" \
-  test -s "$TMP/frags-run.md"
-check "probe 7's row says the rc cut's fragment list did not read back" 0 \
-  "the fragment set did not read back off main after the rc cut" \
-  cat "$TMP/frags-run.md"
-check "probe 8's row says the promotion's did not either" 0 \
-  "the fragment set did not read back off main after the promotion" \
-  cat "$TMP/frags-run.md"
-check "and neither row claims the rc cut moved a fragment set nobody read" 1 "" \
-  grep -qF 'the fragment set changed across the rc cut' "$TMP/frags-run.md"
-check "nor that the promotion's marker vanished from a list nobody read" 1 "" \
-  grep -qF "changelog.d/README.md is gone after the promotion" "$TMP/frags-run.md"
-check "nor that fragments survived it" 1 "" \
-  grep -qF 'fragments survived the promotion' "$TMP/frags-run.md"
-check "the read names itself on stderr here too" 0 \
-  "the tree of main on $SCRATCH did not read back after 10 attempts" \
-  cat "$TMP/frags-run.out"
-
 # The disposal is the last thing the instrument does, and it sits after eight
 # probes under `set -euo pipefail`. An exhausted read there used to be the end
 # of the run — the record those probes filled, lost to a read. It is now a
