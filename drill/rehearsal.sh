@@ -29,6 +29,8 @@ source "$DRILL_ROOT/lib/version.sh"
 source "$DRILL_ROOT/lib/changelog.sh"
 # shellcheck source=drill/lib/scratch.sh
 source "$DRILL_ROOT/drill/lib/scratch.sh"
+# shellcheck source=drill/lib/attempt.sh
+source "$DRILL_ROOT/drill/lib/attempt.sh"
 # shellcheck source=drill/lib/candidate.sh
 source "$DRILL_ROOT/drill/lib/candidate.sh"
 # shellcheck source=drill/lib/fixture.sh
@@ -41,16 +43,16 @@ source "$DRILL_ROOT/drill/lib/record.sh"
 usage() {
   cat >&2 <<'EOF'
 usage: drill/rehearsal.sh --owner <login> --version <X.Y.Z>
-                          --fork-ref <owner/repo@ref> --candidate-sha <sha>
+                          --fork-ref <owner/repo[@ref]> --candidate-sha <sha>
                           [--repo-name <name>] [--candidate-ref <ref>]
                           [--out <file>] [--date <YYYY-MM-DD>]
 
   --owner          where the disposable private scratch repo is created
   --version        the candidate's release version; the fixture arms X.Y.Z-dev
-  --fork-ref       the stub source and the ref to create there, `owner/repo@ref`
+  --fork-ref       the stub source; omitted ref is picked as drill/<version>-<n>
   --candidate-sha  the canonical candidate SHA every CEREMONY_SELF_REF is
                    rewritten to on that fork ref
-  --repo-name      scratch repo name (default: ceremony-drill-<version>)
+  --repo-name      scratch repo name (default: first free ceremony-drill-<version>-<n>)
   --candidate-ref  the candidate branch, recorded (default: the fork ref)
   --out            where the record is written (default: ./<version>-drill.md)
   --date           the ceremony's changelog stamp (default: today, UTC)
@@ -102,11 +104,16 @@ case "$fork_spec" in
   *) refuse "--fork-ref '$fork_spec' is not 'owner/repo@ref'." ;;
 esac
 fork_repo="${fork_spec%@*}"
-fork_ref="${fork_spec##*@}"
-[ -n "$fork_ref" ] || refuse "--fork-ref '$fork_spec' names no ref."
+fork_ref=""
+fork_ref_explicit=0
+case "$fork_spec" in
+  */*@*) fork_ref="${fork_spec##*@}"; [ -z "$fork_ref" ] || fork_ref_explicit=1 ;;
+  */*) fork_repo="$fork_spec" ;;
+  *) refuse "--fork-ref '$fork_spec' is not 'owner/repo[@ref]'." ;;
+esac
 
 # D4, first refusal — checked before anything is created anywhere.
-pin_assert_fork_ref "$fork_repo" "$fork_ref" || exit 1
+[ "$fork_ref_explicit" -eq 0 ] || pin_assert_fork_ref "$fork_repo" "$fork_ref" || exit 1
 
 for tool in gh jq base64; do
   command -v "$tool" >/dev/null 2>&1 || refuse "$tool is required and is not on PATH."
@@ -130,7 +137,6 @@ DRILL_RC1="$DRILL_V3-rc1"
 DRILL_RC2="$(version_next_dev "$DRILL_RC1")"
 DRILL_RC2="${DRILL_RC2%-dev}"
 DRILL_DATE="${stamp:-$(date -u +%Y-%m-%d)}"
-DRILL_REPO="$owner/${repo_name:-ceremony-drill-$version}"
 DRILL_WORK="$(mktemp -d)"
 DRILL_STAGE="$DRILL_WORK/stage"
 DRILL_PROBES="$DRILL_WORK/probes.tsv"
@@ -239,12 +245,36 @@ caller_sha=""
 baseline=""
 setup_capture runner authenticated_login drill_gh api user --jq '.login'
 
+attempt=""
+if [ -n "$repo_name" ]; then
+  DRILL_REPO="$owner/$repo_name"
+  explicit_rc=0
+  scratch_repo_exists "$DRILL_REPO" || explicit_rc=$?
+  if [ "$explicit_rc" -eq 0 ]; then
+    suggestion="$(attempt_first_free "$owner" "$version")" || exit 1
+    suggested_ref="$fork_ref"
+    [ "$fork_ref_explicit" -eq 1 ] || suggested_ref="drill/$version-$suggestion"
+    refuse "--repo-name '$repo_name' is already taken. Retry with: drill/rehearsal.sh --owner '$owner' --version '$version' --fork-ref '$fork_repo@$suggested_ref' --candidate-sha '$candidate_sha' --repo-name 'ceremony-drill-$version-$suggestion'${candidate_ref:+ --candidate-ref '$candidate_ref'}${out:+ --out '$out'}${stamp:+ --date '$stamp'}"
+  fi
+  [ "$explicit_rc" -eq 1 ] || [ "$explicit_rc" -eq 0 ] || exit "$explicit_rc"
+  setup_run scratch_create scratch_create "$DRILL_REPO"
+  scratch_created=1
+  case "$repo_name" in
+    ceremony-drill-"$version"-[0-9]*) attempt="${repo_name##*-}" ;;
+    *) attempt="explicit" ;;
+  esac
+else
+  setup_capture attempt scratch_attempt_name attempt_create_default "$owner" "$version"
+  DRILL_REPO="$owner/ceremony-drill-$version-$attempt"
+  scratch_created=1
+fi
+[ "$fork_ref_explicit" -eq 1 ] || fork_ref="drill/$version-$attempt"
+pin_assert_fork_ref "$fork_repo" "$fork_ref" || exit 1
+
 printf 'drill: %s rehearsal — scratch %s, candidate %s, fork %s@%s\n' \
   "$DRILL_V1" "$DRILL_REPO" "$candidate_sha" "$fork_repo" "$fork_ref" >&2
 
 # ---- the scratch repo -----------------------------------------------------
-setup_run scratch_create scratch_create "$DRILL_REPO"
-scratch_created=1
 setup_capture created scratch_created_at scratch_created_at "$DRILL_REPO"
 
 # ---- the armed fixture, BEFORE the caller (the 0.4.0 lesson) --------------
@@ -303,6 +333,7 @@ ctx="$DRILL_WORK/ctx.tsv"
   printf 'version\t%s\n' "$DRILL_V1"
   printf 'rc_version\t%s\n' "$DRILL_V3"
   printf 'scratch\t%s\n' "$DRILL_REPO"
+  printf 'attempt\t%s\n' "$attempt"
   printf 'created\t%s\n' "$created"
   printf 'candidate_sha\t%s\n' "$candidate_sha"
   printf 'candidate_ref\t%s\n' "${candidate_ref:-$fork_repo@$fork_ref}"
