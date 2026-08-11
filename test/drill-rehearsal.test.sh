@@ -1344,6 +1344,63 @@ check "a tree that genuinely lacks the fixture still says which files" 1 \
   "is missing the armed fixture: VERSION CHANGELOG.md changelog.d/README.md" \
   with_stub fixture_assert_seeded "$FORK" main
 
+# probe_fragment_paths, the last site in the family and the one where a failed
+# read was indistinguishable from a legitimate answer. `scratch_paths | grep |
+# sort … || :` handed the pipeline's exit to `grep` and then discarded even
+# that, so an unread tree and a `changelog.d` a promotion had consumed wrote
+# the same empty file — and two empty lists compare equal, which is how the rc
+# leg's "every fragment survives" and the promotion's "fragments consumed"
+# could both pass on a measurement nobody took. The split has to hold both
+# ways, so both are asserted: the read's failure is a failure, and `grep`'s
+# no-match is not.
+fragment_paths_of() { # <repo> <ref> — the list on stdout, for a substring check
+  with_stub probe_fragment_paths "$1" "$2" "$TMP/frags.read" || return 1
+  cat "$TMP/frags.read"
+}
+faults
+FRAGS="$SCRATCH_OWNER/fragments-probe"
+with_stub scratch_create "$FRAGS" >/dev/null 2>&1
+printf '# A fragment.\n' >"$TMP/seed-fragment"
+{
+  printf 'A\tVERSION\t%s\n' "$TMP/seed-version"
+  printf 'A\tCHANGELOG.md\t%s\n' "$TMP/seed-changelog"
+  printf 'A\tchangelog.d/README.md\t%s\n' "$TMP/seed-readme"
+  printf 'A\tchangelog.d/10.md\t%s\n' "$TMP/seed-fragment"
+} >"$TMP/frags.manifest"
+with_stub scratch_commit "$FRAGS" main "a tree with fragments on it" \
+  "$TMP/frags.manifest" >/dev/null 2>&1
+check "the fragment list this case is about is genuinely there" 0 \
+  "changelog.d/10.md" fragment_paths_of "$FRAGS" main
+faults "0	2	GET repos/*/git/trees/*	404	Not Found"
+check "a fragment list that answers stale twice still reads back" 0 \
+  "changelog.d/10.md" fragment_paths_of "$FRAGS" main
+faults "0	99	GET repos/*/git/trees/*	404	Not Found"
+: >"$TMP/frags.out"
+with_stub probe_fragment_paths "$FRAGS" main "$TMP/frags.out" \
+  >"$TMP/frags.err" 2>&1
+frags_rc=$?
+check "a fragment list that never answers is a failed read, not an empty set" 0 "" \
+  test "$frags_rc" -eq 1
+check "and names the read, the way every other site in the family does" 0 \
+  "the tree of main on $FRAGS did not read back after 10 attempts" \
+  cat "$TMP/frags.err"
+check "and it left no list behind for a caller to compare" 0 "" \
+  test ! -s "$TMP/frags.out"
+# The other half of the split, and the reason the `|| :` is still there: a
+# tree that reads back perfectly well and carries no fragments is the state a
+# promotion leaves behind, not a failed read.
+faults
+NOFRAGS="$SCRATCH_OWNER/nofragments-probe"
+with_stub scratch_create "$NOFRAGS" >/dev/null 2>&1
+printf 'A\tVERSION\t%s\n' "$TMP/seed-version" >"$TMP/nofrags.manifest"
+with_stub scratch_commit "$NOFRAGS" main "a tree with no fragments on it" \
+  "$TMP/nofrags.manifest" >/dev/null 2>&1
+: >"$TMP/nofrags.out"
+check "a tree that reads back and carries no fragments is an empty list" 0 "" \
+  with_stub probe_fragment_paths "$NOFRAGS" main "$TMP/nofrags.out"
+check "and that list is empty rather than absent" 0 "" test -f "$TMP/nofrags.out"
+check "with nothing in it" 0 "" test ! -s "$TMP/nofrags.out"
+
 stub_reset
 mkdir -p "$TMP/prepare-work"
 faults "0	2	GET repos/*/contents/*	404	Not Found"
