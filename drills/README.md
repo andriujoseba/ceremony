@@ -23,6 +23,13 @@ repo (the 0.1.0 shadow-tag rule, step 2 below). A run with failed probes is
 still a record — the rehearsal shape simply has one producer now, while the
 two judgement shapes below stay hand-written (#313).
 
+A setup abort is evidence too, but it is never a release's record: before any
+probe runs, the instrument writes the failure beside `--out` as the first-free
+`<out>.aborted-N.md`, after stripping a final `.md`. It names the failed setup
+step and message, records only context already known, and archives an existing
+scratch repo before stating the disposal it observed. `--out` remains absent,
+so partial setup evidence cannot satisfy the release gate.
+
 ## The rehearsal
 
 1. Create a scratch **private** repo. It is disposable by design — but the

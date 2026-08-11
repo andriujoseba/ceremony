@@ -633,6 +633,128 @@ green_scenario() {
     "success	release:0.7.2,rearm:0.7.3-dev" >"$1"
 }
 
+# ---------------------------------------------------------------------------
+# Setup aborts are evidence, but never the release record (#370). Each case
+# drives the real rehearsal against the recording stub: the wrapper must keep
+# the failing command's status and message, archive only a scratch repo known
+# to exist, and reserve a sibling path without overwriting an earlier attempt.
+# ---------------------------------------------------------------------------
+stub_reset
+: >"$TMP/setup-fixture.scenario"
+faults "0	99	PUT repos/$SCRATCH/contents/VERSION	500	fixture commit refused"
+fixture_abort_out="$(run_rehearsal "$TMP/setup-fixture.scenario" \
+  --out "$TMP/setup-fixture.md" 2>&1)"
+fixture_abort_rc=$?
+check "a fixture-commit abort stays non-zero" 0 "" \
+  test "$fixture_abort_rc" -ne 0
+check "a fixture-commit abort never writes the release record path" 1 "" \
+  test -e "$TMP/setup-fixture.md"
+check "the first abort takes the first-free sibling path" 0 "" \
+  test -s "$TMP/setup-fixture.aborted-1.md"
+check "the abort marker is the artifact's first line" 0 \
+  "**Aborted in setup — no probe ran.**" \
+  head -n 1 "$TMP/setup-fixture.aborted-1.md"
+check "the fixture abort names its setup step" 0 "scratch_commit" \
+  cat "$TMP/setup-fixture.aborted-1.md"
+check "the fixture abort keeps the command's message" 0 "fixture commit refused" \
+  cat "$TMP/setup-fixture.aborted-1.md"
+check "a setup abort contains no probe verdict row" 1 "" \
+  grep -qE '^\| [0-9]+ \|' "$TMP/setup-fixture.aborted-1.md"
+check "an abort record cannot pass the rehearsal shape check" 1 \
+  "probe table has 0 rows" record_check "$TMP/setup-fixture.aborted-1.md"
+check "a fixture abort archives the scratch repo" 0 "" \
+  grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
+check "the abort record states the disposal it observed" 0 \
+  "archived=true private=true" cat "$TMP/setup-fixture.aborted-1.md"
+check "the abort output prints the operator's delete step" 0 \
+  "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$fixture_abort_out"
+cp "$TMP/setup-fixture.aborted-1.md" "$TMP/setup-fixture.first"
+
+stub_reset
+: >"$TMP/setup-fixture.scenario"
+faults "0	99	PUT repos/$SCRATCH/contents/VERSION	500	fixture commit refused again"
+second_abort_out="$(run_rehearsal "$TMP/setup-fixture.scenario" \
+  --out "$TMP/setup-fixture.md" 2>&1)"
+second_abort_rc=$?
+check "a repeated setup abort stays non-zero" 0 "" test "$second_abort_rc" -ne 0
+check "a repeated abort takes the second-free sibling path" 0 "" \
+  test -s "$TMP/setup-fixture.aborted-2.md"
+check "a repeated abort leaves the first artifact byte-unchanged" 0 "" \
+  diff -u "$TMP/setup-fixture.first" "$TMP/setup-fixture.aborted-1.md"
+check "the second artifact carries its own message" 0 "fixture commit refused again" \
+  cat "$TMP/setup-fixture.aborted-2.md"
+check "the second abort still prints the delete step" 0 \
+  "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$second_abort_out"
+
+stub_reset
+: >"$TMP/setup-verify.scenario"
+# fork_ref_prepare performs the first carrier-tree read; the second is the
+# verification step whose exhausted retry this case targets.
+faults "1	99	GET repos/$FORK/git/trees/*	500	fork carriers unreadable"
+verify_abort_out="$(run_rehearsal "$TMP/setup-verify.scenario" \
+  --out "$TMP/setup-verify.md" 2>&1)"
+verify_abort_rc=$?
+check "a fork-ref verification abort stays non-zero" 0 "" \
+  test "$verify_abort_rc" -ne 0
+check "the verification abort names its setup step" 0 "fork_ref_verify" \
+  cat "$TMP/setup-verify.aborted-1.md"
+check "the verification abort keeps the failed read's message" 0 \
+  "fork carriers unreadable" cat "$TMP/setup-verify.aborted-1.md"
+check "the verification abort archives before exiting" 0 "" \
+  grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
+check "the verification abort still prints the delete step" 0 \
+  "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$verify_abort_out"
+
+stub_reset
+: >"$TMP/setup-baseline.scenario"
+faults
+baseline_abort_out="$(run_rehearsal "$TMP/setup-baseline.scenario" \
+  --out "$TMP/setup-baseline.md" 2>&1)"
+baseline_abort_rc=$?
+check "a baseline-wait abort stays non-zero" 0 "" test "$baseline_abort_rc" -ne 0
+check "the baseline abort names its setup step" 0 "baseline_run_wait" \
+  cat "$TMP/setup-baseline.aborted-1.md"
+check "the baseline abort keeps the wait's message" 0 \
+  "scratch_run_for: no completed run" cat "$TMP/setup-baseline.aborted-1.md"
+check "the baseline abort archives the scratch repo" 0 "" \
+  grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
+check "the baseline abort still prints the delete step" 0 \
+  "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$baseline_abort_out"
+
+stub_reset
+: >"$TMP/setup-pre-scratch.scenario"
+faults "0	99	GET user	500	authentication read failed"
+pre_scratch_out="$(run_rehearsal "$TMP/setup-pre-scratch.scenario" \
+  --out "$TMP/setup-pre-scratch.md" 2>&1)"
+pre_scratch_rc=$?
+check "an abort before scratch_create stays non-zero" 0 "" \
+  test "$pre_scratch_rc" -ne 0
+check "the pre-scratch abort names the step and message" 0 \
+  "authentication read failed" cat "$TMP/setup-pre-scratch.aborted-1.md"
+check "the pre-scratch abort claims no scratch repo" 1 "" \
+  grep -qF 'Scratch repo:' "$TMP/setup-pre-scratch.aborted-1.md"
+check "the pre-scratch abort claims no disposal" 1 "" \
+  grep -qF 'Disposal' "$TMP/setup-pre-scratch.aborted-1.md"
+check "the pre-scratch abort never calls archive" 1 "" \
+  grep -qF -- '--method PATCH --input -' "$TMP/state/calls"
+check "the pre-scratch abort prints no delete command" 1 "" \
+  grep -qF 'gh api -X DELETE' <<<"$pre_scratch_out"
+
+stub_reset
+: >"$TMP/setup-missing-parent.scenario"
+faults "0\t99\tGET user\t500\tauthentication read failed"
+missing_parent="$TMP/missing-parent/setup.md"
+missing_parent_out="$(run_rehearsal "$TMP/setup-missing-parent.scenario" \
+  --out "$missing_parent" 2>&1)"
+missing_parent_rc=$?
+check "an abort whose evidence parent is missing stays non-zero" 0 "" \
+  test "$missing_parent_rc" -ne 0
+check "an abort whose evidence cannot be reserved names the requested path" 0 \
+  "drill: setup aborted in baseline_run_wait; could not reserve abort evidence beside $missing_parent" \
+  printf '%s\n' "$missing_parent_out"
+check "an abort never creates its missing evidence parent" 1 "" \
+  test -d "${missing_parent%/*}"
+
 stub_reset
 green_scenario "$TMP/green.scenario"
 green_out="$(run_rehearsal "$TMP/green.scenario" --out "$TMP/emitted.md" 2>&1)"
@@ -642,6 +764,8 @@ check "the run reports eight probes passed" 0 "probes passed 8/8, failed 0" \
   printf '%s\n' "$green_out"
 check "the emitted record passes the shape check" 0 "eight probe rows" \
   record_check "$TMP/emitted.md"
+check "a completed rehearsal creates no sibling abort artifact" 1 "" \
+  bash -c 'compgen -G "$1" >/dev/null' _ "$TMP/emitted.aborted-*.md"
 check "every probe row is a pass" 0 "8" \
   bash -c 'grep -cE "^\| [1-8] \|.*✅" "$1"' _ "$TMP/emitted.md"
 check "no probe row is a failure" 1 "" grep -qE '^\| [1-8] \|.*❌' "$TMP/emitted.md"
