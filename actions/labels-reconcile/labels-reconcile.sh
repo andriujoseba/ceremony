@@ -676,7 +676,7 @@ handoff_taken_back() { # → the blockers that took a handoff back, one per line
   # than a runtime re-ask that no fixture could ever red.
   has_label state:needs-human || return 0
   [ "$DRAFT" != true ] || return 0
-  : # mutation
+  [ "$(round_state)" = state:needs-human ] || return 0
   blockers
 }
 
