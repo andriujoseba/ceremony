@@ -863,6 +863,428 @@ expect "a flag-free PR performs no attention timeline read" no \
 expect "attention diagnosis caused no PR mutation" "$attention_mutations_before" \
   "$(wc -l <"$RTMP/edits")"
 
+# ---------------------------------------------------------------------------
+# The take-back's reason, on the PR (#377). incubator#94: a hand-set
+# state:needs-human was taken back ~45 seconds later, three times in ten
+# minutes, because the only record of the take-back was a line in the labels
+# workflow's run log — which a builder driving a PR never opens. The :597
+# precedence rule is correct and untouched here; what these fixtures pin is
+# that it SAYS so where the builder is looking, exactly once per (blocker
+# set, head), and that the three sibling exclusions stay silent.
+# ---------------------------------------------------------------------------
+TB="$RTMP/takeback"
+mkdir -p "$TB"
+
+takeback_probe() { # $1 PR, $2 labels, $3 head, $4 round, $5 checks, $6 mergeable, $7 draft
+  # Three env overrides for the cases the positional shape has no room for,
+  # each defaulting to the happy path: TB_EDIT_RC / TB_COMMENT_RC are the exit
+  # status the stubbed mutation returns, TB_REPO_LABELS a taxonomy short of
+  # what the sweep wants to write.
+  (
+    local n="$1" head="$3" round="$4" at
+    at="$(iso_at $((RNOW - 3600)))"
+    # The taxonomy from the script's own arrays: a fixture that hand-lists the
+    # label names would keep passing after a rename while the sweep filtered
+    # the add away.
+    REPO_LABELS="${TB_REPO_LABELS:-$(printf '%s\n' "${STATES[@]}" "${BLOCKERS[@]}" \
+      merge-next stale needs-ruling blocked)}"
+    REPO=owner/repo NOW="$RNOW"
+    LABELS="$2"
+    DRAFT="${7:-false}" HEAD_SHA="$head" REQUESTED=""
+    MERGEABLE="${6:-MERGEABLE}" CHECKS="${5:-SUCCESS}"
+    case "$round" in
+      # every verdict a head-current approval — the round says needs-human
+      approve) REVIEWS_JSON="$(reviews \
+        "$(rev "$BOT1" APPROVED "$head" "" "$at")" \
+        "$(rev "$BOT2" APPROVED "$head" "" "$at")" \
+        "$(rev "$BOT3" APPROVED "$head" "" "$at")")" ;;
+      # a standing block — the ROUND is what moves the state, not the branch
+      block) REVIEWS_JSON="$(reviews \
+        "$(rev "$BOT1" CHANGES_REQUESTED "$head" "" "$at")" \
+        "$(rev "$BOT2" APPROVED "$head" "" "$at")" \
+        "$(rev "$BOT3" APPROVED "$head" "" "$at")")" ;;
+      # the only round that reaches decide_state's :587 draft clause: a
+      # non-verdict outranks the draft, and the live human request carries
+      # round_state to needs-human anyway — so on a draft the DRAFT rule
+      # fires above :597, which is the carve-out under test.
+      draftable)
+        REQUESTED="$HUMAN"
+        REVIEWS_JSON="$(reviews \
+          "$(rev "$BOT1" COMMENTED "$head" "looks fine" "$at")" \
+          "$(rev "$BOT2" APPROVED "$head" "" "$at")" \
+          "$(rev "$BOT3" APPROVED "$head" "" "$at")")" ;;
+    esac
+    PR_JSON="$(jq -n --arg at "$at" '{created_at: $at, assignees: []}')"
+    # TB_FORCE_PREDICATE isolates the CALL SITE's gate from the predicate that
+    # normally stands in front of it. The two overlap on every reachable
+    # fixture — a PR carrying needs-human and reported as taken back always
+    # has needs-human on the edit's removal side — so without this the gate's
+    # own condition is asserted by nothing, and "the edit succeeded" would
+    # read the same as "the edit took the handoff back".
+    if [ -n "${TB_FORCE_PREDICATE:-}" ]; then
+      handoff_taken_back() { printf 'blocker:ci-red\n'; }
+    fi
+    run() { "$@"; } # mutations reach the stub and are recorded, not swallowed
+    gh() {
+      # every call in call ORDER, which is what pins where in the pass the
+      # comment lands relative to the reads that measure the PR's activity
+      printf '%s\n' "$*" >>"$TB/calls-$n"
+      if [ "$1" = api ]; then
+        shift
+        local jqexpr="" endpoint="" file
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --jq) jqexpr="$2"; shift ;;
+            -*) ;;
+            *) [ -n "$endpoint" ] || endpoint="$1" ;;
+          esac
+          shift
+        done
+        file="$TB/$(printf '%s' "$endpoint" | tr '/' '_').json"
+        [ -f "$file" ] || { printf '[]\n' | jq -r "${jqexpr:-.}"; return 0; }
+        if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$file"; else cat "$file"; fi
+      elif [ "$1" = issue ] && [ "$2" = comment ]; then
+        local c="$3" body="" file
+        # a post that failed records NOTHING — no body, no marker in the
+        # fixture — which is the state the retry path depends on
+        [ "${TB_COMMENT_RC:-0}" = 0 ] || return "$TB_COMMENT_RC"
+        shift 3
+        while [ $# -gt 0 ]; do
+          case "$1" in --body) body="$2"; shift ;; esac
+          shift
+        done
+        printf '%s\n----\n' "$body" >>"$TB/posted-$c"
+        # posted comments go back into the fixture, so the NEXT pass reads
+        # this one's marker exactly as a real sweep would
+        file="$TB/repos_owner_repo_issues_${c}_comments.json"
+        [ -f "$file" ] || printf '[]\n' >"$file"
+        jq --arg b "$body" --arg at "$(iso_at "$RNOW")" \
+          '. + [{"user":{"login":"sweep-bot"},"created_at":$at,"html_url":"https://x/tb","body":$b}]' \
+          "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+      elif [ "$1" = issue ] && [ "$2" = edit ]; then
+        # recorded per PR: the atomicity assertion counts the EDIT CALLS one
+        # pass makes, which is the property the comment must not disturb
+        printf '%s\n' "$*" >>"$TB/edits-$3"
+        return "${TB_EDIT_RC:-0}"
+      fi
+    }
+    reconcile_pr "$n" 2>&1
+  )
+}
+
+posted_count() { # $1 PR → take-back comments standing on it
+  [ -f "$TB/posted-$1" ] || { echo 0; return; }
+  grep -cF "$HANDOFF_TAKEBACK_MARKER_PREFIX" "$TB/posted-$1" || true
+}
+edit_count() { # $1 PR → label-edit calls recorded for it
+  [ -f "$TB/edits-$1" ] || { echo 0; return; }
+  wc -l <"$TB/edits-$1"
+}
+
+# -- the reported loop, as a regression -------------------------------------
+loop1="$(takeback_probe 90 state:needs-human tbhead1 approve FAILURE)"
+expect "a blocker takes the hand-set handoff back" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$loop1" && echo yes || echo no)"
+expect "...and the take-back says so on the PR, exactly once" 1 "$(posted_count 90)"
+expect "...naming the blocker standing" yes \
+  "$(grep -qF "\`blocker:ci-red\`" "$TB/posted-90" && echo yes || echo no)"
+expect "...and the head it is standing at" yes \
+  "$(grep -qF 'tbhead1' "$TB/posted-90" && echo yes || echo no)"
+expect "...and the precondition the handoff missed" yes \
+  "$(grep -qF "no \`blocker:*\` standing" "$TB/posted-90" && echo yes || echo no)"
+expect "...and the stop condition: re-setting the label is not the move" yes \
+  "$(grep -qF 'setting it by hand only earns another take-back' "$TB/posted-90" && echo yes || echo no)"
+expect "...logged as a take-back, not just as a state move" yes \
+  "$(grep -q 'handoff taken back (blocker:ci-red at tbhead1)' <<<"$loop1" && echo yes || echo no)"
+# The atomicity assertion (#377's last acceptance criterion): state and
+# blocker ride ONE edit call, and the comment did not split them into two.
+expect "one pass makes exactly one label-edit call" 1 "$(edit_count 90)"
+expect "...carrying the state and the blocker together" yes \
+  "$(grep -q -- '--add-label state:addressing,blocker:ci-red' "$TB/edits-90" && echo yes || echo no)"
+
+# The loop itself: the builder re-sets the label, the sweep takes it back
+# again — and this time says nothing, because the episode already spoke.
+loop2="$(takeback_probe 90 state:needs-human tbhead1 approve FAILURE)"
+expect "a re-set label at the same head is taken back again" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$loop2" && echo yes || echo no)"
+expect "...in silence — one episode, one comment" 1 "$(posted_count 90)"
+expect "...and the second pass still costs exactly one edit call" 2 "$(edit_count 90)"
+for _ in 1 2 3 4 5 6 7 8; do
+  takeback_probe 90 state:needs-human tbhead1 approve FAILURE >/dev/null
+done
+expect "ten passes over one episode post one comment in total" 1 "$(posted_count 90)"
+
+# -- episode boundaries: the set and the head each open a new one -----------
+takeback_probe 90 state:needs-human tbhead1 approve FAILURE CONFLICTING >/dev/null
+expect "a different blocker set at the same head is a new episode" 2 "$(posted_count 90)"
+expect "...and the new comment names both blockers" yes \
+  "$(grep -qF "\`blocker:conflict\`, \`blocker:ci-red\`" "$TB/posted-90" \
+    || grep -qF "\`blocker:ci-red\`, \`blocker:conflict\`" "$TB/posted-90" && echo yes || echo no)"
+takeback_probe 90 state:needs-human tbhead2 approve FAILURE >/dev/null
+expect "a new head with the same blocker is a new episode" 3 "$(posted_count 90)"
+takeback_probe 90 state:needs-human tbhead2 approve FAILURE >/dev/null
+expect "...which then repeats itself no more than the first did" 3 "$(posted_count 90)"
+takeback_probe 90 state:needs-human tbhead1 approve FAILURE >/dev/null
+expect "a head seen before is still its own episode, never a fresh one" 3 "$(posted_count 90)"
+
+# -- the must-not-fire cases, each on its own PR so the count is its own ----
+bots="$(takeback_probe 91 state:bots-reviewing tbhead1 block)"
+expect "an ordinary bots-reviewing -> addressing move degrades" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$bots" && echo yes || echo no)"
+expect "...and says nothing: the machine working is not a correction" 0 "$(posted_count 91)"
+
+round="$(takeback_probe 92 state:needs-human tbhead1 block)"
+expect "needs-human degrading on the ROUND still degrades" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$round" && echo yes || echo no)"
+expect "...and says nothing: no blocker took anything back" 0 "$(posted_count 92)"
+
+# The draft carve-out has the sharpest teeth here: the blocker IS standing,
+# and only decide_state's :587 clause sitting above :597 keeps it quiet.
+draft="$(takeback_probe 93 state:needs-human tbhead1 draftable FAILURE MERGEABLE true)"
+expect "a draft degrades out of needs-human" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$draft" && echo yes || echo no)"
+expect "...silently, though a blocker stands: the draft rule outranks :597" 0 \
+  "$(posted_count 93)"
+control="$(takeback_probe 94 state:needs-human tbhead1 draftable FAILURE MERGEABLE false)"
+expect "the same fixture off draft degrades the same way (control)" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$control" && echo yes || echo no)"
+expect "...and speaks — the draft was the only thing keeping it quiet" 1 \
+  "$(posted_count 94)"
+
+ruled_tb="$(takeback_probe 95 $'state:needs-human\nneeds-ruling' tbhead1 approve)"
+expect "a pending ruling degrades out of needs-human" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$ruled_tb" && echo yes || echo no)"
+expect "...silently: needs-ruling is its own visible carrier" 0 "$(posted_count 95)"
+
+held="$(takeback_probe 96 $'state:needs-human\nblocked' tbhead1 approve)"
+expect "a directed hold degrades out of needs-human" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$held" && echo yes || echo no)"
+expect "...silently: blocked is its own visible carrier" 0 "$(posted_count 96)"
+
+# A red head UNDER a standing block: the state was already the agent's for
+# the round's reason, so :597 never fired and nothing was taken back. The
+# builder is owed "a reviewer blocked", which the round already says.
+mixed="$(takeback_probe 99 state:needs-human tbhead1 block FAILURE)"
+expect "a blocked round on a red head degrades" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$mixed" && echo yes || echo no)"
+expect "...silently: the round moved the state, the blocker only rode along" 0 \
+  "$(posted_count 99)"
+
+clean="$(takeback_probe 97 state:needs-human tbhead1 approve SUCCESS)"
+expect "a clear branch keeps needs-human" no \
+  "$(grep -q 'state -> state:addressing' <<<"$clean" && echo yes || echo no)"
+expect "...and nothing was taken back, so nothing is said" 0 "$(posted_count 97)"
+
+# A PR that never CARRIED needs-human: the round passed, the head is red, and
+# the sweep already moved it to state:addressing on an earlier pass. That is
+# not exotic — it is every red-head PR with a passed round, on every pass
+# after the first — and there is no hand-set label here to have been taken
+# back from anyone.
+carried="$(takeback_probe 89 state:addressing tbheadZ approve FAILURE)"
+expect "a passed round on a red head already at addressing stays there" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$carried" && echo yes || echo no)"
+expect "...and says nothing: no handoff was ever standing to take back" 0 \
+  "$(posted_count 89)"
+
+# -- a take-back that did not LAND says nothing -----------------------------
+# The comment speaks for the replacement, not the attempt (#377 D1). Both
+# failure shapes leave state:needs-human standing on the PR, so a comment
+# would be false about a label still there — and its marker would then
+# suppress the true comment on the pass where the edit does land.
+edit_failed="$(TB_EDIT_RC=1 takeback_probe 88 state:needs-human tbhead1 approve FAILURE)"
+expect "a label edit that failed says so" yes \
+  "$(grep -q 'WARNING: label edit failed' <<<"$edit_failed" && echo yes || echo no)"
+expect "...and claims no take-back: needs-human is still on the PR" 0 \
+  "$(posted_count 88)"
+expect "...and logged none either" no \
+  "$(grep -q 'handoff taken back' <<<"$edit_failed" && echo yes || echo no)"
+edit_landed="$(takeback_probe 88 state:needs-human tbhead1 approve FAILURE)"
+expect "the pass where that same edit lands is not suppressed by the failed one" 1 \
+  "$(posted_count 88)"
+expect "...and reads as an ordinary take-back" yes \
+  "$(grep -q 'handoff taken back (blocker:ci-red at tbhead1) — commented' \
+    <<<"$edit_landed" && echo yes || echo no)"
+
+# The cold-start repo: `state:addressing` is not in the taxonomy, so the edit
+# is skipped entirely — the pass shouts a WARNING and the board keeps
+# state:needs-human. Nothing was taken back, so nothing is said about it.
+cold="$(TB_REPO_LABELS="$(printf '%s\n' state:needs-human blocker:ci-red)" \
+  takeback_probe 87 state:needs-human tbhead1 approve FAILURE)"
+expect "a repo missing state:addressing skips the label edit" yes \
+  "$(grep -q "state label 'state:addressing' does not exist" <<<"$cold" && echo yes || echo no)"
+expect "...makes no edit call at all" 0 "$(edit_count 87)"
+expect "...and says nothing about a take-back that never happened" 0 \
+  "$(posted_count 87)"
+
+# What the gate actually asks is not "did the edit succeed" but "did it take
+# the handoff back" — the removal side has to name state:needs-human. With
+# the predicate forced to report a take-back, a landed edit that removed
+# something else entirely still says nothing.
+forced="$(TB_FORCE_PREDICATE=1 takeback_probe 84 state:addressing tbhead1 approve FAILURE)"
+expect "the edit landed on that pass" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$forced" && echo yes || echo no)"
+expect "...but removed no needs-human, so it took nothing back" 0 "$(posted_count 84)"
+TB_FORCE_PREDICATE=1 takeback_probe 83 state:needs-human tbhead1 approve FAILURE >/dev/null
+expect "an edit that did remove it speaks (control)" 1 "$(posted_count 83)"
+expect "...the removal being the only difference between the two" yes \
+  "$(grep -q -- '--remove-label state:needs-human' "$TB/edits-83" && echo yes || echo no)"
+
+# -- a comment that failed to post is not logged as one ---------------------
+post_failed="$(TB_COMMENT_RC=1 takeback_probe 86 state:needs-human tbhead1 approve FAILURE)"
+expect "a failed post is logged as a failure, not as a comment" yes \
+  "$(grep -q 'WARNING: handoff taken back .* the comment failed to post' \
+    <<<"$post_failed" && echo yes || echo no)"
+expect "...and not as one made" no \
+  "$(grep -q -- '— commented' <<<"$post_failed" && echo yes || echo no)"
+expect "...recording no marker, so nothing standing on the PR" 0 "$(posted_count 86)"
+retried="$(takeback_probe 86 state:needs-human tbhead1 approve FAILURE)"
+expect "...and the next sweep retries the same episode" 1 "$(posted_count 86)"
+expect "...saying it once" yes \
+  "$(grep -q -- '— commented' <<<"$retried" && echo yes || echo no)"
+
+# -- the comment is not counted as the PR's own activity --------------------
+# reconcile_ruling's comments run after the last_activity read for this
+# reason; this one now does too. A machine comment read back as a sign of
+# life is the sweep believing its own noise — bounded here by the episode
+# guard, but the guard should not be what saves it.
+takeback_probe 85 state:needs-human tbhead1 approve FAILURE >/dev/null
+# A missing call is a verdict here, not a crash: under `set -e` an empty grep
+# would take the runner down mid-file, which is what a silenced call site
+# looked like when the mutation set was run. Both captures already read as
+# "no" when empty, so absorbing the grep's exit status only ever adds a
+# reported failure — it can mask nothing.
+tb_commented_at="$(grep -n 'issue comment' "$TB/calls-85" | head -1 | cut -d: -f1 || true)"
+tb_activity_at="$(grep -n 'created_at' "$TB/calls-85" | tail -1 | cut -d: -f1 || true)"
+expect "the pass reads the PR's activity before posting its own comment" yes \
+  "$([ -n "$tb_commented_at" ] && [ -n "$tb_activity_at" ] \
+    && [ "$tb_commented_at" -gt "$tb_activity_at" ] && echo yes || echo no)"
+expect "...having already made its one label edit before either" 1 "$(edit_count 85)"
+
+# -- an unreadable comment list must not invent a repeat --------------------
+# Everywhere else in this file an unreadable fact invents no verdict; here the
+# thing it must not invent is a SECOND comment, which is the whole harm.
+tb_unreadable="$(
+  (
+    gh() {
+      if [ "$1" = api ]; then return 1; fi
+      printf '%s\n' "$*" >>"$TB/unreadable-calls"
+    }
+    REPO=owner/repo NOW="$RNOW" HEAD_SHA=tbhead1
+    LABELS=state:needs-human DRAFT=false REQUESTED="" CHECKS=FAILURE
+    MERGEABLE=MERGEABLE
+    REVIEWS_JSON="$(reviews \
+      "$(rev "$BOT1" APPROVED tbhead1 "" "$(iso_at $((RNOW - 3600)))")" \
+      "$(rev "$BOT2" APPROVED tbhead1 "" "$(iso_at $((RNOW - 3600)))")" \
+      "$(rev "$BOT3" APPROVED tbhead1 "" "$(iso_at $((RNOW - 3600)))")")"
+    run() { "$@"; }
+    # `true`: the converge edit landed and cleared needs-human, so the only
+    # thing left in question is the comment read
+    reconcile_handoff_takeback 98 true 2>&1
+  )
+)"
+expect "an unreadable comment list says so" yes \
+  "$(grep -q 'take-back comments unreadable' <<<"$tb_unreadable" && echo yes || echo no)"
+expect "...and posts nothing on a fact it could not read" no \
+  "$(grep -q 'issue comment' "$TB/unreadable-calls" 2>/dev/null && echo yes || echo no)"
+
+# -- the marker's own shape: one spelling per (set, head) -------------------
+expect "the marker names the set and the head" \
+  '<!-- handoff-taken-back:blocker:ci-red:abc123 -->' \
+  "$(handoff_takeback_marker "$(printf 'blocker:ci-red\n' | handoff_takeback_set)" abc123)"
+expect "a set is canonicalized by sort, so emitter order cannot re-fire it" \
+  "$(printf 'blocker:conflict\nblocker:ci-red\n' | handoff_takeback_set)" \
+  "$(printf 'blocker:ci-red\nblocker:conflict\n' | handoff_takeback_set)"
+expect "...joined with commas, sorted" 'blocker:ci-red,blocker:conflict' \
+  "$(printf 'blocker:conflict\nblocker:ci-red\n' | handoff_takeback_set)"
+
+# -- the identity the predicate rests on ------------------------------------
+# handoff_taken_back is decide_state's :597 clause asked as a question, not a
+# second opinion about it: it re-states that clause's guard plus the one rule
+# above it. So over any fixture, a reported take-back must be a state
+# decide_state really did move to addressing — a precedence edit that broke
+# the identity would otherwise surface only as a comment about a take-back
+# that never happened, on a live PR.
+tb_at="$(iso_at $((RNOW - 3600)))"
+tb_approve="$(reviews \
+  "$(rev "$BOT1" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+tb_block="$(reviews \
+  "$(rev "$BOT1" CHANGES_REQUESTED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+tb_comment="$(reviews \
+  "$(rev "$BOT1" COMMENTED tbhead1 "looks fine" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+tb_stale="$(reviews \
+  "$(rev "$BOT1" APPROVED oldhead "" "$tb_at")" \
+  "$(rev "$BOT2" APPROVED tbhead1 "" "$tb_at")" \
+  "$(rev "$BOT3" APPROVED tbhead1 "" "$tb_at")")"
+
+takeback_equivalence() { # → "<take-backs reported> <disagreements with decide_state>"
+  local draft checks mergeable labels round human fired=0 disagreed=0
+  HEAD_SHA=tbhead1
+  for draft in true false; do
+    for checks in SUCCESS FAILURE; do
+      for mergeable in MERGEABLE CONFLICTING; do
+        for round in approve block comment stale; do
+          for human in "" "$HUMAN"; do
+            # The needs-ruling and blocked variants are deliberately not on
+            # this axis: both sit BELOW :597, so they are only ever reached
+            # with no blocker standing and can never report a take-back to
+            # check. Their silence is pinned by its own probe above.
+            for labels in state:needs-human state:bots-reviewing; do
+              DRAFT="$draft" CHECKS="$checks" MERGEABLE="$mergeable"
+              LABELS="$labels" REQUESTED="$human"
+              case "$round" in
+                approve) REVIEWS_JSON="$tb_approve" ;;
+                block) REVIEWS_JSON="$tb_block" ;;
+                comment) REVIEWS_JSON="$tb_comment" ;;
+                stale) REVIEWS_JSON="$tb_stale" ;;
+              esac
+              [ -n "$(handoff_taken_back)" ] || continue
+              fired=$((fired + 1))
+              [ "$(decide_state)" = state:addressing ] || disagreed=$((disagreed + 1))
+            done
+          done
+        done
+      done
+    done
+  done
+  printf '%s %s\n' "$fired" "$disagreed"
+}
+
+# -- D3's first condition, asked of the predicate directly ------------------
+# The PR must have CARRIED state:needs-human. This is pinned here rather than
+# only through reconcile_pr because two independent guards now stand in front
+# of the same case: the caller's `handoff_cleared` gate (the converge edit
+# removed no needs-human, so the predicate is never even asked) would keep the
+# fixture at PR 89 silent with this condition deleted, and the guard would be
+# as unpinned as it was when this was reported. The equivalence matrix cannot
+# stand in for it either: state:bots-reviewing + a passed round + a red head
+# IS a state decide_state moves to addressing, so the identity holds while the
+# predicate reports a take-back of a label nobody ever set.
+tb_predicate() { # $1 = the state the PR carries → the blockers reported, if any
+  (
+    HEAD_SHA=tbhead1 DRAFT=false CHECKS=FAILURE MERGEABLE=MERGEABLE
+    REQUESTED="" LABELS="$1" REVIEWS_JSON="$tb_approve"
+    handoff_taken_back
+  )
+}
+expect "a PR carrying addressing reports no take-back" "" \
+  "$(tb_predicate state:addressing)"
+expect "...nor one carrying bots-reviewing" "" \
+  "$(tb_predicate state:bots-reviewing)"
+expect "...while the same facts under a carried needs-human do (control)" \
+  blocker:ci-red "$(tb_predicate state:needs-human)"
+
+read -r tb_fired tb_disagreed <<<"$(takeback_equivalence)"
+expect "every reported take-back is a state decide_state moved to addressing" 0 \
+  "$tb_disagreed"
+expect "...over a matrix that actually reaches the take-back" yes \
+  "$([ "$tb_fired" -gt 0 ] && echo yes || echo no)"
+
 # -- the sweep wiring observes the existing per-PR skip without writing -------
 blind_main_probe() {
   (
