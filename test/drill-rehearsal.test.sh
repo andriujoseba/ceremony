@@ -741,6 +741,21 @@ check "the pre-scratch abort prints no delete command" 1 "" \
   grep -qF 'gh api -X DELETE' <<<"$pre_scratch_out"
 
 stub_reset
+: >"$TMP/setup-missing-parent.scenario"
+faults "0\t99\tGET user\t500\tauthentication read failed"
+missing_parent="$TMP/missing-parent/setup.md"
+missing_parent_out="$(run_rehearsal "$TMP/setup-missing-parent.scenario" \
+  --out "$missing_parent" 2>&1)"
+missing_parent_rc=$?
+check "an abort whose evidence parent is missing stays non-zero" 0 "" \
+  test "$missing_parent_rc" -ne 0
+check "an abort whose evidence cannot be reserved names the requested path" 0 \
+  "drill: setup aborted in baseline_run_wait; could not reserve abort evidence beside $missing_parent" \
+  printf '%s\n' "$missing_parent_out"
+check "an abort never creates its missing evidence parent" 1 "" \
+  test -d "${missing_parent%/*}"
+
+stub_reset
 green_scenario "$TMP/green.scenario"
 green_out="$(run_rehearsal "$TMP/green.scenario" --out "$TMP/emitted.md" 2>&1)"
 green_rc=$?
@@ -749,6 +764,8 @@ check "the run reports eight probes passed" 0 "probes passed 8/8, failed 0" \
   printf '%s\n' "$green_out"
 check "the emitted record passes the shape check" 0 "eight probe rows" \
   record_check "$TMP/emitted.md"
+check "a completed rehearsal creates no sibling abort artifact" 1 "" \
+  bash -c 'compgen -G "$1" >/dev/null' _ "$TMP/emitted.aborted-*.md"
 check "every probe row is a pass" 0 "8" \
   bash -c 'grep -cE "^\| [1-8] \|.*✅" "$1"' _ "$TMP/emitted.md"
 check "no probe row is a failure" 1 "" grep -qE '^\| [1-8] \|.*❌' "$TMP/emitted.md"

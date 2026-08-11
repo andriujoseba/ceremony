@@ -179,7 +179,11 @@ setup_abort() { # <step> <status> <stderr-file>
   fi
   ctx="$DRILL_WORK/abort-ctx.tsv"
   setup_ctx "$ctx" "$disposal"
-  abort_path="$(record_abort_path "$out")"
+  if ! abort_path="$(record_abort_path "$out")" || [ -z "$abort_path" ]; then
+    printf 'drill: setup aborted in %s; could not reserve abort evidence beside %s\n' \
+      "$step" "$out" >&2
+    exit "$status"
+  fi
   message="$(cat "$errors")"
   record_abort_render "$ctx" "$DRILL_SETUP" "$step" "$message" "$status" >"$abort_path"
   printf 'drill: setup aborted in %s; evidence written to %s\n' "$step" "$abort_path" >&2
