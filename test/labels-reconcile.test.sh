@@ -1124,7 +1124,7 @@ forced="$(TB_FORCE_PREDICATE=1 takeback_probe 84 state:addressing tbhead1 approv
 expect "the edit landed on that pass" yes \
   "$(grep -q 'state -> state:addressing' <<<"$forced" && echo yes || echo no)"
 expect "...but removed no needs-human, so it took nothing back" 0 "$(posted_count 84)"
-forced_control="$(TB_FORCE_PREDICATE=1 takeback_probe 83 state:needs-human tbhead1 approve FAILURE)"
+TB_FORCE_PREDICATE=1 takeback_probe 83 state:needs-human tbhead1 approve FAILURE >/dev/null
 expect "an edit that did remove it speaks (control)" 1 "$(posted_count 83)"
 expect "...the removal being the only difference between the two" yes \
   "$(grep -q -- '--remove-label state:needs-human' "$TB/edits-83" && echo yes || echo no)"

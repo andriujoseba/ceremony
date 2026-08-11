@@ -983,6 +983,7 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
       log "#$n: WARNING: missing label(s)$missing — state still converged; dispatch the workflow to bootstrap"
     fi
   fi
+
   # Whether THIS pass took a hand-set handoff back — the fact #377's comment
   # speaks for, and knowable only here: it needs the edit to have run, to have
   # succeeded, and to have carried `state:needs-human` on its removal side.
