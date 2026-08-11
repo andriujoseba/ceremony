@@ -283,7 +283,7 @@ if [ -n "$repo_name" ]; then
       --fork-ref "$fork_repo@$suggested_ref" --candidate-sha "$candidate_sha"
       --repo-name "ceremony-drill-$version-$suggestion")
     [ -z "$candidate_ref" ] || retry_args+=(--candidate-ref "$candidate_ref")
-    [ -z "$out" ] || retry_args+=(--out "$out")
+    retry_args+=(--out "$out")
     [ -z "$stamp" ] || retry_args+=(--date "$stamp")
     printf -v retry_command '%q ' "${retry_args[@]}"
     refuse "--repo-name '$repo_name' is already taken. Retry with: ${retry_command% }"
