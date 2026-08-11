@@ -915,6 +915,15 @@ takeback_probe() { # $1 PR, $2 labels, $3 head, $4 round, $5 checks, $6 mergeabl
           "$(rev "$BOT3" APPROVED "$head" "" "$at")")" ;;
     esac
     PR_JSON="$(jq -n --arg at "$at" '{created_at: $at, assignees: []}')"
+    # TB_FORCE_PREDICATE isolates the CALL SITE's gate from the predicate that
+    # normally stands in front of it. The two overlap on every reachable
+    # fixture — a PR carrying needs-human and reported as taken back always
+    # has needs-human on the edit's removal side — so without this the gate's
+    # own condition is asserted by nothing, and "the edit succeeded" would
+    # read the same as "the edit took the handoff back".
+    if [ -n "${TB_FORCE_PREDICATE:-}" ]; then
+      handoff_taken_back() { printf 'blocker:ci-red\n'; }
+    fi
     run() { "$@"; } # mutations reach the stub and are recorded, not swallowed
     gh() {
       # every call in call ORDER, which is what pins where in the pass the
@@ -1106,6 +1115,19 @@ expect "a repo missing state:addressing skips the label edit" yes \
 expect "...makes no edit call at all" 0 "$(edit_count 87)"
 expect "...and says nothing about a take-back that never happened" 0 \
   "$(posted_count 87)"
+
+# What the gate actually asks is not "did the edit succeed" but "did it take
+# the handoff back" — the removal side has to name state:needs-human. With
+# the predicate forced to report a take-back, a landed edit that removed
+# something else entirely still says nothing.
+forced="$(TB_FORCE_PREDICATE=1 takeback_probe 84 state:addressing tbhead1 approve FAILURE)"
+expect "the edit landed on that pass" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$forced" && echo yes || echo no)"
+expect "...but removed no needs-human, so it took nothing back" 0 "$(posted_count 84)"
+forced_control="$(TB_FORCE_PREDICATE=1 takeback_probe 83 state:needs-human tbhead1 approve FAILURE)"
+expect "an edit that did remove it speaks (control)" 1 "$(posted_count 83)"
+expect "...the removal being the only difference between the two" yes \
+  "$(grep -q -- '--remove-label state:needs-human' "$TB/edits-83" && echo yes || echo no)"
 
 # -- a comment that failed to post is not logged as one ---------------------
 post_failed="$(TB_COMMENT_RC=1 takeback_probe 86 state:needs-human tbhead1 approve FAILURE)"
