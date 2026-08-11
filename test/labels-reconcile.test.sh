@@ -1148,8 +1148,13 @@ expect "...saying it once" yes \
 # life is the sweep believing its own noise — bounded here by the episode
 # guard, but the guard should not be what saves it.
 takeback_probe 85 state:needs-human tbhead1 approve FAILURE >/dev/null
-tb_commented_at="$(grep -n 'issue comment' "$TB/calls-85" | head -1 | cut -d: -f1)"
-tb_activity_at="$(grep -n 'created_at' "$TB/calls-85" | tail -1 | cut -d: -f1)"
+# A missing call is a verdict here, not a crash: under `set -e` an empty grep
+# would take the runner down mid-file, which is what a silenced call site
+# looked like when the mutation set was run. Both captures already read as
+# "no" when empty, so absorbing the grep's exit status only ever adds a
+# reported failure — it can mask nothing.
+tb_commented_at="$(grep -n 'issue comment' "$TB/calls-85" | head -1 | cut -d: -f1 || true)"
+tb_activity_at="$(grep -n 'created_at' "$TB/calls-85" | tail -1 | cut -d: -f1 || true)"
 expect "the pass reads the PR's activity before posting its own comment" yes \
   "$([ -n "$tb_commented_at" ] && [ -n "$tb_activity_at" ] \
     && [ "$tb_commented_at" -gt "$tb_activity_at" ] && echo yes || echo no)"
