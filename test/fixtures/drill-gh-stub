@@ -52,8 +52,14 @@ case "${1:-}" in
         mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
         printf '2026-08-09T00:00:00Z\n' >"$R/created_at"
         printf 'false\n' >"$R/archived"
-        private=false
-        [ "${4:-}" != --private ] || private=true
+        case "${4:-}" in
+          --public) private=false ;;
+          --private) private=true ;;
+          *)
+            echo '`--public`, `--private`, or `--internal` required when not running interactively' >&2
+            exit 1
+            ;;
+        esac
         [ -z "${DRILL_STUB_PRIVATE_OVERRIDE:-}" ] || private="$DRILL_STUB_PRIVATE_OVERRIDE"
         printf '%s\n' "$private" >"$R/private"
         : >"$R/tags"

@@ -660,6 +660,11 @@ seed_taken_ref() { # <ref> — a burned ref on the shared fork
 # never route around themselves, and one discriminator names both artifacts.
 # ---------------------------------------------------------------------------
 stub_reset
+check "the gh stub rejects repo creation without explicit visibility" 1 \
+  "required when not running interactively" \
+  env DRILL_STUB_STATE="$TMP/state" "$STUB_BIN/gh" repo create "$SCRATCH"
+
+stub_reset
 green_scenario "$TMP/attempt-one.scenario"
 attempt_one_out="$(run_rehearsal "$TMP/attempt-one.scenario" \
   --fork-ref "$FORK" --out "$TMP/attempt-one.md" 2>&1)"
@@ -672,7 +677,9 @@ check "the first default attempt says what it picked" 0 \
 check "the first default attempt is recorded in Where" 0 \
   'Attempt **`1`**' cat "$TMP/attempt-one.md"
 check "the default creation argv omits --private" 0 "" \
-  grep -qxF "repo create $SCRATCH" "$TMP/state/calls"
+  grep -qxF "repo create $SCRATCH --public" "$TMP/state/calls"
+check "the default creation reports public success" 0 \
+  "created public scratch repo $SCRATCH" printf '%s\n' "$attempt_one_out"
 check "the default record says public" 0 \
   "disposable **public** repo" cat "$TMP/attempt-one.md"
 check "the public record carries no owner-only warning" 1 "" \
@@ -728,7 +735,7 @@ attempt_three_out="$(run_rehearsal "$TMP/attempt-three.scenario" \
 attempt_three_rc=$?
 check "two burned names route the run to -3" 0 "" test "$attempt_three_rc" -eq 0
 check "the creation calls try exactly -1, -2, then -3" 0 "3" \
-  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123]$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123] --public$" "$1"' \
   _ "$TMP/state/calls"
 check "the picked repo and default fork ref share -3" 0 \
   "$FORK/.github/workflows/release.yml@drill/0.7.0-3" cat "$TMP/attempt-three.md"
@@ -769,7 +776,7 @@ check "the bounded refusal names the whole range" 0 \
   "tried ceremony-drill-0.7.0-1 through ceremony-drill-0.7.0-10" \
   printf '%s\n' "$attempt_exhausted_out"
 check "exhaustion attempts exactly ten creates" 0 "10" \
-  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]*$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]* --public$" "$1"' \
   _ "$TMP/state/calls"
 check "exhaustion creates no eleventh repository" 1 "" \
   test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-11")"
@@ -821,7 +828,7 @@ check "a free explicit name is used verbatim" 0 "" test "$explicit_free_rc" -eq 
 check "an explicit free name does no numbered-name read probe" 1 "" \
   grep -q "^api repos/$SCRATCH_OWNER/ceremony-drill-0.7.0-" "$TMP/state/calls"
 check "an explicit free name is created only once" 0 "1" \
-  bash -c 'grep -c "^repo create drillowner/chosen-by-hand$" "$1"' \
+  bash -c 'grep -c "^repo create drillowner/chosen-by-hand --public$" "$1"' \
   _ "$TMP/state/calls"
 check "an arbitrary explicit name records a numeric attempt" 0 \
   'Attempt **`1`**' cat "$TMP/explicit-free.md"

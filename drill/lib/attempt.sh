@@ -15,7 +15,11 @@ scratch_create_attempt() {
   local repo="${1:?scratch_create_attempt: owner/name required}" private="${2:-0}"
   local err rc=0 message
   local -a create_args=(repo create "$repo")
-  [ "$private" -eq 0 ] || create_args+=(--private)
+  if [ "$private" -eq 0 ]; then
+    create_args+=(--public)
+  else
+    create_args+=(--private)
+  fi
   err="$(mktemp)"
   drill_gh "${create_args[@]}" >/dev/null 2>"$err" || rc=$?
   message="$(cat "$err")"
