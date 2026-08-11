@@ -2005,6 +2005,22 @@ release-7	24	7	after the rc cut	no '0.7.2-rc1' release exists
 release-8	29	8	after the promotion	no '0.7.2' release exists
 RELEASE_CASES
 
+# The other side of the release-list split: a list that answered and genuinely
+# lacks the release keeps the existing verdict byte-for-byte (#375 D6).
+stub_reset
+green_scenario "$TMP/release-absent.scenario"
+awk 'NR == 2 { print "success\tnone"; next } { print }' \
+  "$TMP/release-absent.scenario" >"$TMP/release-absent.scenario.tmp"
+mv "$TMP/release-absent.scenario.tmp" "$TMP/release-absent.scenario"
+faults
+run_rehearsal "$TMP/release-absent.scenario" --out "$TMP/release-absent.md" \
+  >"$TMP/release-absent.out" 2>&1
+check "a read release list that lacks the tag keeps the existing accusation" 0 \
+  "no '0.7.0' release exists after the ceremony" \
+  probe_row "$TMP/release-absent.md" 1
+check "a read release list is never reported as unread" 1 "" \
+  probe_row "$TMP/release-absent.md" 1 | grep -qF 'release list did not read back'
+
 # The fifth matching ref read is probe 2's setup read. Exhaust it, then prove
 # the row, every later probe, disposal and the final record all survive. Probe
 # 1 remains available for probe 4's deliberate re-run, keeping that later
