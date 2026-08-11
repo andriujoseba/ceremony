@@ -1079,6 +1079,12 @@ RECORD_CLASS_WHY=''
 # `drill-recorded`'s own stated hazard and #373 D5's. The four pre-convention
 # records (0.1.0–0.4.0) declare neither and land there by construction; no CI
 # path reads them, because the step reads `drills/$ver.md` and nothing else.
+#
+# SC2016: the discriminator patterns match the record's own Markdown, so their
+# backticks are literal bytes and never expansions — the same rule record_parse
+# states above. SC2034: both variables are the function's whole return value,
+# read by .github/scripts/record-roundtrip.sh and the rehearsal suite.
+# shellcheck disable=SC2016,SC2034
 record_class() {
   local file="${1:?record_class: record file required}" emission=0 ruling=0
   if [ ! -f "$file" ]; then
