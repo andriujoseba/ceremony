@@ -1030,6 +1030,29 @@ check "a pin that genuinely disagrees still says so, in its own words" 1 \
   "the rewritten pin does not read the candidate SHA" \
   with_stub fork_ref_verify "$FORK" "$FORK_REF" \
   deadbeefdeadbeefdeadbeefdeadbeefdeadbeef "$TMP/verify-work"
+# The third answer this read can give, and the one no fault can produce: the
+# tree answered, and what it answered carries no `.github/workflows/*.yml`.
+# Nothing above reaches it — a 404 or a 500 on the tree is a failed read, and
+# an empty carrier list is a successful read of a ref with nothing to verify.
+# Without this the loop runs zero times, `wrong` stays empty, and the function
+# prints the candidate SHA as though it had checked something: the
+# claim-without-a-measurement it exists to refuse.
+CARRIERLESS="$SCRATCH_OWNER/carrierless-fork"
+K="$TMP/state/$(san "$CARRIERLESS")"
+mkdir -p "$K/refs" "$K/commit" "$K/tree" "$K/blob"
+printf 'placeholder\n' >"$K/blob/bk1"
+printf 'README.md\tbk1\n' >"$K/tree/tk1"
+printf 'tk1\n' >"$K/commit/sk1"
+printf 'sk1\n' >"$K/refs/heads_main"
+with_stub fork_ref_verify "$CARRIERLESS" refs/heads/main "$CAND_SHA" \
+  "$TMP/verify-work" >"$TMP/carrierless.out" 2>"$TMP/carrierless.err"
+carrierless_rc=$?
+check "a verify that read no carrier refuses instead of verifying nothing" 0 "" \
+  test "$carrierless_rc" -eq 1
+check "and it says what it read, not what it could not verify" 0 \
+  "read back no .github/workflows/*.yml" cat "$TMP/carrierless.err"
+check "and it never prints the candidate SHA it did not check" 1 "" \
+  grep -qF "$CAND_SHA" "$TMP/carrierless.out"
 
 # D5 — no write path gains a retry. A retried write against the git data API
 # risks a second commit, so a failed write is an abort and stays one.
