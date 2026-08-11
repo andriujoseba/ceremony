@@ -143,38 +143,117 @@ export DRILL_DATE DRILL_REPO DRILL_WORK DRILL_STAGE
 export DRILL_PROBES DRILL_SETUP
 trap 'rm -rf "$DRILL_WORK"' EXIT
 
-runner="$(drill_gh api user --jq '.login')" || refuse "cannot read the authenticated login from gh."
+# setup_ctx writes only facts the setup has actually established. In
+# particular, a planned scratch name is not evidence that the repo exists.
+setup_ctx() { # <file> [disposal]
+  local file="${1:?}" disposal="${2:-}"
+  {
+    printf 'candidate_sha\t%s\n' "$candidate_sha"
+    printf 'fork_repo\t%s\n' "$fork_repo"
+    printf 'fork_ref\t%s\n' "$fork_ref"
+    [ "${scratch_created:-0}" = 0 ] || printf 'scratch\t%s\n' "$DRILL_REPO"
+    [ -z "${created:-}" ] || printf 'created\t%s\n' "$created"
+    [ -z "$disposal" ] || printf 'disposal\t%s\n' "$disposal"
+  } >"$file"
+}
+
+archive_disposal() { # print the disposal this run observed; always return 0
+  local observed archive_rc=0
+  observed="$(scratch_archive "$DRILL_REPO")" || archive_rc=$?
+  if [ "$archive_rc" -eq 0 ]; then
+    printf 'the repository is **archived** — `PATCH /repos/%s` with `archived: true`, and a fresh read afterwards reported `%s`' \
+      "$DRILL_REPO" "$observed"
+  elif [ "$archive_rc" -eq 3 ]; then
+    printf 'the repository is **not archived** — `PATCH /repos/%s` with `archived: true` was sent, and every read afterwards reported `%s`; the archive did not land, and the repository is still live' \
+      "$DRILL_REPO" "$observed"
+  else
+    printf 'the repository was sent `PATCH /repos/%s` with `archived: true`, but the read afterwards never answered — the archive may well have landed; it is unobserved, and this record does not claim it did' \
+      "$DRILL_REPO"
+  fi
+}
+
+setup_abort() { # <step> <status> <stderr-file>
+  local step="${1:?}" status="${2:?}" errors="${3:?}" disposal="" ctx abort_path message
+  if [ "${scratch_created:-0}" = 1 ]; then
+    disposal="$(archive_disposal)"
+  fi
+  ctx="$DRILL_WORK/abort-ctx.tsv"
+  setup_ctx "$ctx" "$disposal"
+  abort_path="$(record_abort_path "$out")"
+  message="$(cat "$errors")"
+  record_abort_render "$ctx" "$DRILL_SETUP" "$step" "$message" "$status" >"$abort_path"
+  printf 'drill: setup aborted in %s; evidence written to %s\n' "$step" "$abort_path" >&2
+  if [ "${scratch_created:-0}" = 1 ]; then
+    cat >&2 <<EOF
+
+The scratch repo is pending your delete. Run this yourself when you are done
+reading the abort evidence:
+
+    gh api -X DELETE repos/$DRILL_REPO
+EOF
+  fi
+  exit "$status"
+}
+
+setup_capture() { # <variable> <step> <command> [args...]
+  local variable="${1:?}" step="${2:?}" stdout stderr status
+  shift 2
+  stdout="$DRILL_WORK/setup.stdout"
+  stderr="$DRILL_WORK/setup.stderr"
+  : >"$stdout"
+  : >"$stderr"
+  set +e
+  (set -e; "$@") >"$stdout" 2>"$stderr"
+  status=$?
+  set -e
+  cat "$stderr" >&2
+  [ "$status" -eq 0 ] || setup_abort "$step" "$status" "$stderr"
+  printf -v "$variable" '%s' "$(cat "$stdout")"
+}
+
+setup_run() { # <step> <command> [args...]
+  local ignored
+  setup_capture ignored "$@"
+}
+
+scratch_created=0
+created=""
+setup_capture runner authenticated_login drill_gh api user --jq '.login'
 
 printf 'drill: %s rehearsal — scratch %s, candidate %s, fork %s@%s\n' \
   "$DRILL_V1" "$DRILL_REPO" "$candidate_sha" "$fork_repo" "$fork_ref" >&2
 
 # ---- the scratch repo -----------------------------------------------------
-scratch_create "$DRILL_REPO"
-created="$(scratch_created_at "$DRILL_REPO")"
+setup_run scratch_create scratch_create "$DRILL_REPO"
+scratch_created=1
+setup_capture created scratch_created_at scratch_created_at "$DRILL_REPO"
 
 # ---- the armed fixture, BEFORE the caller (the 0.4.0 lesson) --------------
-fixture_write "$DRILL_STAGE" "$DRILL_V1"
+setup_run fixture_write fixture_write "$DRILL_STAGE" "$DRILL_V1"
 fixture_manifest="$DRILL_WORK/fixture.manifest"
 : >"$fixture_manifest"
 while IFS= read -r path; do
   printf 'A\t%s\t%s\n' "$path" "$DRILL_STAGE/$path" >>"$fixture_manifest"
 done < <(fixture_paths "$DRILL_V1")
-scratch_commit "$DRILL_REPO" main \
-  "the armed fixture at $DRILL_V1-dev" "$fixture_manifest" >/dev/null
+setup_run scratch_commit scratch_commit "$DRILL_REPO" main \
+  "the armed fixture at $DRILL_V1-dev" "$fixture_manifest"
 
 # ---- the candidate pin, on a fork ref and never on the canonical repo -----
-fork_head="$(fork_ref_prepare "$fork_repo" "$fork_ref" "$candidate_sha" "$DRILL_WORK")"
-pin="$(fork_ref_verify "$fork_repo" "$fork_ref" "$candidate_sha" "$DRILL_WORK")"
+setup_capture fork_head fork_ref_prepare fork_ref_prepare \
+  "$fork_repo" "$fork_ref" "$candidate_sha" "$DRILL_WORK"
+setup_capture pin fork_ref_verify fork_ref_verify \
+  "$fork_repo" "$fork_ref" "$candidate_sha" "$DRILL_WORK"
 
 # ---- the caller stub, which refuses an unseeded tree from inside ----------
-caller_sha="$(caller_install "$DRILL_REPO" main "$DRILL_STAGE" \
-  "$fork_repo" "$fork_ref" "$DRILL_WORK")"
-IFS=$'\t' read -r baseline_run baseline_conc < <(scratch_run_for "$DRILL_REPO" "$caller_sha")
-probe_setup_record "$baseline_run" "$baseline_conc" \
+setup_capture caller_sha caller_install caller_install "$DRILL_REPO" main \
+  "$DRILL_STAGE" "$fork_repo" "$fork_ref" "$DRILL_WORK"
+setup_capture baseline baseline_run_wait scratch_run_for "$DRILL_REPO" "$caller_sha"
+IFS=$'\t' read -r baseline_run baseline_conc <<<"$baseline"
+setup_run probe_setup_record probe_setup_record "$baseline_run" "$baseline_conc" \
   "the caller's own landing on an armed tree — the green baseline no-op, and the run that proves the door was live before any probe asked it a question"
 
 # The guide's prerequisite: the label exists before the first ceremony PR.
-scratch_label_create "$DRILL_REPO" release
+setup_run scratch_label_create scratch_label_create "$DRILL_REPO" release
 
 # ---- the eight probes, in doctrine order -----------------------------------
 # Each through probe_run, so an abort inside one is that probe's failed row
@@ -201,15 +280,7 @@ probe_run 8 probe_8_promotion
 # which is the exact thing #135 put this read-back here to catch; filing it as
 # "the read never answered" would hand the operator the softer of the two
 # sentences on the harder of the two facts.
-archive_rc=0
-observed="$(scratch_archive "$DRILL_REPO")" || archive_rc=$?
-if [ "$archive_rc" -eq 0 ]; then
-  disposal="the repository is **archived** — \`PATCH /repos/$DRILL_REPO\` with \`archived: true\`, and a fresh read afterwards reported \`$observed\`"
-elif [ "$archive_rc" -eq 3 ]; then
-  disposal="the repository is **not archived** — \`PATCH /repos/$DRILL_REPO\` with \`archived: true\` was sent, and every read afterwards reported \`$observed\`; the archive did not land, and the repository is still live"
-else
-  disposal="the repository was sent \`PATCH /repos/$DRILL_REPO\` with \`archived: true\`, but the read afterwards never answered — the archive may well have landed; it is unobserved, and this record does not claim it did"
-fi
+disposal="$(archive_disposal)"
 
 # ---- the record -----------------------------------------------------------
 ctx="$DRILL_WORK/ctx.tsv"
