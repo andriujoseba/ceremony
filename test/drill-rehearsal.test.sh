@@ -636,6 +636,119 @@ green_scenario() {
     "success	release:0.7.2,rearm:0.7.3-dev" >"$1"
 }
 
+seed_taken_repo() { # <owner/name> — enough state for createRepository to collide
+  local repo="$1" R
+  R="$TMP/state/$(san "$repo")"
+  mkdir -p "$R/refs" "$R/commit" "$R/tree" "$R/blob" "$R/pulls" "$R/labels"
+  printf '2026-08-08T00:00:00Z\n' >"$R/created_at"
+  printf 'true\n' >"$R/archived"
+  : >"$R/tags"
+  : >"$R/releases"
+  : >"$R/runs"
+}
+
+# ---------------------------------------------------------------------------
+# Attempt names (#371): creation itself claims a default name, explicit names
+# never route around themselves, and one discriminator names both artifacts.
+# ---------------------------------------------------------------------------
+stub_reset
+green_scenario "$TMP/attempt-one.scenario"
+attempt_one_out="$(run_rehearsal "$TMP/attempt-one.scenario" \
+  --out "$TMP/attempt-one.md" 2>&1)"
+attempt_one_rc=$?
+check "the first default attempt completes" 0 "" test "$attempt_one_rc" -eq 0
+check "the first default attempt creates -1" 0 "" \
+  test -d "$TMP/state/$(san "$SCRATCH")"
+check "the first default attempt says what it picked" 0 \
+  "ceremony-drill-0.7.0-1 is free; using -1" printf '%s\n' "$attempt_one_out"
+check "the first default attempt is recorded in Where" 0 \
+  'Attempt **`1`**' cat "$TMP/attempt-one.md"
+
+stub_reset
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-2"
+green_scenario "$TMP/attempt-three.scenario"
+attempt_three_out="$(run_rehearsal "$TMP/attempt-three.scenario" \
+  --fork-ref "$FORK" --out "$TMP/attempt-three.md" 2>&1)"
+attempt_three_rc=$?
+ATTEMPT_THREE="$SCRATCH_OWNER/ceremony-drill-0.7.0-3"
+check "two burned names route the run to -3" 0 "" test "$attempt_three_rc" -eq 0
+check "the creation calls try exactly -1, -2, then -3" 0 "3" \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[123] --private$" "$1"' \
+  _ "$TMP/state/calls"
+check "the picked repo and default fork ref share -3" 0 \
+  "$FORK/.github/workflows/release.yml@drill/0.7.0-3" cat "$TMP/attempt-three.md"
+check "the routed attempt is recorded as 3" 0 'Attempt **`3`**' \
+  cat "$TMP/attempt-three.md"
+check "the routed choice says which names were burned" 0 \
+  "ceremony-drill-0.7.0-1 through -2 exist; using -3" \
+  printf '%s\n' "$attempt_three_out"
+
+stub_reset
+for taken in $(seq 1 10); do
+  seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-$taken"
+done
+: >"$TMP/attempt-exhausted.scenario"
+attempt_exhausted_out="$(run_rehearsal "$TMP/attempt-exhausted.scenario" \
+  --fork-ref "$FORK" --out "$TMP/attempt-exhausted.md" 2>&1)"
+attempt_exhausted_rc=$?
+check "ten burned names refuse" 0 "" test "$attempt_exhausted_rc" -ne 0
+check "the bounded refusal names the whole range" 0 \
+  "tried ceremony-drill-0.7.0-1 through ceremony-drill-0.7.0-10" \
+  printf '%s\n' "$attempt_exhausted_out"
+check "exhaustion attempts exactly ten creates" 0 "10" \
+  bash -c 'grep -c "^repo create drillowner/ceremony-drill-0.7.0-[0-9][0-9]* --private$" "$1"' \
+  _ "$TMP/state/calls"
+check "exhaustion creates no eleventh repository" 1 "" \
+  test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-11")"
+
+stub_reset
+EXPLICIT="$SCRATCH_OWNER/chosen-by-hand"
+seed_taken_repo "$EXPLICIT"
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-2"
+: >"$TMP/explicit-taken.scenario"
+explicit_taken_out="$(run_rehearsal "$TMP/explicit-taken.scenario" \
+  --fork-ref "$FORK" --repo-name chosen-by-hand \
+  --out "$TMP/explicit-taken.md" 2>&1)"
+explicit_taken_rc=$?
+check "an explicit taken name still refuses" 0 "" test "$explicit_taken_rc" -ne 0
+check "the refusal substitutes the free repo name" 0 \
+  "--repo-name 'ceremony-drill-0.7.0-3'" printf '%s\n' "$explicit_taken_out"
+check "the refusal substitutes the matching fork ref" 0 \
+  "--fork-ref '$FORK@drill/0.7.0-3'" printf '%s\n' "$explicit_taken_out"
+retry_command="$(sed -n 's/^drill: .*Retry with: //p' <<<"$explicit_taken_out")"
+check "the printed retry invocation parses as a shell command" 0 "" \
+  bash -n -c "$retry_command"
+check "the explicit-name refusal creates no suggested repo" 1 "" \
+  test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-3")"
+
+stub_reset
+green_scenario "$TMP/explicit-free.scenario"
+explicit_free_out="$(run_rehearsal "$TMP/explicit-free.scenario" \
+  --repo-name chosen-by-hand --out "$TMP/explicit-free.md" 2>&1)"
+explicit_free_rc=$?
+check "a free explicit name is used verbatim" 0 "" test "$explicit_free_rc" -eq 0
+check "an explicit free name does no numbered-name read probe" 1 "" \
+  grep -q "^api repos/$SCRATCH_OWNER/ceremony-drill-0.7.0-" "$TMP/state/calls"
+check "an explicit free name is created only once" 0 "1" \
+  bash -c 'grep -c "^repo create drillowner/chosen-by-hand --private$" "$1"' \
+  _ "$TMP/state/calls"
+
+stub_reset
+printf '%s\n' "$CAND_SHA" >"$TMP/state/$(san "$FORK")/refs/$(san "heads/$FORK_REF")"
+existing_ref_out="$(
+  export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
+  export DRILL_STUB_SCENARIO="$TMP/empty.scenario" DRILL_STUB_FAULTS="$FAULTS"
+  export DRILL_READ_NAP_SECONDS=0
+  fork_ref_prepare "$FORK" "$FORK_REF" "$CAND_SHA" "$TMP/existing-ref-work" 2>&1
+)"
+existing_ref_rc=$?
+check "an explicit existing fork ref still refuses" 0 "" test "$existing_ref_rc" -eq 1
+check "the existing-ref refusal stays byte-identical" 0 \
+  "drill: refusing to prepare '$FORK@$FORK_REF' — the ref already exists at $CAND_SHA. Delete it or name another --fork-ref; the drill will not rewrite a ref it did not create." \
+  printf '%s\n' "$existing_ref_out"
+
 # ---------------------------------------------------------------------------
 # Setup aborts are evidence, but never the release record (#370). Each case
 # drives the real rehearsal against the recording stub: the wrapper must keep
@@ -1698,8 +1811,8 @@ check "no arguments prints usage" 2 "usage: drill/rehearsal.sh" rehearsal_args
 check "an rc version is never the candidate version" 1 "not a bare X.Y.Z" \
   rehearsal_args --owner o --version 0.7.0-rc1 --fork-ref "$FORK@$FORK_REF" \
   --candidate-sha "$CAND_SHA"
-check "a fork-ref with no ref is refused" 1 "is not 'owner/repo@ref'" \
-  rehearsal_args --owner o --version 0.7.0 --fork-ref forkowner/ceremony \
+check "a fork-ref with no repository is refused" 1 "is not 'owner/repo[@ref]'" \
+  rehearsal_args --owner o --version 0.7.0 --fork-ref forkowner \
   --candidate-sha "$CAND_SHA"
 
 summary

@@ -100,8 +100,8 @@ done
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   refuse "--version '$version' is not a bare X.Y.Z. The fixture arms X.Y.Z-dev and the ceremony probe ships X.Y.Z, and the rc legs run further along the ladder this script derives from it — an rc is never the candidate version here (#321)."
 case "$fork_spec" in
-  */*@*) ;;
-  *) refuse "--fork-ref '$fork_spec' is not 'owner/repo@ref'." ;;
+  */*) ;;
+  *) refuse "--fork-ref '$fork_spec' is not 'owner/repo[@ref]'." ;;
 esac
 fork_repo="${fork_spec%@*}"
 fork_ref=""

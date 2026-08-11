@@ -10,7 +10,7 @@ its own run by the script that drove it.
 
 ## Where
 
-Attempt **`1`** used disposable **private** repo `drillowner/ceremony-drill-0.7.0-1-1`, created
+Attempt **`1`** used disposable **private** repo `drillowner/ceremony-drill-0.7.0-1`, created
 2026-08-09T00:00:00Z. It carries the
 `docs/CONSUMERS.md` release caller verbatim (`version-source: file`) over a
 fragment-mode fixture armed at `0.7.0-dev`: a preamble-only
