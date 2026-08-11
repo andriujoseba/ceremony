@@ -1845,10 +1845,10 @@ with_stub scratch_commit "$FRAGS" main "a tree with fragments on it" \
   "$TMP/frags.manifest" >/dev/null 2>&1
 check "the fragment list this case is about is genuinely there" 0 \
   "changelog.d/10.md" fragment_paths_of "$FRAGS" main
-faults "0\t2\tGET repos/*/git/trees/*\t404\tNot Found"
+faults $'0\t2\tGET repos/*/git/trees/*\t404\tNot Found'
 check "a fragment list that answers stale twice still reads back" 0 \
   "changelog.d/10.md" fragment_paths_of "$FRAGS" main
-faults "0\t99\tGET repos/*/git/trees/*\t404\tNot Found"
+faults $'0\t99\tGET repos/*/git/trees/*\t404\tNot Found'
 : >"$TMP/frags.out"
 with_stub probe_fragment_paths "$FRAGS" main "$TMP/frags.out" \
   >"$TMP/frags.err" 2>&1
@@ -1952,24 +1952,24 @@ faulted_probe_run() { # <name> <fault-rule>
 
 # Tree reads in the green call order: fixture check, probe 7 before, probe 7
 # after, probe 8 after. Ten failures exhaust exactly one retrying read.
-faulted_probe_run fragment-before \
-  "1\t10\tGET repos/$SCRATCH/git/trees/main*\t500\tInternal Server Error"
+printf -v fragment_fault '1\t10\tGET repos/%s/git/trees/main*\t500\tInternal Server Error' "$SCRATCH"
+faulted_probe_run fragment-before "$fragment_fault"
 check "probe 7 reds when its before-fragment list never reads" 0 \
   "the fragment list did not read back at $SCRATCH@main before the rc cut" \
   probe_row "$TMP/fragment-before.md" 7
 check "the before-read failure never claims the fragment set changed" 1 "" \
   probe_row "$TMP/fragment-before.md" 7 | grep -qF 'the fragment set changed'
 
-faulted_probe_run fragment-after \
-  "2\t10\tGET repos/$SCRATCH/git/trees/main*\t500\tInternal Server Error"
+printf -v fragment_fault '2\t10\tGET repos/%s/git/trees/main*\t500\tInternal Server Error' "$SCRATCH"
+faulted_probe_run fragment-after "$fragment_fault"
 check "probe 7 reds when its after-fragment list never reads" 0 \
   "the fragment list did not read back at $SCRATCH@main after the rc cut" \
   probe_row "$TMP/fragment-after.md" 7
 check "the after-read failure never claims the fragment set changed" 1 "" \
   probe_row "$TMP/fragment-after.md" 7 | grep -qF 'the fragment set changed'
 
-faulted_probe_run fragment-promotion \
-  "3\t10\tGET repos/$SCRATCH/git/trees/main*\t500\tInternal Server Error"
+printf -v fragment_fault '3\t10\tGET repos/%s/git/trees/main*\t500\tInternal Server Error' "$SCRATCH"
+faulted_probe_run fragment-promotion "$fragment_fault"
 check "probe 8 reds when its fragment list never reads" 0 \
   "the fragment list did not read back at $SCRATCH@main after the promotion" \
   probe_row "$TMP/fragment-promotion.md" 8
@@ -1984,8 +1984,9 @@ check "the unread promotion list never accuses leftovers" 1 "" \
 # Release endpoint call indices that search a completed list rather than count
 # it: probes 1, 5, 6, 7 and 8. These are hard reads, so one failure is enough.
 while IFS=$'\t' read -r release_name release_skip release_probe release_when release_old; do
-  faulted_probe_run "$release_name" \
-    "$release_skip\t1\tGET repos/$SCRATCH/releases*\t500\tInternal Server Error"
+  printf -v release_fault '%s\t1\tGET repos/%s/releases*\t500\tInternal Server Error' \
+    "$release_skip" "$SCRATCH"
+  faulted_probe_run "$release_name" "$release_fault"
   check "probe $release_probe reds when its release list fails" 0 \
     "the release list did not read back at $SCRATCH $release_when" \
     probe_row "$TMP/$release_name.md" "$release_probe"
@@ -2001,8 +2002,8 @@ RELEASE_CASES
 
 # The fourth matching ref read is probe 1's setup read. Exhaust it, then prove
 # the row, every later probe, disposal and the final record all survive.
-faulted_probe_run branch-sha \
-  "3\t10\tGET repos/$SCRATCH/git/ref/heads/main\t500\tInternal Server Error"
+printf -v branch_fault '3\t10\tGET repos/%s/git/ref/heads/main\t500\tInternal Server Error' "$SCRATCH"
+faulted_probe_run branch-sha "$branch_fault"
 check "a branch-SHA failure becomes probe 1's read-named row" 0 \
   "the branch SHA did not read back at $SCRATCH@main before probe 1" \
   probe_row "$TMP/branch-sha.md" 1
