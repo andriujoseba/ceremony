@@ -628,6 +628,54 @@ decide_state() { # → the one state:* label this PR should carry
   echo "$s"
 }
 
+# The take-back's episode marker (#377). Not the `ceremony:` family the
+# ruling and attention markers use: this one carries its episode IN the
+# marker — the blocker set and the head SHA — rather than being scoped by a
+# `labeled` event the way those are, so it reads as its own kind.
+HANDOFF_TAKEBACK_MARKER_PREFIX='<!-- handoff-taken-back:'
+
+handoff_takeback_set() { # blocker lines on stdin → the canonical comma-joined set
+  # Sorted, so one standing set has exactly ONE spelling in the marker: the
+  # BLOCKERS order is fixed today, and an episode must not re-fire because a
+  # later edit reordered the emitters in blockers().
+  local b joined=""
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    joined="${joined:+$joined,}$b"
+  done < <(sort)
+  printf '%s\n' "$joined"
+}
+
+handoff_takeback_marker() { # $1 = canonical set, $2 = head SHA → the episode marker
+  # The episode IS (blocker set, head): a new head or a different set is a new
+  # thing to say, the same head with the same set is the sweep repeating
+  # itself — and repeating itself hourly is worse than the silence this
+  # replaces (#377 D2).
+  printf '%s%s:%s -->\n' "$HANDOFF_TAKEBACK_MARKER_PREFIX" "$1" "$2"
+}
+
+handoff_taken_back() { # → the blockers that took a handoff back, one per line; nothing otherwise
+  # D3: only the hand-set take-back speaks. This is decide_state's :597 clause
+  # asked as a question — the PR already carried state:needs-human, the round
+  # alone still says needs-human, and a blocker is what moved it — and it is
+  # written in that clause's PRECEDENCE, not just its facts: the draft rule
+  # sits above it, so a draft is the draft rule's take-back and never this
+  # one, and needs-ruling and blocked sit below it, so they are only ever
+  # reached with no blocker standing. Those three each already wear a visible
+  # label saying why; the blocker case is the one whose "why" lived only in a
+  # run log, which is the whole defect (#377).
+  #
+  # Hand-set is not separately detectable, and deliberately not chased: a
+  # needs-human the machine wrote and a later red overtook lands here too, and
+  # the comment is right in both cases — the handoff is off, and this is what
+  # standing between it and the human.
+  has_label state:needs-human || return 0
+  [ "$(decide_state)" = state:addressing ] || return 0
+  [ "$DRAFT" != true ] || return 0
+  [ "$(round_state)" = state:needs-human ] || return 0
+  blockers
+}
+
 round_state() { # → the state the REVIEW ROUND alone implies; knows no branch facts
   local b verdicts=""
   for b in "${REQUIRED_BOTS[@]}"; do
@@ -789,6 +837,57 @@ tree_version() { # $1 = ref → that tree's version via the API, or nothing
   return 0
 }
 
+reconcile_handoff_takeback() { # $1 = PR number; at most one comment per episode (#377)
+  # The defect this closes is not the take-back — that rule is correct and
+  # unchanged — but its silence: `log` writes to the labels workflow's run
+  # log, and a builder driving a PR reads the PR. On incubator#94 a hand-set
+  # label vanished 45 seconds later with no comment three times running, and
+  # writing it again is the rational answer to a write that disappears
+  # without a reason.
+  local n="$1" standing joined marker bodies b pretty=""
+  standing="$(handoff_taken_back)"
+  [ -n "$standing" ] || return 0
+  joined="$(handoff_takeback_set <<<"$standing")"
+  marker="$(handoff_takeback_marker "$joined" "$HEAD_SHA")"
+
+  # The comment read is behind the trigger, so an ordinary PR pays nothing for
+  # it. A failed read says nothing: everywhere else in this file an unreadable
+  # fact must not invent a verdict, and here it must not invent a REPEAT —
+  # duplicate comments are the harm the marker exists to prevent, and the next
+  # sweep is 15 minutes away.
+  if ! bodies="$(gh api --paginate "repos/$REPO/issues/$n/comments" \
+    --jq '.[].body' 2>/dev/null)"; then
+    log "#$n: take-back comments unreadable — no comment invented this pass"
+    return 0
+  fi
+  grep -qF "$marker" <<<"$bodies" && return 0
+
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    pretty="${pretty:+$pretty, }\`$b\`"
+  done <<<"$standing"
+
+  run gh issue comment "$n" -R "$REPO" --body "$marker
+\`state:needs-human\` was taken back on this PR — the state is
+\`state:addressing\` again. That is not a machine error, and re-setting the
+label will not stick: the label means a human could merge this **right now**,
+so it requires a clear branch, and this head does not have one.
+
+Standing at \`$HEAD_SHA\`: $pretty
+
+The handoff's precondition is every panel verdict approving the current head
+**and no \`blocker:*\` standing** — conflicts rebased, CI green, drill
+recorded if this is a release PR
+([BUILDER.md — Handoff](https://github.com/heavy-duty/ceremony/blob/main/BUILDER.md#handoff)).
+Clear what is standing above and the next sweep derives \`state:needs-human\`
+by itself; setting it by hand only earns another take-back
+(heavy-duty/ceremony#377).
+
+*One comment per episode: a new head, or a different blocker set, says this
+again — the same head with the same blockers never does.*" >/dev/null
+  log "#$n: handoff taken back ($joined at $HEAD_SHA) — commented"
+}
+
 reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   local n="$1" desired remove s args last_activity last_activity_epoch age
 
@@ -872,6 +971,12 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
       log "#$n: WARNING: label edit failed (missing label? run the workflow manually to bootstrap)"
     fi
   fi
+
+  # ---- say why a handoff was taken back (#377) -------------------------
+  # After the converge edit, never inside it: the state and the blockers ride
+  # ONE edit call so a PR never flickers through a half-applied board, and a
+  # comment posted between them would split exactly that.
+  reconcile_handoff_takeback "$n"
 
   # ---- the release-shape guard (#130): a warning, never a write --------
   # Drafts are exempt (the build phase is the builder's); the version
