@@ -145,13 +145,6 @@ drill_read() {
   return 1
 }
 
-# scratch_create <owner/name> — a private, disposable repo.
-scratch_create() {
-  local repo="${1:?scratch_create: owner/name required}"
-  drill_gh repo create "$repo" --private >/dev/null || return 1
-  printf 'drill: created private scratch repo %s\n' "$repo" >&2
-}
-
 # scratch_created_at <owner/name> — the repo's creation stamp, for the record.
 scratch_created_at() {
   drill_gh api "repos/${1:?scratch_created_at: repo required}" --jq '.created_at'

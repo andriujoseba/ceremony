@@ -78,6 +78,72 @@ record_setup_rows() {
   done <"$tsv"
 }
 
+# record_abort_path <record-path> — reserve the first sibling abort path.
+# Setup failures cannot write the release record path: drill-recorded only
+# checks that path exists and is non-blank, so putting partial evidence there
+# could turn an unrun rehearsal into a passing release gate (#370).
+record_abort_path() {
+  local out="${1:?record_abort_path: record path required}" stem n=1 candidate
+  stem="${out%.md}"
+  while :; do
+    candidate="$stem.aborted-$n.md"
+    if [ -e "$candidate" ]; then
+      n=$((n + 1))
+      continue
+    fi
+    if (set -o noclobber; : >"$candidate") 2>/dev/null; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    # A racer may have reserved the same number after the existence check.
+    # Any other refusal (missing directory, permissions) is a real write
+    # failure, not a collision to spin on forever.
+    [ -e "$candidate" ] || return 1
+    n=$((n + 1))
+  done
+}
+
+# record_abort_render <ctx-file> <setup-tsv> <step> <message> <status>
+# — evidence from setup, deliberately not a rehearsal record shape.
+record_abort_render() {
+  local ctx="${1:?}" setup="${2:?}" step="${3:?}" message="${4:-}" status="${5:?}"
+  local scratch attempt created candidate_sha fork_repo fork_ref disposal
+  scratch="$(record_ctx "$ctx" scratch)"
+  attempt="$(record_ctx "$ctx" attempt)"
+  created="$(record_ctx "$ctx" created)"
+  candidate_sha="$(record_ctx "$ctx" candidate_sha)"
+  fork_repo="$(record_ctx "$ctx" fork_repo)"
+  fork_ref="$(record_ctx "$ctx" fork_ref)"
+  disposal="$(record_ctx "$ctx" disposal)"
+
+  printf '%s\n\n' '**Aborted in setup — no probe ran.**'
+  printf -- "- **Step:** \`%s\`\n" "$step"
+  printf -- "- **Exit status:** \`%s\`\n" "$status"
+  printf -- '- **Message:**\n'
+  if [ -n "$message" ]; then
+    while IFS= read -r line; do printf '  > %s\n' "$line"; done <<<"$message"
+  else
+    printf '  > command exited with status %s\n' "$status"
+  fi
+
+  printf '\n## Known context\n\n'
+  [ -z "$candidate_sha" ] || printf -- "- Candidate SHA: \`%s\`\n" "$candidate_sha"
+  if [ -n "$fork_repo" ] && [ -n "$fork_ref" ]; then
+    printf -- "- Fork ref: \`%s@%s\`\n" "$fork_repo" "$fork_ref"
+  fi
+  [ -z "$scratch" ] || printf -- "- Scratch repo: \`%s\`\n" "$scratch"
+  [ -z "$attempt" ] || printf -- "- Attempt: \`%s\`\n" "$attempt"
+  [ -z "$created" ] || printf -- "- Created: \`%s\`\n" "$created"
+
+  if [ -n "$scratch" ] && [ -s "$setup" ]; then
+    printf '\n## Setup rows recorded before the abort\n\n'
+    record_setup_rows "$scratch" "$setup"
+  fi
+  if [ -n "$disposal" ]; then
+    printf '\n## Disposal, as this run observed it\n\n%s.\n' "$disposal"
+  fi
+}
+
 # record_claim <n> <version> — the one sentence probe <n> establishes when it
 # passes, and that nothing establishes when it does not.
 #
@@ -246,7 +312,7 @@ EOF
 # record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
 record_render() {
   local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
-  local ver rc scratch created candidate_sha candidate_ref fork_repo fork_ref
+  local ver rc scratch attempt created candidate_sha candidate_ref fork_repo fork_ref
   local fork_head pin disposal runner stamp failed passed unestablished
   local unrun unrun_count word
   ver="$(record_ctx "$ctx" version)"
@@ -256,6 +322,7 @@ record_render() {
   rc="$(record_ctx "$ctx" rc_version)"
   word="$(record_count_word)"
   scratch="$(record_ctx "$ctx" scratch)"
+  attempt="$(record_ctx "$ctx" attempt)"
   created="$(record_ctx "$ctx" created)"
   candidate_sha="$(record_ctx "$ctx" candidate_sha)"
   candidate_ref="$(record_ctx "$ctx" candidate_ref)"
@@ -304,7 +371,8 @@ EOF
   cat <<EOF
 ## Where
 
-Disposable **private** repo \`$scratch\`, created $created. It carries the
+Attempt **\`$attempt\`** used disposable **private** repo \`$scratch\`, created
+$created. It carries the
 \`docs/CONSUMERS.md\` release caller verbatim (\`version-source: file\`) over a
 fragment-mode fixture armed at \`$ver-dev\`: a preamble-only
 \`CHANGELOG.md\`, \`changelog.d/README.md\` plus three fragments, and a
