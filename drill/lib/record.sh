@@ -1052,6 +1052,67 @@ record_parse_one() {
   RECORD_PARSE_OUT="$out"
 }
 
+# ---------------------------------------------------------------------------
+# Which record shape this is (#373 D9) — because the round trip grades
+# EMISSIONS, and two of the three shapes drills/README.md sanctions are
+# hand-written by design.
+#
+# `drills/0.6.2.md` and `drills/0.6.3.md` are doors-unchanged scope rulings
+# (#233), and `drill-recorded` blesses a WAIVED record in its own refusal
+# text. Neither is `record_render`'s output and neither can be. A guard that
+# demanded a round trip of every bare-version tree would red the release
+# immediately before 0.7.0 — two correct guards closing a door on each other.
+#
+# So the class is READ FROM THE RECORD, never from a path list or a version
+# list someone must remember to update: each shape declares itself, and the
+# declaration is written down in drills/README.md so a record author knows
+# which one they are writing.
+# ---------------------------------------------------------------------------
+RECORD_CLASS=''
+RECORD_CLASS_WHY=''
+
+# record_class <record-file> — sets RECORD_CLASS to `emission` or
+# `scope-ruling`, and RECORD_CLASS_WHY to the sentence the step prints.
+#
+# It FAILS CLOSED. A record declaring both shapes, or neither, is graded as an
+# emission and must round-trip: "could not tell" resolving to "allowed" is
+# `drill-recorded`'s own stated hazard and #373 D5's. The four pre-convention
+# records (0.1.0–0.4.0) declare neither and land there by construction; no CI
+# path reads them, because the step reads `drills/$ver.md` and nothing else.
+record_class() {
+  local file="${1:?record_class: record file required}" emission=0 ruling=0
+  if [ ! -f "$file" ]; then
+    printf 'record_class: %s: no such file\n' "$file" >&2
+    return 1
+  fi
+  # The instrument's own run sentence, which `record_render` writes on line 3
+  # of every emission and nothing else writes at all.
+  if grep -qE '^Run .* with `drill/rehearsal\.sh` against the ' "$file"; then
+    emission=1
+  fi
+  # The heading a doors-unchanged or WAIVED record opens its claim with.
+  if grep -qE '^## Scope ruling — ' "$file"; then
+    ruling=1
+  fi
+  if [ "$emission" = 1 ] && [ "$ruling" = 1 ]; then
+    RECORD_CLASS=emission
+    RECORD_CLASS_WHY="it declares BOTH shapes — the instrument's run sentence and a scope ruling — so it cannot be classified, and an unclassifiable record is graded as an emission"
+    return 0
+  fi
+  if [ "$emission" = 1 ]; then
+    RECORD_CLASS=emission
+    RECORD_CLASS_WHY="it carries drill/rehearsal.sh's own run sentence and declares no scope ruling"
+    return 0
+  fi
+  if [ "$ruling" = 1 ]; then
+    RECORD_CLASS=scope-ruling
+    RECORD_CLASS_WHY="it declares a scope ruling — a doors-unchanged or WAIVED record under drills/README.md, hand-written by design"
+    return 0
+  fi
+  RECORD_CLASS=emission
+  RECORD_CLASS_WHY="it declares NEITHER shape — no instrument run sentence and no scope ruling — so it cannot be classified, and an unclassifiable record is graded as an emission"
+}
+
 # record_roundtrip <record-file> — the check (#373 D2): the record passes when
 # `record_render(record_parse(file))` is byte-identical to the file.
 #

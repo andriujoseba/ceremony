@@ -91,7 +91,31 @@ EOF
   exit 1
 fi
 
-echo "record-roundtrip: version '$ver' is a ceremony tree — grading $record by re-render"
+# Classify BEFORE grading (#373 D9). Two of the three record shapes
+# drills/README.md sanctions are hand-written by design — a doors-unchanged
+# scope ruling and a WAIVED one — and neither is `record_render`'s output.
+# `drills/0.6.3.md`, the release immediately before 0.7.0, is the standing
+# instance: a guard demanding a round trip of every bare-version tree would
+# red a legitimate release. The class is read out of the record itself, and
+# the branch is named here for the same reason the dev-tree line is: a green
+# log must distinguish "passed" from "decided this was not its business".
+record_class "$record"
+if [ "$RECORD_CLASS" = scope-ruling ]; then
+  cat <<EOF
+record-roundtrip: version '$ver' is a ceremony tree, and $record is NOT
+  graded by this step: $RECORD_CLASS_WHY.
+
+  The round trip grades the rehearsal shape — drill/rehearsal.sh's emission —
+  because that is the only shape with a renderer to re-run. A scope ruling is
+  a mechanically checked claim the review panel verifies from the record
+  itself, and a waiver is a maintainer's judgement; drills/README.md states
+  both, and drill-recorded separately requires the file to exist and be
+  non-blank whichever shape it is.
+EOF
+  exit 0
+fi
+
+echo "record-roundtrip: version '$ver' is a ceremony tree, and $record is graded as an emission — $RECORD_CLASS_WHY. Grading it by re-render."
 if ! record_roundtrip "$record"; then
   # Quoted delimiter: the prose below carries backticks, and an unquoted
   # heredoc would run them.
