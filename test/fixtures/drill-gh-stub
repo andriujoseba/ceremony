@@ -56,7 +56,8 @@ case "${1:-}" in
           --public) private=false ;;
           --private) private=true ;;
           *)
-            echo '`--public`, `--private`, or `--internal` required when not running interactively' >&2
+            printf '%s\n' \
+              "\`--public\`, \`--private\`, or \`--internal\` required when not running interactively" >&2
             exit 1
             ;;
         esac
