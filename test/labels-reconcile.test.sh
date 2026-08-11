@@ -863,6 +863,224 @@ expect "a flag-free PR performs no attention timeline read" no \
 expect "attention diagnosis caused no PR mutation" "$attention_mutations_before" \
   "$(wc -l <"$RTMP/edits")"
 
+# ---------------------------------------------------------------------------
+# The take-back's reason, on the PR (#377). incubator#94: a hand-set
+# state:needs-human was taken back ~45 seconds later, three times in ten
+# minutes, because the only record of the take-back was a line in the labels
+# workflow's run log — which a builder driving a PR never opens. The :597
+# precedence rule is correct and untouched here; what these fixtures pin is
+# that it SAYS so where the builder is looking, exactly once per (blocker
+# set, head), and that the three sibling exclusions stay silent.
+# ---------------------------------------------------------------------------
+TB="$RTMP/takeback"
+mkdir -p "$TB"
+
+takeback_probe() { # $1 PR, $2 labels, $3 head, $4 round, $5 checks, $6 mergeable, $7 draft
+  (
+    local n="$1" head="$3" round="$4" at
+    at="$(iso_at $((RNOW - 3600)))"
+    # The taxonomy from the script's own arrays: a fixture that hand-lists the
+    # label names would keep passing after a rename while the sweep filtered
+    # the add away.
+    REPO_LABELS="$(printf '%s\n' "${STATES[@]}" "${BLOCKERS[@]}" \
+      merge-next stale needs-ruling blocked)"
+    REPO=owner/repo NOW="$RNOW"
+    LABELS="$2"
+    DRAFT="${7:-false}" HEAD_SHA="$head" REQUESTED=""
+    MERGEABLE="${6:-MERGEABLE}" CHECKS="${5:-SUCCESS}"
+    case "$round" in
+      # every verdict a head-current approval — the round says needs-human
+      approve) REVIEWS_JSON="$(reviews \
+        "$(rev "$BOT1" APPROVED "$head" "" "$at")" \
+        "$(rev "$BOT2" APPROVED "$head" "" "$at")" \
+        "$(rev "$BOT3" APPROVED "$head" "" "$at")")" ;;
+      # a standing block — the ROUND is what moves the state, not the branch
+      block) REVIEWS_JSON="$(reviews \
+        "$(rev "$BOT1" CHANGES_REQUESTED "$head" "" "$at")" \
+        "$(rev "$BOT2" APPROVED "$head" "" "$at")" \
+        "$(rev "$BOT3" APPROVED "$head" "" "$at")")" ;;
+      # the only round that reaches decide_state's :587 draft clause: a
+      # non-verdict outranks the draft, and the live human request carries
+      # round_state to needs-human anyway — so on a draft the DRAFT rule
+      # fires above :597, which is the carve-out under test.
+      draftable)
+        REQUESTED="$HUMAN"
+        REVIEWS_JSON="$(reviews \
+          "$(rev "$BOT1" COMMENTED "$head" "looks fine" "$at")" \
+          "$(rev "$BOT2" APPROVED "$head" "" "$at")" \
+          "$(rev "$BOT3" APPROVED "$head" "" "$at")")" ;;
+    esac
+    PR_JSON="$(jq -n --arg at "$at" '{created_at: $at, assignees: []}')"
+    run() { "$@"; } # mutations reach the stub and are recorded, not swallowed
+    gh() {
+      if [ "$1" = api ]; then
+        shift
+        local jqexpr="" endpoint="" file
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --jq) jqexpr="$2"; shift ;;
+            -*) ;;
+            *) [ -n "$endpoint" ] || endpoint="$1" ;;
+          esac
+          shift
+        done
+        file="$TB/$(printf '%s' "$endpoint" | tr '/' '_').json"
+        [ -f "$file" ] || { printf '[]\n' | jq -r "${jqexpr:-.}"; return 0; }
+        if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$file"; else cat "$file"; fi
+      elif [ "$1" = issue ] && [ "$2" = comment ]; then
+        local c="$3" body="" file
+        shift 3
+        while [ $# -gt 0 ]; do
+          case "$1" in --body) body="$2"; shift ;; esac
+          shift
+        done
+        printf '%s\n----\n' "$body" >>"$TB/posted-$c"
+        # posted comments go back into the fixture, so the NEXT pass reads
+        # this one's marker exactly as a real sweep would
+        file="$TB/repos_owner_repo_issues_${c}_comments.json"
+        [ -f "$file" ] || printf '[]\n' >"$file"
+        jq --arg b "$body" --arg at "$(iso_at "$RNOW")" \
+          '. + [{"user":{"login":"sweep-bot"},"created_at":$at,"html_url":"https://x/tb","body":$b}]' \
+          "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+      elif [ "$1" = issue ] && [ "$2" = edit ]; then
+        # recorded per PR: the atomicity assertion counts the EDIT CALLS one
+        # pass makes, which is the property the comment must not disturb
+        printf '%s\n' "$*" >>"$TB/edits-$3"
+      fi
+    }
+    reconcile_pr "$n" 2>&1
+  )
+}
+
+posted_count() { # $1 PR → take-back comments standing on it
+  [ -f "$TB/posted-$1" ] || { echo 0; return; }
+  grep -cF "$HANDOFF_TAKEBACK_MARKER_PREFIX" "$TB/posted-$1" || true
+}
+edit_count() { # $1 PR → label-edit calls recorded for it
+  [ -f "$TB/edits-$1" ] || { echo 0; return; }
+  wc -l <"$TB/edits-$1"
+}
+
+# -- the reported loop, as a regression -------------------------------------
+loop1="$(takeback_probe 90 state:needs-human tbhead1 approve FAILURE)"
+expect "a blocker takes the hand-set handoff back" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$loop1" && echo yes || echo no)"
+expect "...and the take-back says so on the PR, exactly once" 1 "$(posted_count 90)"
+expect "...naming the blocker standing" yes \
+  "$(grep -qF "\`blocker:ci-red\`" "$TB/posted-90" && echo yes || echo no)"
+expect "...and the head it is standing at" yes \
+  "$(grep -qF 'tbhead1' "$TB/posted-90" && echo yes || echo no)"
+expect "...and the precondition the handoff missed" yes \
+  "$(grep -qF "no \`blocker:*\` standing" "$TB/posted-90" && echo yes || echo no)"
+expect "...and the stop condition: re-setting the label is not the move" yes \
+  "$(grep -qF 'setting it by hand only earns another take-back' "$TB/posted-90" && echo yes || echo no)"
+expect "...logged as a take-back, not just as a state move" yes \
+  "$(grep -q 'handoff taken back (blocker:ci-red at tbhead1)' <<<"$loop1" && echo yes || echo no)"
+# The atomicity assertion (#377's last acceptance criterion): state and
+# blocker ride ONE edit call, and the comment did not split them into two.
+expect "one pass makes exactly one label-edit call" 1 "$(edit_count 90)"
+expect "...carrying the state and the blocker together" yes \
+  "$(grep -q -- '--add-label state:addressing,blocker:ci-red' "$TB/edits-90" && echo yes || echo no)"
+
+# The loop itself: the builder re-sets the label, the sweep takes it back
+# again — and this time says nothing, because the episode already spoke.
+loop2="$(takeback_probe 90 state:needs-human tbhead1 approve FAILURE)"
+expect "a re-set label at the same head is taken back again" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$loop2" && echo yes || echo no)"
+expect "...in silence — one episode, one comment" 1 "$(posted_count 90)"
+expect "...and the second pass still costs exactly one edit call" 2 "$(edit_count 90)"
+for _ in 1 2 3 4 5 6 7 8; do
+  takeback_probe 90 state:needs-human tbhead1 approve FAILURE >/dev/null
+done
+expect "ten passes over one episode post one comment in total" 1 "$(posted_count 90)"
+
+# -- episode boundaries: the set and the head each open a new one -----------
+takeback_probe 90 state:needs-human tbhead1 approve FAILURE CONFLICTING >/dev/null
+expect "a different blocker set at the same head is a new episode" 2 "$(posted_count 90)"
+expect "...and the new comment names both blockers" yes \
+  "$(grep -qF "\`blocker:conflict\`, \`blocker:ci-red\`" "$TB/posted-90" \
+    || grep -qF "\`blocker:ci-red\`, \`blocker:conflict\`" "$TB/posted-90" && echo yes || echo no)"
+takeback_probe 90 state:needs-human tbhead2 approve FAILURE >/dev/null
+expect "a new head with the same blocker is a new episode" 3 "$(posted_count 90)"
+takeback_probe 90 state:needs-human tbhead2 approve FAILURE >/dev/null
+expect "...which then repeats itself no more than the first did" 3 "$(posted_count 90)"
+takeback_probe 90 state:needs-human tbhead1 approve FAILURE >/dev/null
+expect "a head seen before is still its own episode, never a fresh one" 3 "$(posted_count 90)"
+
+# -- the must-not-fire cases, each on its own PR so the count is its own ----
+bots="$(takeback_probe 91 state:bots-reviewing tbhead1 block)"
+expect "an ordinary bots-reviewing -> addressing move degrades" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$bots" && echo yes || echo no)"
+expect "...and says nothing: the machine working is not a correction" 0 "$(posted_count 91)"
+
+round="$(takeback_probe 92 state:needs-human tbhead1 block)"
+expect "needs-human degrading on the ROUND still degrades" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$round" && echo yes || echo no)"
+expect "...and says nothing: no blocker took anything back" 0 "$(posted_count 92)"
+
+# The draft carve-out has the sharpest teeth here: the blocker IS standing,
+# and only decide_state's :587 clause sitting above :597 keeps it quiet.
+draft="$(takeback_probe 93 state:needs-human tbhead1 draftable FAILURE MERGEABLE true)"
+expect "a draft degrades out of needs-human" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$draft" && echo yes || echo no)"
+expect "...silently, though a blocker stands: the draft rule outranks :597" 0 \
+  "$(posted_count 93)"
+control="$(takeback_probe 94 state:needs-human tbhead1 draftable FAILURE MERGEABLE false)"
+expect "the same fixture off draft degrades the same way (control)" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$control" && echo yes || echo no)"
+expect "...and speaks — the draft was the only thing keeping it quiet" 1 \
+  "$(posted_count 94)"
+
+ruled_tb="$(takeback_probe 95 $'state:needs-human\nneeds-ruling' tbhead1 approve)"
+expect "a pending ruling degrades out of needs-human" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$ruled_tb" && echo yes || echo no)"
+expect "...silently: needs-ruling is its own visible carrier" 0 "$(posted_count 95)"
+
+held="$(takeback_probe 96 $'state:needs-human\nblocked' tbhead1 approve)"
+expect "a directed hold degrades out of needs-human" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$held" && echo yes || echo no)"
+expect "...silently: blocked is its own visible carrier" 0 "$(posted_count 96)"
+
+clean="$(takeback_probe 97 state:needs-human tbhead1 approve SUCCESS)"
+expect "a clear branch keeps needs-human" no \
+  "$(grep -q 'state -> state:addressing' <<<"$clean" && echo yes || echo no)"
+expect "...and nothing was taken back, so nothing is said" 0 "$(posted_count 97)"
+
+# -- an unreadable comment list must not invent a repeat --------------------
+# Everywhere else in this file an unreadable fact invents no verdict; here the
+# thing it must not invent is a SECOND comment, which is the whole harm.
+tb_unreadable="$(
+  (
+    gh() {
+      if [ "$1" = api ]; then return 1; fi
+      printf '%s\n' "$*" >>"$TB/unreadable-calls"
+    }
+    REPO=owner/repo NOW="$RNOW" HEAD_SHA=tbhead1
+    LABELS=state:needs-human DRAFT=false REQUESTED="" CHECKS=FAILURE
+    MERGEABLE=MERGEABLE
+    REVIEWS_JSON="$(reviews \
+      "$(rev "$BOT1" APPROVED tbhead1 "" "$(iso_at $((RNOW - 3600)))")" \
+      "$(rev "$BOT2" APPROVED tbhead1 "" "$(iso_at $((RNOW - 3600)))")" \
+      "$(rev "$BOT3" APPROVED tbhead1 "" "$(iso_at $((RNOW - 3600)))")")"
+    run() { "$@"; }
+    reconcile_handoff_takeback 98 2>&1
+  )
+)"
+expect "an unreadable comment list says so" yes \
+  "$(grep -q 'take-back comments unreadable' <<<"$tb_unreadable" && echo yes || echo no)"
+expect "...and posts nothing on a fact it could not read" no \
+  "$(grep -q 'issue comment' "$TB/unreadable-calls" 2>/dev/null && echo yes || echo no)"
+
+# -- the marker's own shape: one spelling per (set, head) -------------------
+expect "the marker names the set and the head" \
+  '<!-- handoff-taken-back:blocker:ci-red:abc123 -->' \
+  "$(handoff_takeback_marker "$(printf 'blocker:ci-red\n' | handoff_takeback_set)" abc123)"
+expect "a set is canonicalized by sort, so emitter order cannot re-fire it" \
+  "$(printf 'blocker:conflict\nblocker:ci-red\n' | handoff_takeback_set)" \
+  "$(printf 'blocker:ci-red\nblocker:conflict\n' | handoff_takeback_set)"
+expect "...joined with commas, sorted" 'blocker:ci-red,blocker:conflict' \
+  "$(printf 'blocker:conflict\nblocker:ci-red\n' | handoff_takeback_set)"
+
 # -- the sweep wiring observes the existing per-PR skip without writing -------
 blind_main_probe() {
   (
