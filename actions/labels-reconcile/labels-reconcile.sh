@@ -864,7 +864,7 @@ reconcile_handoff_takeback() { # $1 = PR number; at most one comment per episode
     log "#$n: take-back comments unreadable — no comment invented this pass"
     return 0
   fi
-  grep -qF "$marker" <<<"$bodies" && return 0
+  if grep -qF "$marker" <<<"$bodies"; then return 0; fi
 
   while IFS= read -r b; do
     [ -n "$b" ] || continue
