@@ -774,6 +774,8 @@ check "the fixture abort names its setup step" 0 "scratch_commit" \
   cat "$TMP/setup-fixture.aborted-1.md"
 check "the fixture abort keeps the command's message" 0 "fixture commit refused" \
   cat "$TMP/setup-fixture.aborted-1.md"
+check "the fixture abort records its scratch attempt" 0 '- Attempt: `1`' \
+  cat "$TMP/setup-fixture.aborted-1.md"
 check "a setup abort contains no probe verdict row" 1 "" \
   grep -qE '^\| [0-9]+ \|' "$TMP/setup-fixture.aborted-1.md"
 check "an abort record cannot pass the rehearsal shape check" 1 \
@@ -849,6 +851,8 @@ check "the pre-scratch abort names the step and message" 0 \
   "authentication read failed" cat "$TMP/setup-pre-scratch.aborted-1.md"
 check "the pre-scratch abort claims no scratch repo" 1 "" \
   grep -qF 'Scratch repo:' "$TMP/setup-pre-scratch.aborted-1.md"
+check "the pre-scratch abort claims no attempt that was never picked" 1 "" \
+  grep -qF 'Attempt:' "$TMP/setup-pre-scratch.aborted-1.md"
 check "the pre-scratch abort claims no disposal" 1 "" \
   grep -qF 'Disposal' "$TMP/setup-pre-scratch.aborted-1.md"
 check "the pre-scratch abort never calls archive" 1 "" \

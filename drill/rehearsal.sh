@@ -158,6 +158,7 @@ setup_ctx() { # <file> [disposal]
     printf 'fork_repo\t%s\n' "$fork_repo"
     printf 'fork_ref\t%s\n' "$fork_ref"
     [ "${scratch_created:-0}" = 0 ] || printf 'scratch\t%s\n' "$DRILL_REPO"
+    [ -z "${attempt:-}" ] || printf 'attempt\t%s\n' "$attempt"
     [ -z "${created:-}" ] || printf 'created\t%s\n' "$created"
     [ -z "$disposal" ] || printf 'disposal\t%s\n' "$disposal"
   } >"$file"

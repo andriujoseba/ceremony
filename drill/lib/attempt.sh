@@ -37,7 +37,8 @@ scratch_repo_exists() {
 # attempt_create_default <owner> <version> — claim and print the first free n.
 attempt_create_default() {
   local owner="${1:?}" version="${2:?}" n repo rc
-  for n in $(seq 1 "$DRILL_ATTEMPT_LIMIT"); do
+  n=1
+  while [ "$n" -le "$DRILL_ATTEMPT_LIMIT" ]; do
     repo="$owner/ceremony-drill-$version-$n"
     rc=0
     scratch_create_attempt "$repo" || rc=$?
@@ -55,6 +56,7 @@ attempt_create_default() {
       3) ;;
       *) return "$rc" ;;
     esac
+    n=$((n + 1))
   done
   printf 'drill: no scratch attempt name is free; tried ceremony-drill-%s-1 through ceremony-drill-%s-%s (the bounded %s-candidate probe).\n' \
     "$version" "$version" "$DRILL_ATTEMPT_LIMIT" "$DRILL_ATTEMPT_LIMIT" >&2
@@ -64,7 +66,8 @@ attempt_create_default() {
 # attempt_first_free <owner> <version> — read-only suggestion for a refusal.
 attempt_first_free() {
   local owner="${1:?}" version="${2:?}" n repo rc
-  for n in $(seq 1 "$DRILL_ATTEMPT_LIMIT"); do
+  n=1
+  while [ "$n" -le "$DRILL_ATTEMPT_LIMIT" ]; do
     repo="$owner/ceremony-drill-$version-$n"
     rc=0
     scratch_repo_exists "$repo" || rc=$?
@@ -73,6 +76,7 @@ attempt_first_free() {
       1) printf '%s\n' "$n"; return 0 ;;
       *) return "$rc" ;;
     esac
+    n=$((n + 1))
   done
   printf 'drill: no scratch attempt name is free; tried ceremony-drill-%s-1 through ceremony-drill-%s-%s (the bounded %s-candidate probe).\n' \
     "$version" "$version" "$DRILL_ATTEMPT_LIMIT" "$DRILL_ATTEMPT_LIMIT" >&2

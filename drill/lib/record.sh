@@ -107,8 +107,9 @@ record_abort_path() {
 # — evidence from setup, deliberately not a rehearsal record shape.
 record_abort_render() {
   local ctx="${1:?}" setup="${2:?}" step="${3:?}" message="${4:-}" status="${5:?}"
-  local scratch created candidate_sha fork_repo fork_ref disposal
+  local scratch attempt created candidate_sha fork_repo fork_ref disposal
   scratch="$(record_ctx "$ctx" scratch)"
+  attempt="$(record_ctx "$ctx" attempt)"
   created="$(record_ctx "$ctx" created)"
   candidate_sha="$(record_ctx "$ctx" candidate_sha)"
   fork_repo="$(record_ctx "$ctx" fork_repo)"
@@ -131,6 +132,7 @@ record_abort_render() {
     printf -- "- Fork ref: \`%s@%s\`\n" "$fork_repo" "$fork_ref"
   fi
   [ -z "$scratch" ] || printf -- "- Scratch repo: \`%s\`\n" "$scratch"
+  [ -z "$attempt" ] || printf -- "- Attempt: \`%s\`\n" "$attempt"
   [ -z "$created" ] || printf -- "- Created: \`%s\`\n" "$created"
 
   if [ -n "$scratch" ] && [ -s "$setup" ]; then
