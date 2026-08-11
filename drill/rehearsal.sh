@@ -249,15 +249,14 @@ attempt=""
 if [ -n "$repo_name" ]; then
   DRILL_REPO="$owner/$repo_name"
   explicit_rc=0
-  scratch_repo_exists "$DRILL_REPO" || explicit_rc=$?
-  if [ "$explicit_rc" -eq 0 ]; then
+  scratch_create_attempt "$DRILL_REPO" || explicit_rc=$?
+  if [ "$explicit_rc" -eq 3 ]; then
     suggestion="$(attempt_first_free "$owner" "$version")" || exit 1
     suggested_ref="$fork_ref"
     [ "$fork_ref_explicit" -eq 1 ] || suggested_ref="drill/$version-$suggestion"
     refuse "--repo-name '$repo_name' is already taken. Retry with: drill/rehearsal.sh --owner '$owner' --version '$version' --fork-ref '$fork_repo@$suggested_ref' --candidate-sha '$candidate_sha' --repo-name 'ceremony-drill-$version-$suggestion'${candidate_ref:+ --candidate-ref '$candidate_ref'}${out:+ --out '$out'}${stamp:+ --date '$stamp'}"
   fi
-  [ "$explicit_rc" -eq 1 ] || [ "$explicit_rc" -eq 0 ] || exit "$explicit_rc"
-  setup_run scratch_create scratch_create "$DRILL_REPO"
+  [ "$explicit_rc" -eq 0 ] || exit "$explicit_rc"
   scratch_created=1
   case "$repo_name" in
     ceremony-drill-"$version"-[0-9]*) attempt="${repo_name##*-}" ;;
@@ -274,7 +273,7 @@ pin_assert_fork_ref "$fork_repo" "$fork_ref" || exit 1
 printf 'drill: %s rehearsal — scratch %s, candidate %s, fork %s@%s\n' \
   "$DRILL_V1" "$DRILL_REPO" "$candidate_sha" "$fork_repo" "$fork_ref" >&2
 
-# ---- the scratch repo -----------------------------------------------------
+# ---- the scratch repo (already claimed while choosing its attempt) --------
 setup_capture created scratch_created_at scratch_created_at "$DRILL_REPO"
 
 # ---- the armed fixture, BEFORE the caller (the 0.4.0 lesson) --------------

@@ -13,6 +13,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/test/harness.sh"
 # shellcheck source=drill/lib/scratch.sh
 source "$ROOT/drill/lib/scratch.sh"
+# shellcheck source=drill/lib/attempt.sh
+source "$ROOT/drill/lib/attempt.sh"
 # shellcheck source=drill/lib/candidate.sh
 source "$ROOT/drill/lib/candidate.sh"
 # shellcheck source=drill/lib/fixture.sh
@@ -29,7 +31,7 @@ CAND_SHA=c0ffee1234567890c0ffee1234567890c0ffee12
 FORK=forkowner/ceremony
 FORK_REF=drill/0.7.0
 SCRATCH_OWNER=drillowner
-SCRATCH="$SCRATCH_OWNER/ceremony-drill-0.7.0"
+SCRATCH="$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
 
 san() { printf '%s' "$1" | tr '/' '_'; }
 
@@ -236,6 +238,7 @@ check "a probe row whose counts are prose reds the shape check" 1 \
   printf 'version\t0.7.0\n'
   printf 'rc_version\t0.7.2\n'
   printf 'scratch\t%s\n' "$SCRATCH"
+  printf 'attempt\t1\n'
   printf 'created\t2026-08-09T00:00:00Z\n'
   printf 'candidate_sha\t%s\n' "$CAND_SHA"
   printf 'candidate_ref\tbuild/313-drill-rehearsal\n'
