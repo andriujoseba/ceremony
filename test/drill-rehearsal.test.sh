@@ -2001,7 +2001,7 @@ check "the round trip fails a run ID edited in the link text" 1 \
   "link text (9999) and its URL's run ID (1003) disagree" \
   record_roundtrip "$TMP/rt-runid-text.md"
 check "and names the line that defeated the parse" 1 \
-  "drill-record.golden.md:64" record_roundtrip "$TMP/rt-runid-text.md"
+  "rt-runid-text.md:64" record_roundtrip "$TMP/rt-runid-text.md"
 sed '64s|runs/1003|runs/9999|' "$GOLDEN" >"$TMP/rt-runid-url.md"
 check "the round trip fails a run ID edited in the URL instead" 1 \
   "link text (1003) and its URL's run ID (9999) disagree" \
@@ -2052,7 +2052,7 @@ check "an unparseable record is a failure and never a skip" 1 \
 # A count column turned into prose: shaped like a table, not a measurement.
 sed '66s/| 1 → 2 | 1 → 2 |/| many | more |/' "$GOLDEN" >"$TMP/rt-prose-counts.md"
 check "the parse refuses a count cell that is prose, naming the line" 1 \
-  "drill-record.golden.md:66: the tags cell is not a before/after pair" \
+  "rt-prose-counts.md:66: the tags cell is not a before/after pair" \
   record_roundtrip "$TMP/rt-prose-counts.md"
 # A record whose sections are gone entirely is refused before any line number
 # can be meaningful, and says which heading it wanted.
@@ -2089,8 +2089,10 @@ check "a bare-version tree runs the round trip and passes a real emission" 0 \
 guard_tree edited 9.9.9 "$TMP/rt-preamble.md"
 check "a bare-version tree fails the job when the round trip fails" 1 \
   "A reviewer added this sentence by hand." bash "$GUARD" "$TMP/guard-edited"
+# The substring stops at the wrap: the guard's prose is line-wrapped, and an
+# assertion that spans the break would be measuring the wrapping.
 check "and says the unblock is to re-run the instrument, not to edit harder" 1 \
-  "it is to RE-RUN the instrument and commit what it writes" \
+  "The unblock is not to edit the record until it passes" \
   bash "$GUARD" "$TMP/guard-edited"
 guard_tree missing 9.9.9
 check "a bare-version tree with no record at all fails" 1 \

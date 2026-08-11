@@ -705,6 +705,13 @@ record_parse_run_cell() {
 # Everything it needs is in the file by construction, the record being
 # generated from precisely this data. Where that stops being true the RENDER
 # is what moves, never the tolerance here.
+#
+# The regexes below are the render's own sentences, so they are single-quoted
+# and they carry backticks and dollars as literal bytes of the record — never
+# as expansions. Function-scoped rather than per-line: every one of them is
+# the same deliberate quoting, and eight repetitions of the directive would
+# be harder to read than the rule stated once.
+# shellcheck disable=SC2016
 record_parse() {
   local file="${1:?record_parse: record file required}"
   local ctx_out="${2:?record_parse: ctx output required}"
@@ -830,7 +837,7 @@ record_parse() {
 
   # -- the probe table ------------------------------------------------------
   local -a rows=()
-  local n name cell counts_t counts_r result verdict note tb ta rb ra why
+  local n name cell counts_t counts_r result verdict note tb ta rb ra
   local header='| # | probe | run | tags | releases | result |'
   local rule='|---|---|---|---|---|---|'
   local header_seen=0 rule_seen=0
@@ -940,13 +947,13 @@ record_parse() {
     cell="${rest%%\*\* (*}"
     if [ "$cell" = "$rest" ]; then
       record_parse_die "$file" "$((i + 1))" \
-        'the setup row has no `(conclusion)` after its run link' "$line" || return 1
+        'the setup row has no (conclusion) after its run link' "$line" || return 1
     fi
     rest="${rest#"$cell"\*\* (}"
     conclusion="${rest%%) — *}"
     if [ "$conclusion" = "$rest" ]; then
       record_parse_die "$file" "$((i + 1))" \
-        'the setup row has no ` — ` after its conclusion' "$line" || return 1
+        'the setup row has no em-dash separator after its conclusion' "$line" || return 1
     fi
     what="${rest#"$conclusion") — }"
     if ! record_parse_run_cell "$cell" "$scratch"; then
@@ -1019,7 +1026,10 @@ record_parse_counts() {
 # re-reading the file per field would make the line numbers in the
 # diagnostics disagree with the ones the caller already reported.
 record_parse_one() {
-  local file="${1:?}" from="${2:?}" to="${3:?}" re="${4:?}" what="${5:?}" want="${6:-1}"
+  local file="${1:?}" from="${2:?}" to="${3:?}" re="${4:?}" what="${5:?}"
+  # Not `want`: record_parse holds an array by that name, and bash's dynamic
+  # scoping makes the two the same name to a reader and to shellcheck.
+  local captures="${6:-1}"
   local i seen=-1 out='' c
   for ((i = from; i < to; i++)); do
     [[ "${lines[i]}" =~ $re ]] || continue
@@ -1029,7 +1039,7 @@ record_parse_one() {
     fi
     seen="$i"
     out=''
-    for ((c = 1; c <= want; c++)); do
+    for ((c = 1; c <= captures; c++)); do
       [ "$c" = 1 ] || out="$out"$'\t'
       out="$out${BASH_REMATCH[c]}"
     done
