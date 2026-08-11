@@ -309,3 +309,9 @@ mergeable-right-now. Then stop: the PR is the human's, and the claim parks
 as shape 4 (Picking, above), that comment its declaration and your slot
 free. Address what comes back (`state:addressing`) and re-hand-off the same
 way.
+
+**A taken-back handoff is answered by clearing the blocker, never by
+re-setting the label**: the take-back says the precondition was not met, so
+the move is to fix what the reconciler's PR comment names and let the next
+sweep re-derive `state:needs-human` — re-setting it by hand only earns
+another take-back, which is the loop this rule ends (#377).
