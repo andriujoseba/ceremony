@@ -94,12 +94,24 @@ for arg in "$@"; do
   [ "$prev" = "-o" ] && out="$arg"
   prev="$arg"
 done
+
+# A body only has somewhere to go if the caller downloads to a file: an
+# implementation that piped curl into tar would reach here with no -o, and
+# it should say so rather than fail somewhere downstream.
+need_out() {
+  [ -n "$out" ] && return 0
+  echo "curl stub: no -o <path> — the fetch must download to a file (curl $*)" >&2
+  exit 98
+}
+
 case "${CURL_STUB:-none}" in
   ok)
+    need_out "$@"
     cp "$CURL_STUB_TARBALL" "$out"
     printf '200'
     ;;
   corrupt)
+    need_out "$@"
     printf 'this is not a gzip stream\n' >"$out"
     printf '200'
     ;;
@@ -457,8 +469,10 @@ check "the file records the version floor that rejected it" 0 "7.71.0" \
 # explains the rule.
 check "no curl-into-tar pipe survives outside the comments" 1 "" \
   grep -qE '^[^#]*curl[^|]*\|[^|]*tar' "$SCRIPT"
+# shellcheck disable=SC2016 # the '$' is part of the literal being asserted
 check "the archive lands beside the extraction root, not in it" 0 \
   'archive="$fetch_tmp/src.tar.gz"' cat "$SCRIPT"
+# shellcheck disable=SC2016 # the '$' is part of the literal being asserted
 check "the extraction root is its own directory" 0 'src="$fetch_tmp/src"' \
   cat "$SCRIPT"
 
