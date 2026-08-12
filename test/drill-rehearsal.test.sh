@@ -701,6 +701,9 @@ check "the private record says private" 0 \
 check "the private record carries the owner-only sentence" 0 \
   "Because this repo is private, its run links resolve only for the repo owner." \
   cat "$TMP/private.md"
+check "a free explicit fork ref costs exactly one pre-check read" 0 "" \
+  bash -c 'test "$(grep -cF "git/ref/heads/$2" "$1")" -eq 3' \
+  _ "$TMP/state/calls" "$FORK_REF"
 
 stub_reset
 green_scenario "$TMP/opposite-public.scenario"
@@ -866,6 +869,66 @@ check "an explicit existing fork ref still refuses" 0 "" test "$existing_ref_rc"
 check "the existing-ref refusal stays byte-identical" 0 \
   "drill: refusing to prepare '$FORK@$FORK_REF' — the ref already exists at $CAND_SHA. Delete it or name another --fork-ref; the drill will not rewrite a ref it did not create." \
   printf '%s\n' "$existing_ref_out"
+
+stub_reset
+seed_taken_ref "$FORK_REF"
+seed_taken_repo "$SCRATCH_OWNER/ceremony-drill-0.7.0-1"
+seed_taken_ref "drill/0.7.0-2"
+: >"$TMP/explicit-ref-taken.scenario"
+explicit_ref_taken_out="$(run_rehearsal "$TMP/explicit-ref-taken.scenario" \
+  --private --candidate-ref 'build/ref with space;still-one-arg' \
+  --out "$TMP/explicit ref taken.md" 2>&1)"
+explicit_ref_taken_rc=$?
+check "a taken explicit fork ref refuses before setup" 0 "" \
+  test "$explicit_ref_taken_rc" -ne 0
+check "the early refusal uses fork_ref_prepare's byte-identical sentence" 0 \
+  "drill: refusing to prepare '$FORK@$FORK_REF' — the ref already exists at $CAND_SHA. Delete it or name another --fork-ref; the drill will not rewrite a ref it did not create." \
+  printf '%s\n' "$explicit_ref_taken_out"
+explicit_ref_retry="$(sed -n 's/^drill: Retry with: //p' <<<"$explicit_ref_taken_out")"
+bash -c 'record_args() { printf "%s\n" "$@"; }; '"${explicit_ref_retry/drill\/rehearsal.sh/record_args}" \
+  >"$TMP/explicit-ref-retry.argv"
+{
+  printf '%s\n' \
+    --owner "$SCRATCH_OWNER" \
+    --version 0.7.0 \
+    --fork-ref "$FORK@drill/0.7.0-3" \
+    --candidate-sha "$CAND_SHA" \
+    --repo-name ceremony-drill-0.7.0-3 \
+    --candidate-ref 'build/ref with space;still-one-arg' \
+    --private \
+    --out "$TMP/explicit ref taken.md" \
+    --date 2026-08-09
+} >"$TMP/explicit-ref-retry.expected"
+check "the explicit-ref retry round-trips every argument with both paired names" 0 "" \
+  diff -u "$TMP/explicit-ref-retry.expected" "$TMP/explicit-ref-retry.argv"
+check "the explicit-ref refusal creates no repository" 1 "" \
+  grep -q '^repo create ' "$TMP/state/calls"
+check "the explicit-ref refusal makes no fixture commit" 1 "" \
+  grep -q '/contents/VERSION ' "$TMP/state/calls"
+check "the explicit-ref refusal sends no archive PATCH" 1 "" \
+  grep -q -- '--method PATCH --input -' "$TMP/state/calls"
+check "the explicit-ref refusal writes no release record" 1 "" \
+  test -e "$TMP/explicit ref taken.md"
+check "the explicit-ref refusal writes no abort sibling" 1 "" \
+  bash -c 'compgen -G "$1/explicit ref taken.aborted-*.md" >/dev/null' _ "$TMP"
+
+stub_reset
+: >"$TMP/explicit-ref-unreadable.scenario"
+faults "0	99	GET repos/$FORK/git/ref/heads/$FORK_REF	500	fork ref read unavailable"
+explicit_ref_unreadable_out="$(run_rehearsal "$TMP/explicit-ref-unreadable.scenario" \
+  --out "$TMP/explicit-ref-unreadable.md" 2>&1)"
+explicit_ref_unreadable_rc=$?
+check "an unreadable explicit fork-ref probe refuses" 0 "" \
+  test "$explicit_ref_unreadable_rc" -ne 0
+check "the unreadable refusal names the read that did not answer" 0 \
+  "refs/heads/$FORK_REF on $FORK did not read back after 10 attempts" \
+  printf '%s\n' "$explicit_ref_unreadable_out"
+check "the unreadable explicit-ref probe creates no repository" 1 "" \
+  grep -q '^repo create ' "$TMP/state/calls"
+check "the unreadable explicit-ref probe sends no archive PATCH" 1 "" \
+  grep -q -- '--method PATCH --input -' "$TMP/state/calls"
+check "the unreadable explicit-ref probe writes no abort sibling" 1 "" \
+  bash -c 'compgen -G "$1/explicit-ref-unreadable.aborted-*.md" >/dev/null' _ "$TMP"
 
 # ---------------------------------------------------------------------------
 # Setup aborts are evidence, but never the release record (#370). Each case
