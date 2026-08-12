@@ -171,6 +171,62 @@ labels_in() {
     | paste -sd, - || true
 }
 
+# spec_values <fragment> — the runner SPECS a fragment carries, one per
+# line. Usually exactly one: a `runs-on:` value, a `with:` input value.
+# The exception is the inline flow mapping `{a: …, b: …}`, where each
+# value is a spec of ITS OWN — two reusable-workflow inputs that happen
+# to share a line are two different runners, and the conjunction argument
+# above holds only WITHIN one value. Flattening the mapping let a vouched
+# tier vouch for an unvouched sibling on the same line, which is a
+# fail-OPEN (#395 round 2). The split is at the mapping's own commas —
+# depth 0, outside quotes — so a flow list like `[self-hosted, ci-runner]`
+# stays the single conjunction it is.
+spec_values() {
+  local text="$1"
+  text="${text#"${text%%[![:space:]]*}"}"
+  case "$text" in
+    '{'*) ;;
+    *)
+      printf '%s\n' "$text"
+      return
+      ;;
+  esac
+
+  local body="${text#\{}" cur="" quote="" depth=0 i=0 ch
+  while [ "$i" -lt "${#body}" ]; do
+    ch="${body:i:1}"
+    i=$((i + 1))
+    if [ -n "$quote" ]; then
+      if [ "$ch" = "$quote" ]; then
+        quote=""
+      fi
+      cur="$cur$ch"
+      continue
+    fi
+    case "$ch" in
+      '"' | "'") quote="$ch" ;;
+      '[' | '{') depth=$((depth + 1)) ;;
+      ']') depth=$((depth - 1)) ;;
+      '}')
+        # The mapping's own close: anything after it is not a value.
+        if [ "$depth" -eq 0 ]; then
+          break
+        fi
+        depth=$((depth - 1))
+        ;;
+      ',')
+        if [ "$depth" -eq 0 ]; then
+          printf '%s\n' "$cur"
+          cur=""
+          continue
+        fi
+        ;;
+    esac
+    cur="$cur$ch"
+  done
+  printf '%s\n' "$cur"
+}
+
 # spec_vouched <comma-joined-labels> — true when the consumer has vouched
 # for at least one label in the set. See the conjunction argument above.
 spec_vouched() {
@@ -208,9 +264,8 @@ for file in "${files[@]}"; do
   prref_hit=""
   spec_lines=()
   spec_labels=()
-  spec_lineno=""
   in_on=0
-  in_runs_on=0
+  in_seq=0
   in_with=0
   with_indent=0
   seq_labels=""
@@ -236,12 +291,16 @@ for file in "${files[@]}"; do
 
     indent=$((${#line} - ${#stripped}))
 
-    # Half two, shape b: the window a bare `runs-on:` key opened over its
-    # list items closes at the first line that is not a `- …` item, and
-    # the whole sequence is ONE spec — its labels are read together, so a
-    # vouched tier label on a later line still covers the `self-hosted`
-    # one above it.
-    if [ "$in_runs_on" -eq 1 ]; then
+    # Half two, shape b: the window a bare key opened over its list items
+    # closes at the first line that is not a `- …` item, and the whole
+    # sequence is ONE spec — its labels are read together, so a vouched
+    # tier label on a later line still covers the `self-hosted` one above
+    # it. The key is `runs-on:` itself or any input key inside an open
+    # `with:` window: "a with: value is judged identically to a runs-on:
+    # value" has to cover this shape too, and reading each `- …` item as
+    # its own one-label spec refused a consumer who had vouched correctly
+    # (#395 round 2, claude-bot's nit 2).
+    if [ "$in_seq" -eq 1 ]; then
       case "$stripped" in
         '-'*)
           item_labels="$(labels_in "$stripped")"
@@ -257,7 +316,7 @@ for file in "${files[@]}"; do
           esac
           ;;
         *)
-          in_runs_on=0
+          in_seq=0
           if [ -n "$seq_hit" ]; then
             spec_lines+=("$seq_hit")
             spec_labels+=("$seq_labels")
@@ -280,7 +339,7 @@ for file in "${files[@]}"; do
     # most needs to read.
     case "$line" in
       [![:space:]]*)
-        in_runs_on=0
+        in_seq=0
         in_with=0
         case "$line" in
           'on:'* | '"on":'* | "'on':"*) in_on=1 ;;
@@ -320,32 +379,16 @@ for file in "${files[@]}"; do
         ;;
     esac
 
-    # Half two, shape a: `runs-on:` on one line, and the bare key that
-    # opens the block-sequence window.
-    case "$line" in
-      *runs-on*)
-        case "$line" in
-          *self-hosted*)
-            spec_lines+=("$lineno: $line")
-            spec_labels+=("$(labels_in "${stripped#*runs-on:}")")
-            spec_lineno="$lineno"
-            ;;
-        esac
-        case "$stripped" in
-          'runs-on:' | 'runs-on:'[[:space:]]*)
-            rest="${stripped#runs-on:}"
-            rest="${rest#"${rest%%[![:space:]]*}"}"
-            case "$rest" in
-              '' | '#'*) in_runs_on=1 ;;
-            esac
-            ;;
-        esac
-        ;;
-    esac
-
-    # Half two, shape c: a label passed through an input. A caller
-    # writing `runner: '["self-hosted","ci-runner"]'` is doing what
-    # naming it in `runs-on` does (#395 decision 5).
+    # Half two, shapes a and c: WHICH FRAGMENT of this line carries
+    # runner specs — a `runs-on:` value, or a label passed through an
+    # input, which is what a caller writing
+    # `runner: '["self-hosted","ci-runner"]'` is doing (#395 decision 5).
+    # The fragment is chosen ONCE, and there is one recording point
+    # below, which is what makes "one line, one report" structural: round
+    # 1 held it with a line-number guard between arms that could each
+    # match, and the sequence-flush path did not consult that guard
+    # (#395 round 2, claude-bot's nit 2).
+    frag=""
     case "$stripped" in
       'with:' | 'with:'[[:space:]]*)
         rest="${stripped#with:}"
@@ -355,38 +398,61 @@ for file in "${files[@]}"; do
             in_with=1
             with_indent=$indent
             ;;
+          # The inline flow-mapping form, `with: {runner: …}`, taken as a
+          # whole and split per value below. Taken HERE, before the
+          # `runs-on:` arm can reach it, because slicing
+          # `with: {runs-on: …, note: …}` at `runs-on:` swallows the
+          # sibling key and its labels (#395 round 2, claude-bot's nit 1).
+          *) frag="$rest" ;;
+        esac
+        ;;
+      'runs-on:' | 'runs-on:'[[:space:]]*)
+        rest="${stripped#runs-on:}"
+        rest="${rest#"${rest%%[![:space:]]*}"}"
+        case "$rest" in
+          '' | '#'*) in_seq=1 ;;
+          *) frag="$rest" ;;
+        esac
+        ;;
+      *)
+        case "$stripped" in
+          # A `runs-on:` that is not this line's own key — a job written
+          # as a flow mapping, say. Read loosely, because a miss here is
+          # a false NEGATIVE.
+          *runs-on:*) frag="${stripped#*runs-on:}" ;;
           *)
-            # The inline flow-mapping form, `with: {runner: …}`. Same
-            # one-line-one-spec rule as the window arm below: the key
-            # inside the mapping may itself be `runs-on`.
-            if [ "$spec_lineno" != "$lineno" ]; then
-              case "$line" in
-                *self-hosted*)
-                  spec_lines+=("$lineno: $line")
-                  spec_labels+=("$(labels_in "$rest")")
-                  spec_lineno="$lineno"
+            # An input inside an open `with:` window: a bare key opens a
+            # block-sequence window exactly as `runs-on:` does, and a key
+            # with a value hands that value over as the fragment.
+            if [ "$in_with" -eq 1 ] && [ "$in_seq" -eq 0 ]; then
+              case "$stripped" in
+                *:*)
+                  rest="${stripped#*:}"
+                  rest="${rest#"${rest%%[![:space:]]*}"}"
+                  case "$rest" in
+                    '' | '#'*) in_seq=1 ;;
+                    *) frag="$rest" ;;
+                  esac
                   ;;
               esac
             fi
             ;;
         esac
         ;;
-      *)
-        # One line is one spec, however many halves of the rule match it:
-        # a callee input literally named `runs-on` inside an open `with:`
-        # window is both shape a and shape c, and reporting it twice says
-        # "two offences" about one line.
-        if [ "$in_with" -eq 1 ] && [ "$spec_lineno" != "$lineno" ]; then
-          case "$line" in
-            *self-hosted*)
-              spec_lines+=("$lineno: $line")
-              spec_labels+=("$(labels_in "${stripped#*:}")")
-              spec_lineno="$lineno"
-              ;;
-          esac
-        fi
-        ;;
     esac
+
+    # …and the verdict material: every VALUE that fragment carries which
+    # names self-hosted is a spec of its own, judged on its own labels.
+    if [ -n "$frag" ]; then
+      while IFS= read -r spec_value; do
+        case "$spec_value" in
+          *self-hosted*)
+            spec_lines+=("$lineno: $line")
+            spec_labels+=("$(labels_in "$spec_value")")
+            ;;
+        esac
+      done <<<"$(spec_values "$frag")"
+    fi
   done <"$file"
 
   # A block sequence running to the end of the file still closes.
