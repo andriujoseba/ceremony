@@ -276,11 +276,11 @@ Keep these runners repo-scoped unless the organization can restrict a runner
 group to selected repositories. On GitHub Free, an organization runner in the
 Default group is available to every repository, including public repositories
 where a fork PR supplies the workflow file and can name the runner label. The
-`actions/runner-isolated` guard reads this `runner` input's **value** where a
-caller spells it — **unreleased** (#395) — but still does not
-follow the reusable-workflow call into the callee's own `runs-on:`, nor
-resolve a runner group, matrix or expression, so consumers must enforce this
-registration and isolation boundary themselves.
+`actions/runner-isolated` guard reads this `runner` input's **value** where
+a caller spells it — **unreleased** (#395) — but it still
+does not follow the reusable-workflow call into the callee's own `runs-on:`,
+nor resolve a runner group, matrix or expression, so consumers must enforce
+this registration and isolation boundary themselves.
 
 incubator's worked example has two guests on one `ci-server` host.
 `deploy-box` is the sole guest with the Coolify/tailnet grant.
