@@ -300,7 +300,7 @@ flow_feed() {
       # CONTAINS, not its end, and the backslash is not part of the
       # label. A single-quoted scalar has no backslash escape; its own
       # is `''`, a literal quote that does not close the scalar.
-      if [ "$flow_quote" = '"' ] && [ "$ch" = '\' ] && [ "$i" -lt "${#text}" ]; then
+      if [ "$flow_quote" = '"' ] && [ "$ch" = "\\" ] && [ "$i" -lt "${#text}" ]; then
         esc="${text:i:1}"
         i=$((i + 1))
         flow_cur="$flow_cur$esc"
