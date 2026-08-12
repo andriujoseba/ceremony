@@ -102,7 +102,10 @@ so partial setup evidence cannot satisfy the release gate.
    candidate it came from**. An rc that ships carries its own record at
    `drills/X.Y.Z-rcN.md`, and the rc cut's ceremony PR is what carries it.
    The untouched-changelog claim is a byte comparison, never prose, for the
-   reason the counts either side of a refusal are numbers.
+   reason the counts either side of a refusal are numbers. A fragment or
+   release list that does not read back reds its probe and makes no claim
+   about what the unread list contains; a failed branch-SHA setup read reds
+   only that probe, so the remaining probes and the record survive.
 
 ## The record
 
