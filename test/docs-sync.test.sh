@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Contract tests for actions/docs-sync (issue #19). Constructed SOURCE trees
 # (a fake ceremony: manifest + docs) and CONSUMER trees (a release.yml
-# caller with the pin line), driven offline via --source — the fetch path
-# needs the network and is exercised by consumers, not here. The fake
-# source's doc set is deliberately NOT the real five: a script that
+# caller with the pin line). Both source paths run offline: --source
+# directly, and the tarball fetch through a `curl` stub first on PATH whose
+# default mode refuses — which is also what proves the --source rows open no
+# socket at all (#393). The fake source's doc set is deliberately NOT the
+# real five: a script that
 # hardcodes the vendored list instead of reading the manifest fails these
 # rows. set -u, not -e: failing commands are behavior for the harness to
 # inspect.
@@ -64,6 +66,79 @@ in_consumer() {
   local dir="$1"
   shift
   (cd "$TMP/$dir" && bash "$SCRIPT" "$@")
+}
+
+# --- the curl stub -------------------------------------------------------------
+# The fetch path's stand-in for the network, selected per call site by
+# CURL_STUB and modelled on facts.test.sh's gh stub. It parses `-o <path>`
+# out of its arguments and prints the status code on stdout, exactly as
+# -w '%{http_code}' makes real curl do. The default mode REFUSES, which is
+# not decoration: with the stub first on PATH for the whole file, every
+# pre-existing --source row below becomes a proof that the --source path
+# calls no curl at all (#393).
+
+# The tarball the `ok` mode serves: $SRC packed under ONE leading path
+# component, the way codeload's archives are, so --strip-components=1 is
+# genuinely exercised instead of assumed.
+FIXTURE_TARBALL="$TMP/ceremony-fixture.tar.gz"
+mkdir -p "$TMP/pack"
+cp -r "$SRC" "$TMP/pack/ceremony-0.3.0"
+tar -czf "$FIXTURE_TARBALL" -C "$TMP/pack" ceremony-0.3.0
+
+mkdir -p "$TMP/stub"
+cat >"$TMP/stub/curl" <<'EOF'
+#!/usr/bin/env bash
+out=""
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "-o" ] && out="$arg"
+  prev="$arg"
+done
+case "${CURL_STUB:-none}" in
+  ok)
+    cp "$CURL_STUB_TARBALL" "$out"
+    printf '200'
+    ;;
+  corrupt)
+    printf 'this is not a gzip stream\n' >"$out"
+    printf '200'
+    ;;
+  503)
+    printf '503'
+    exit 22
+    ;;
+  404)
+    printf '404'
+    exit 22
+    ;;
+  netfail)
+    printf '000'
+    exit 7
+    ;;
+  *)
+    echo "curl stub: curl must not be called (curl $*)" >&2
+    exit 97
+    ;;
+esac
+EOF
+chmod +x "$TMP/stub/curl"
+
+# Exported at file scope: in_consumer's `bash "$SCRIPT"` is a child process,
+# so a plain assignment would never reach it.
+export PATH="$TMP/stub:$PATH"
+export CURL_STUB=none
+export CURL_STUB_TARBALL="$FIXTURE_TARBALL"
+
+# fetched <mode> <consumer> <args...> — in_consumer on the FETCH path (no
+# --source) with the stub in one mode, restoring the refusing default after.
+fetched() {
+  local mode="$1"
+  shift
+  CURL_STUB="$mode"
+  in_consumer "$@"
+  local rc=$?
+  CURL_STUB=none
+  return "$rc"
 }
 
 # --- the pin: never guessed --------------------------------------------------
@@ -298,5 +373,93 @@ check "unknown flag refused" 1 "unknown argument" \
   in_consumer env-wired --check --source "$SRC" --frobnicate
 check "--source without a directory refused" 1 "no such directory" \
   in_consumer env-wired --check --source "$TMP/does-not-exist"
+
+# --- the fetch path: driven offline by the stub ---------------------------------
+# Two pr-checks failures on heavy-duty/incubator#147 at the same head, 38
+# minutes apart, both an upstream 503 from codeload, both reported as "does
+# the pinned ref exist?" — sending a reader to audit a tag that was healthy
+# throughout. The fetch had never had a test (#393).
+
+# The refusing default is only a proof if the stub is genuinely the curl
+# every row above would have reached; assert that rather than assume it.
+check "the stub is the curl on PATH (else every row above proves nothing)" 0 \
+  "$TMP/stub/curl" command -v curl
+check "the stub's default mode refuses to be called" 97 \
+  "curl must not be called" curl -fsSL https://example.invalid
+
+consumer fetch-ok 0.3.0
+check "fetch --fix (no --source) materializes the mirror" 0 \
+  "added .ceremony/RULES.md" fetched ok fetch-ok --fix
+# Byte-identity with the --source mirror is what forces the two-step fetch:
+# the stub writes the archive to -o and prints 200 on stdout, so a
+# `curl | tar` implementation feeds tar the four bytes `200` and dies here.
+# It also forces --strip-components=1, the fixture carrying a leading
+# component.
+check "the fetched mirror is byte-identical to the --source one" 0 "" \
+  diff -r "$TMP/fresh/.ceremony" "$TMP/fetch-ok/.ceremony"
+check "fetch --check on the fetched mirror → exact mirror, named by pin" 0 \
+  "exact mirror of heavy-duty/ceremony@0.3.0" fetched ok fetch-ok --check
+
+# --- one diagnostic per fault class ---------------------------------------------
+# Each text is proven present in its own branch AND absent from a sibling:
+# an implementation that prints all four on every fault would satisfy a
+# positive-only suite, which is exactly the escape hatch today's single
+# message left open.
+
+consumer fetch-503 0.3.0
+check "a 5xx says the pin is fine" 1 "The pin is fine" \
+  fetched 503 fetch-503 --check
+check "a 5xx says the fault is transient and names the cure" 1 \
+  "This is transient: re-run the job." fetched 503 fetch-503 --check
+check_absent "a 5xx never says the ref does not exist" 1 "does not exist" \
+  fetched 503 fetch-503 --check
+check_absent "a 5xx never asks the reader to audit the pin" 1 \
+  "Check the tag, or bump the pin" fetched 503 fetch-503 --check
+
+consumer fetch-404 0.3.0
+check "a 404 names the ref and says it does not exist" 1 \
+  "heavy-duty/ceremony@0.3.0 does not exist" fetched 404 fetch-404 --check
+check "a 404 sends the reader to the pin" 1 "Check the tag, or bump the pin" \
+  fetched 404 fetch-404 --check
+check_absent "a 404 never calls the fault transient" 1 "transient" \
+  fetched 404 fetch-404 --check
+
+consumer fetch-netfail 0.3.0
+check "a connection failure reports curl's exit and the missing status" 1 \
+  "curl exit 7, HTTP status 000" fetched netfail fetch-netfail --check
+check_absent "a connection failure claims nothing about the ref" 1 \
+  "does not exist" fetched netfail fetch-netfail --check
+check_absent "a connection failure claims nothing about transience either" 1 \
+  "transient" fetched netfail fetch-netfail --check
+
+consumer fetch-corrupt 0.3.0
+check "a body that will not unpack is its own fault class" 1 \
+  "downloaded but did not extract" fetched corrupt fetch-corrupt --check
+check_absent "an unpack failure is not reported as a fetch failure" 1 \
+  "could not fetch" fetched corrupt fetch-corrupt --check
+
+# --- the flags, where they are the deliverable ----------------------------------
+# D1–D3 of #393 are partly structural: the archive and the extraction root
+# cannot be told apart from outside, since the mirror walk only ever reads
+# manifest paths. So they are asserted where they are visible — in the
+# script's own text, alongside the behavioral rows above.
+
+check "the fetch carries the retry flags" 0 \
+  "--retry 3 --retry-delay 5 --retry-connrefused" cat "$SCRIPT"
+check "the fetch captures the status rather than inferring it" 0 \
+  "-w '%{http_code}'" cat "$SCRIPT"
+check_absent "the all-errors retry flag is passed nowhere" 0 \
+  "--retry-all-errors" cat "$SCRIPT"
+check "the file records the version floor that rejected it" 0 "7.71.0" \
+  cat "$SCRIPT"
+# Anchored before any '#': the war story above the fetch quotes the hazard
+# it forbids, and an unanchored pattern would red on the comment that
+# explains the rule.
+check "no curl-into-tar pipe survives outside the comments" 1 "" \
+  grep -qE '^[^#]*curl[^|]*\|[^|]*tar' "$SCRIPT"
+check "the archive lands beside the extraction root, not in it" 0 \
+  'archive="$fetch_tmp/src.tar.gz"' cat "$SCRIPT"
+check "the extraction root is its own directory" 0 'src="$fetch_tmp/src"' \
+  cat "$SCRIPT"
 
 summary

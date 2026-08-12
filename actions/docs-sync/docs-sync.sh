@@ -148,12 +148,76 @@ if [ -n "$source_dir" ]; then
 else
   # The repo is public: a plain tarball fetch, no auth, no git. Works for a
   # tag, a branch, or a commit SHA alike.
+  #
+  # TWO STEPS, NEVER A PIPE (#393). `curl --retry … | tar -xz` can already
+  # have written partial bytes into tar's stdin before curl re-sends, so a
+  # mid-transfer retry corrupts the extraction instead of repairing it: the
+  # naive form fixes the 503 that bought this rule and leaves a worse, rarer
+  # fault behind. Download to a file, then extract the file.
+  #
+  # THE RETRY FLOOR. Four attempts spanning ~15 s of waiting — a bounded
+  # guess at blip length, not a measurement. curl's retry-all-errors option
+  # (named here without its leading dashes, so a grep for the flag stays
+  # proof that it is not passed) is deliberately NOT used: it lands in curl
+  # 7.71.0, and an older curl exits 2 on an unknown option, turning a
+  # transient failure into a permanent one on EVERY run — strictly worse
+  # than the fault being fixed. docs-sync runs on consumers' self-hosted
+  # boxes and on developer laptops, not only on GitHub-hosted images, so the
+  # version floor cannot be assumed. Plain --retry already covers this
+  # incident's class (curl retries timeouts and HTTP 408, 429, 500, 502,
+  # 503, 504) and --retry-connrefused lands in 7.52.0, effectively
+  # universal. A 404 is not a transient code, so a bad pin still fails on
+  # the first attempt.
+  #
+  # THE ARCHIVE AND THE TREE ARE DIFFERENT DIRECTORIES, so $src holds
+  # exactly what a ceremony checkout holds on both paths and --source and
+  # the fetch cannot diverge on a stray file. cleanup() removes $fetch_tmp
+  # whole, so both go together.
   fetch_tmp="$(mktemp -d)"
   url="https://github.com/heavy-duty/ceremony/archive/${ref}.tar.gz"
-  curl -fsSL "$url" | tar -xz --strip-components=1 -C "$fetch_tmp" || die \
-    "docs-sync: cannot fetch heavy-duty/ceremony@$ref ($url) —" \
-    "  does the pinned ref exist?"
-  src="$fetch_tmp"
+  archive="$fetch_tmp/src.tar.gz"
+  src="$fetch_tmp/src"
+  mkdir -p "$src"
+
+  # The status is captured, never inferred: %{http_code} into one variable,
+  # curl's exit into another, and the branches below read both. %{http_code}
+  # is 000 when no HTTP response arrived at all, which is what tells a
+  # connection failure apart from a server that answered.
+  fetch_rc=0
+  http_code="$(curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+    -o "$archive" -w '%{http_code}' "$url")" || fetch_rc=$?
+
+  # One diagnostic per fault class. The reader of these lines is usually a
+  # bot deciding whether to re-run or escalate to a human, and one text for
+  # every fault sent that reader to audit the tag, the mirror and the bump
+  # twice in one afternoon for an upstream 503 (#393).
+  if [ "$fetch_rc" -ne 0 ]; then
+    case "$http_code" in
+      404)
+        die "docs-sync: heavy-duty/ceremony@$ref does not exist — HTTP 404 from" \
+          "  $url. The pin in $WORKFLOW names a ref this repository does not" \
+          "  have. Check the tag, or bump the pin to one that does."
+        ;;
+      5??)
+        die "docs-sync: GitHub's archive endpoint returned HTTP $http_code for" \
+          "  $url after 4 attempts. The pin is fine — heavy-duty/ceremony@$ref" \
+          "  was never read. This is transient: re-run the job."
+        ;;
+      *)
+        die "docs-sync: could not fetch $url —" \
+          "  curl exit $fetch_rc, HTTP status $http_code. A network failure" \
+          "  reaching GitHub, not a statement about the pin."
+        ;;
+    esac
+  fi
+
+  # A body that arrives and does not unpack is a fourth fault, not a fetch
+  # failure: nothing above it is in doubt, so it says so on its own.
+  tar -xzf "$archive" --strip-components=1 -C "$src" || die \
+    "docs-sync: the archive for heavy-duty/ceremony@$ref" \
+    "  downloaded but did not extract ($url) —" \
+    "  a truncated or non-gzip body."
+
   origin="heavy-duty/ceremony@$ref"
 fi
 
