@@ -243,6 +243,40 @@ precisely so the machinery is safe to work on
       `.github/actions/release-artifact/` — the full kept-vs-moved table
       is in [#1](https://github.com/heavy-duty/ceremony/issues/1).
 
+## Runner routing
+
+The reusable `release.yml`, `labels.yml`, and `labels-sweep.yml` workflows
+each accept one optional `runner` input and apply it to every job they own.
+The value is JSON, even for one label: omit it to keep `ubuntu-latest`, pass
+`'"ubuntu-22.04"'` to select another hosted label, or pass
+`'["self-hosted","ci-runner"]'` to require both labels on a self-hosted
+runner. A bare `ubuntu-latest` is invalid JSON and fails loudly; it never
+falls back to the default.
+
+These jobs carry the permissions declared by their callers. In particular,
+`labels.yml` runs under `pull_request_target`: it still checks out and
+executes no consumer PR code, but its write-scoped token now executes on the
+selected hardware. **Route these to a runner isolated from anything the token should not reach — never to a host that is itself part of the deploy path.**
+Self-hosted runners do **not** reset state between jobs unless run ephemerally.
+Persistent installs therefore need consumer-owned cleanup, at minimum a
+scheduled `docker system prune`. **One runner process executes one job at a
+time.** A busy consumer needs several runner services. Several services on one
+host are enough and require no per-job provisioning.
+
+Keep these runners repo-scoped unless the organization can restrict a runner
+group to selected repositories. On GitHub Free, an organization runner in the
+Default group is available to every repository, including public repositories
+where a fork PR supplies the workflow file and can name the runner label. The
+`actions/runner-isolated` guard does not follow reusable-workflow calls or
+resolve this `runner` input's indirection, so consumers must enforce this
+registration and isolation boundary themselves.
+
+incubator's worked example has two guests on one `ci-server` host.
+`deploy-box` is the sole guest with the Coolify/tailnet grant.
+`ci-box` has no grants and carries the `ci-runner` label. Ceremony jobs go to
+`ci-runner`, keeping them off deploy-path hardware and out of the deploy
+runner's single-job queue.
+
 ## Release workflow
 
 The reusable release workflow implements both doors of the ceremony — the
@@ -274,10 +308,18 @@ jobs:
       version-source: file   # or: package-json
 ```
 
-`version-source` is the only input: `file` (a `VERSION` file — box, rig,
-incubator) or `package-json` (the version field, lockfile kept in sync on
-the post-release bump — cast). Everything else a repo might vary is a change
-to the ceremony itself, made in this repo, once.
+To route this caller, add one of these lines under its existing `with:` key:
+
+```yaml
+runner: '"ubuntu-22.04"'
+runner: '["self-hosted","ci-runner"]' # choose one; do not repeat the key
+```
+
+`version-source` selects `file` (a `VERSION` file — box, rig, incubator) or
+`package-json` (the version field, lockfile kept in sync on the post-release
+bump — cast). `runner` is the shared scheduling input described above.
+Everything else a repo might vary is a change to the ceremony itself, made
+in this repo, once.
 
 Keep the merge door on `push` to `main` — never `pull_request`: a
 `pull_request` run from a public fork gets a read-only `GITHUB_TOKEN` that
@@ -399,6 +441,13 @@ jobs:
     # dogfood does (self-labels-sweep.yml).
 ```
 
+To route the event-facing caller, add one of these lines under its existing `with:` key (alongside `sweep_workflow` when present); do not repeat the key:
+
+```yaml
+with: { runner: '"ubuntu-22.04"' }
+with: { runner: '["self-hosted","ci-runner"]' } # choose one
+```
+
 And the complete sweep caller, `labels-sweep.yml` beside it — the hourly
 cron lives HERE since #209, not on the labels caller:
 
@@ -445,6 +494,13 @@ jobs:
     # it as SELF_WORKFLOW so the label machinery's own check entries (scope,
     # trigger) never count toward blocker:ci-red — a red trigger means "fix
     # the caller", which no PR edit can do (#208 reads it).
+```
+
+To route the sweep caller, add one of these lines under its existing `with:` key (alongside `pr_workflow_name` when present); do not repeat the key:
+
+```yaml
+with: { runner: '"ubuntu-22.04"' }
+with: { runner: '["self-hosted","ci-runner"]' } # choose one
 ```
 
 Naming any permission sets every unnamed permission to `none`. Public

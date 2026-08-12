@@ -113,6 +113,13 @@ name: release
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          JSON-encoded runner label or label set. Keep the default for a
+          GitHub-hosted runner, or pass an array for a self-hosted runner.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
       version-source:
         description: >-
           Where the tree's version lives: "file" (a VERSION file — box, rig,
@@ -140,7 +147,7 @@ jobs:
     # form): a workflow_dispatch of a caller sitting on main — this repo's
     # own release-exercise.yml — must stay dry wiring, never a live door.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -321,7 +328,7 @@ jobs:
     # (cast's precedent: the fallback does not rewrite main). Event-gated
     # like the merge door: dispatch runs stay dry.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
