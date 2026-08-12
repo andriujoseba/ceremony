@@ -555,7 +555,7 @@ jobs:
 YAML
 check "an unquoted list inside the mapping stays one conjunction" 0 \
   "1 workflow file" in_tree inline-nested-list .github/workflows ci-runner
-check "…and still fails when that conjunction is unvouched" 1 \
+check "…and the unquoted list still fails when it is unvouched" 1 \
   "labels: self-hosted, ci-runner —" in_tree inline-nested-list
 
 wf inline-quoted-commas a.yml <<'YAML'
@@ -568,7 +568,7 @@ jobs:
 YAML
 check "a quoted comma-separated value stays one conjunction" 0 \
   "1 workflow file" in_tree inline-quoted-commas .github/workflows ci-runner
-check "…and still fails when that conjunction is unvouched" 1 \
+check "…and the quoted value still fails when it is unvouched" 1 \
   "labels: self-hosted, ci-runner —" in_tree inline-quoted-commas
 
 # claude-bot's first nit, the same defect reached through the `runs-on:`
