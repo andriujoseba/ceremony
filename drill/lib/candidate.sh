@@ -37,6 +37,18 @@ pin_assert_fork_ref() {
   fi
 }
 
+# fork_ref_exists_refusal <fork-repo> <ref> <sha> — the one refusal sentence.
+#
+# rehearsal.sh now checks an explicit ref before creating the scratch repo,
+# while fork_ref_prepare keeps the same check as its race backstop (#387).
+# Keeping the sentence here makes both callers describe the refusal exactly
+# alike.
+fork_ref_exists_refusal() {
+  local repo="${1:?}" ref="${2:?}" sha="${3:?}"
+  echo "drill: refusing to prepare '$repo@$ref' — the ref already exists at $sha. Delete it or name another --fork-ref; the drill will not rewrite a ref it did not create." >&2
+  return 1
+}
+
 # pin_read <file> — the CEREMONY_SELF_REF a workflow carries, empty if none.
 pin_read() {
   awk -F'"' '/^[[:space:]]*CEREMONY_SELF_REF:/ { print $2; exit }' "${1:?pin_read: file required}"
@@ -71,8 +83,8 @@ fork_ref_prepare() {
   # looking for, so it stays in `any` mode and never spends the retry budget.
   existing="$(scratch_ref_sha "$repo" "$branch")" || return 1
   if [ -n "$existing" ]; then
-    echo "drill: refusing to prepare '$repo@$branch' — the ref already exists at $existing. Delete it or name another --fork-ref; the drill will not rewrite a ref it did not create." >&2
-    return 1
+    fork_ref_exists_refusal "$repo" "$branch" "$existing"
+    return $?
   fi
   scratch_ref_create "$repo" "refs/heads/$branch" "$sha" || return 1
   carriers="$(scratch_paths "$repo" "$branch" nonempty)" || return 1
