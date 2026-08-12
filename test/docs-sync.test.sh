@@ -128,6 +128,11 @@ case "${CURL_STUB:-none}" in
     exit 7
     ;;
   *)
+    # The tripwire, not just the exit status: a caller that swallowed the
+    # failure (`curl … || true`) would otherwise slip past a refusal that
+    # only speaks through $?, and the --source rows' proof would be worth
+    # less than it looks.
+    printf '%s\n' "curl $*" >>"$CURL_STUB_TRIPWIRE"
     echo "curl stub: curl must not be called (curl $*)" >&2
     exit 97
     ;;
@@ -140,6 +145,7 @@ chmod +x "$TMP/stub/curl"
 export PATH="$TMP/stub:$PATH"
 export CURL_STUB=none
 export CURL_STUB_TARBALL="$FIXTURE_TARBALL"
+export CURL_STUB_TRIPWIRE="$TMP/curl-was-called"
 
 # fetched <mode> <consumer> <args...> — in_consumer on the FETCH path (no
 # --source) with the stub in one mode, restoring the refusing default after.
@@ -396,8 +402,15 @@ check "--source without a directory refused" 1 "no such directory" \
 # every row above would have reached; assert that rather than assume it.
 check "the stub is the curl on PATH (else every row above proves nothing)" 0 \
   "$TMP/stub/curl" command -v curl
+# Read before the deliberate refusal below trips it: every --source row in
+# this file has now run, and none of them reached curl. The exit status
+# alone would not prove that — a caller could swallow it — so the stub
+# leaves a mark that no `|| true` can erase.
+check "no --source row ever reached curl" 1 "" test -e "$CURL_STUB_TRIPWIRE"
 check "the stub's default mode refuses to be called" 97 \
   "curl must not be called" curl -fsSL https://example.invalid
+check "the refusal leaves its mark, not just an exit status" 0 "" \
+  test -s "$CURL_STUB_TRIPWIRE"
 
 consumer fetch-ok 0.3.0
 check "fetch --fix (no --source) materializes the mirror" 0 \
