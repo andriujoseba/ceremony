@@ -117,11 +117,13 @@ the machinery at all:
    it and passes however it is routed. Self-hosted labels are read from
    `runs-on:` and from `with:` input values alike, each value judged on
    its own: two inputs passed on one line are two runners, and vouching
-   for one of them does not vouch for the other. A value is read to its
-   own closing bracket, so a mapping or list written across several lines
-   is scanned like any other. It fires on the PR that
-   first puts PR-authored code on an unvouched self-hosted label; the two
-   unblocks are splitting the workflow and
+   for one of them does not vouch for the other, at any nesting depth. A
+   value is read to its own closing bracket, so a mapping or list written
+   across several lines is scanned like any other, and a quoted scalar is
+   opaque: a bracket or comma inside quotes is that value's text, not its
+   end. It fires on the PR that first puts PR-authored code on an
+   unvouched self-hosted label; the two unblocks are splitting the
+   workflow and
    [vouching for the tier](#vouching-for-a-runner-that-may-execute-pr-code).
    A repo with **no** self-hosted runner still wants it: the guard's value
    is the day somebody adds one.

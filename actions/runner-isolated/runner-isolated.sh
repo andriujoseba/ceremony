@@ -112,6 +112,19 @@ set -euo pipefail
 #       hot:  '["self-hosted","ci-runner"]'  #   until its own bracket
 #     }                                      #   closes it, one spec per
 #                                            #   value (#395 round 3)
+#     with: {                                # …and so may one VALUE: a
+#       hot: '["self-hosted",                #   quoted scalar is opaque,
+#         "ci-runner"]' }                    #   so a bracket inside it
+#                                            #   is text and not the
+#                                            #   collection's end, and
+#                                            #   the values after it are
+#                                            #   not lost (#395 round 4)
+#     jobs: {build: {runs-on: [self-hosted], # A key BESIDE a spec never
+#       environment: pr-runner}}             #   joins it, however many
+#                                            #   brackets are between —
+#                                            #   the split follows the
+#                                            #   innermost collection's
+#                                            #   kind (#395 round 4)
 #
 # A `with:` value is judged identically to a `runs-on:` value, and only
 # AFTER the trigger axis has decided whether the file executes PR code at
