@@ -490,6 +490,114 @@ inline_report_count() {
 check "…exactly once, in the inline arm as in the window arm" 0 \
   "offending lines reported: 1" inline_report_count
 
+# --- #395 round 2: one VALUE is one spec, not one line ---------------------
+
+# specs_reported <tree> [args…] — how many offending specs the guard
+# reported, counted on the labels line each one carries. The rows below
+# are about which VALUES become specs, so counting reports is the
+# assertion; a row that only checked the exit status would pass whether
+# the line was judged once, twice or as one flattened set.
+specs_reported() {
+  local n
+  n="$(in_tree "$@" 2>&1 | grep -c 'none of them is named')"
+  echo "offending specs reported: $n"
+}
+
+# codex-bot's blocker. Two reusable-workflow inputs on one line are two
+# different runners; flattening the mapping into one label set made the
+# vouched one vouch for the unvouched one, because a set is vouched when
+# ANY of its labels is. Fail-open, on exactly the axis this change is
+# for.
+wf inline-two-inputs a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {safe-runner: '["self-hosted","pr-runner"]', privileged-runner: '["self-hosted","ci-runner"]'}
+YAML
+check "a vouched inline input does not vouch for the one beside it" 1 \
+  "ci-runner" in_tree inline-two-inputs .github/workflows pr-runner
+check "…and the offending spec's labels are its own, not the line's" 1 \
+  "labels: self-hosted, ci-runner —" in_tree inline-two-inputs \
+  .github/workflows pr-runner
+check "…and only the unvouched value is reported" 0 \
+  "offending specs reported: 1" specs_reported inline-two-inputs \
+  .github/workflows pr-runner
+
+# The mirror, so the fix cannot rot into "an inline mapping always
+# fails": the same two-input line with both values vouched passes.
+wf inline-two-vouched a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {safe-runner: '["self-hosted","pr-runner"]', other-runner: '["self-hosted","pr-runner"]'}
+YAML
+check "both inline values vouched is still a pass" 0 "1 workflow file" \
+  in_tree inline-two-vouched .github/workflows pr-runner
+
+# claude-bot's first nit, the same defect reached through the `runs-on:`
+# arm: slicing the line at `runs-on:` swallowed the sibling key, and
+# labels_in strips a `key:` prefix, so `note: pr-runner` joined the set
+# and vouched for a spec it is no part of.
+wf inline-sibling-key a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {runs-on: '["self-hosted","ci-runner"]', note: pr-runner}
+YAML
+check "a sibling key's value cannot vouch for the runs-on value" 1 \
+  "ci-runner" in_tree inline-sibling-key .github/workflows pr-runner
+check "…and it is not read as one of that spec's labels" 1 \
+  "labels: self-hosted, ci-runner —" in_tree inline-sibling-key \
+  .github/workflows pr-runner
+
+# claude-bot's second nit, half a: a `with:`-passed label set written as
+# a block sequence is one spec, exactly as a `runs-on:` one is — the
+# header's "judged identically" has to cover this shape. Read item by
+# item, `- self-hosted` was a one-label spec and failed a consumer who
+# had vouched correctly.
+wf with-seq a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner:
+        - self-hosted
+        - pr-runner
+YAML
+check "a with:-passed block sequence is accumulated as one spec" 0 \
+  "1 workflow file" in_tree with-seq .github/workflows pr-runner
+check "…and it still fails when nothing in the set is vouched" 1 \
+  "labels: self-hosted, pr-runner —" in_tree with-seq .github/workflows other
+check "…reported once, not once per sequence item" 0 \
+  "offending specs reported: 1" specs_reported with-seq .github/workflows other
+
+# …and half b: the same sequence under a callee input literally named
+# `runs-on` was appended twice — once by the with:-window arm, once by
+# the sequence flush, which the round-1 line-number guard never reached.
+wf with-seq-runs-on a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runs-on:
+        - self-hosted
+        - ci-runner
+YAML
+check "a runs-on: sequence inside with: carries the whole set" 1 \
+  "labels: self-hosted, ci-runner —" in_tree with-seq-runs-on
+check "…and is reported once, not once per matching path" 0 \
+  "offending specs reported: 1" specs_reported with-seq-runs-on
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml
