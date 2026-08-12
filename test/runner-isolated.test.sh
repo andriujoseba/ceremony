@@ -468,6 +468,28 @@ report_count() {
 check "…exactly once, not once per matching half" 0 \
   "offending lines reported: 1" report_count
 
+# The same collision in the inline flow-mapping form: `with: {runs-on: …}`
+# is one line matching shape a and shape b at once, and it is the arm the
+# window row above cannot reach.
+wf runs-on-in-inline-with a.yml <<'YAML'
+name: pr-checks
+on:
+  pull_request:
+jobs:
+  check:
+    uses: ./.github/workflows/reusable.yml
+    with: {runs-on: '["self-hosted","ci-runner"]'}
+YAML
+check "an inline with: {runs-on: …} is reported once too" 1 \
+  "ci-runner" in_tree runs-on-in-inline-with
+inline_report_count() {
+  local n
+  n="$(in_tree runs-on-in-inline-with 2>&1 | grep -c 'runs-on:.*self-hosted')"
+  echo "offending lines reported: $n"
+}
+check "…exactly once, in the inline arm as in the window arm" 0 \
+  "offending lines reported: 1" inline_report_count
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml
