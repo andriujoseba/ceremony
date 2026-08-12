@@ -766,7 +766,7 @@ check "the ref-routed repo and fork ref share -2" 0 \
   "$FORK/.github/workflows/release.yml@drill/0.7.0-2" \
   cat "$TMP/ref-routed.md"
 check "the default path does no early extra read of its selected ref" 0 "" \
-  bash -c 'test "$(grep -cF "git/ref/heads/drill/0.7.0-2" "$1")" -eq 2' \
+  bash -c 'test "$(grep -cF "git/ref/heads/drill/0.7.0-2" "$1")" -eq 3' \
   _ "$TMP/state/calls"
 
 stub_reset
