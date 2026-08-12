@@ -112,8 +112,7 @@ the machinery at all:
    executes PR-authored code when it is `pull_request`-triggered, always,
    or when it is `pull_request_target`-triggered **and** checks out a PR
    ref — base-branch privileges running PR-authored code, the shape the
-   guard was blind to until **unreleased**
-   ([#395](https://github.com/heavy-duty/ceremony/issues/395)). A
+   guard was blind to until **unreleased** (#395). A
    `pull_request_target` file that checks out no PR ref executes none of
    it and passes however it is routed. Self-hosted labels are read from
    `runs-on:` and from `with:` input values alike. It fires on the PR that
@@ -278,8 +277,7 @@ group to selected repositories. On GitHub Free, an organization runner in the
 Default group is available to every repository, including public repositories
 where a fork PR supplies the workflow file and can name the runner label. The
 `actions/runner-isolated` guard reads this `runner` input's **value** where a
-caller spells it (**unreleased**,
-[#395](https://github.com/heavy-duty/ceremony/issues/395)) but still does not
+caller spells it — **unreleased** (#395) — but still does not
 follow the reusable-workflow call into the callee's own `runs-on:`, nor
 resolve a runner group, matrix or expression, so consumers must enforce this
 registration and isolation boundary themselves.
@@ -294,8 +292,7 @@ runner's single-job queue.
 
 `actions/runner-isolated` takes one optional input,
 `pr-code-runner-labels` — a comma-separated list of runner labels on which
-you assert PR-authored code may execute (**unreleased**,
-[#395](https://github.com/heavy-duty/ceremony/issues/395)). It is empty by
+you assert PR-authored code may execute — **unreleased** (#395). It is empty by
 default, and an empty allowlist vouches for nothing: a consumer that passes
 nothing gets the guard it had before the input existed.
 

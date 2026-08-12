@@ -465,6 +465,27 @@ check "a block-sequence label set is judged as one set" 0 "1 workflow file" \
 check "…and still fails when nothing in that set is vouched" 1 "self-hosted" \
   in_tree vouched-seq
 
+# The same set with the items the other way round. One fixture cannot tell
+# "the sequence is accumulated" from "the last item wins" — with the
+# vouched label last, a last-item-wins bug passes it and the suite stays
+# green. Two orders pin the accumulation itself.
+wf vouched-seq-reversed a.yml <<'YAML'
+name: pr-checks
+on:
+  pull_request:
+jobs:
+  check:
+    runs-on:
+      - pr-runner
+      - self-hosted
+    steps:
+      - run: echo check
+YAML
+check "the set is accumulated, whichever item carries the vouched label" 0 \
+  "1 workflow file" in_tree vouched-seq-reversed .github/workflows pr-runner
+check "…and that order still fails when nothing is vouched" 1 "self-hosted" \
+  in_tree vouched-seq-reversed
+
 # Vouching for one job does not vouch for the file: the second job's tier
 # is still unvouched, and only that job's line is reported.
 wf two-tiers a.yml <<'YAML'
