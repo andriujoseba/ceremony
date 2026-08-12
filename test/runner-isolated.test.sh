@@ -680,6 +680,41 @@ check "…and the expression that reads it is not a second spec" 0 \
   "offending specs reported: 1" specs_reported flow-matrix-include \
   .github/workflows pr-runner
 
+# …and the shape that pins WHERE the fragment starts rather than where it
+# ends. Both files above name a bracketed runner list, and a fragment
+# ends at its collection's own close, so slicing at `runs-on:` and
+# stopping at the `]` reaches the same verdict by luck. Write the runner
+# as the bare scalar it is allowed to be and only the mapping-level split
+# saves it: the slice runs on to `environment:`'s vouched value and there
+# is no bracket to stop it. Found by mutation — the two rows above red
+# nothing when the arm is reverted.
+wf flow-job-scalar a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build: {runs-on: self-hosted, environment: pr-runner, steps: [{run: make test}]}
+YAML
+check "a bare scalar runner in a flow job is judged alone too" 1 \
+  "labels: self-hosted —" in_tree flow-job-scalar .github/workflows pr-runner
+check "…and its own tier vouched still passes" 0 "1 workflow file" \
+  in_tree flow-job-scalar .github/workflows self-hosted
+
+wf flow-matrix-scalar a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - {runs-on: self-hosted, tier: pr-runner}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - run: make test
+YAML
+check "a bare scalar runner in a matrix entry, the same" 1 \
+  "labels: self-hosted —" in_tree flow-matrix-scalar .github/workflows pr-runner
+
 # codex-bot's blocker: a flow mapping that does not close on the line
 # that opens it. `with: {` handed the splitter one character and the
 # value lines below belonged to no open window at all — both specs
