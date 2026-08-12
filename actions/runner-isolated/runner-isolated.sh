@@ -97,10 +97,9 @@ set -euo pipefail
 # same checkout is routinely spelled `refs/pull/${{ github.event.number
 # }}/merge`, whose expression names neither of the other two, and it
 # catches a hardcoded `refs/pull/N/head` besides. It is not tied to a
-# recognised checkout step,
-# because binding it to `uses: actions/checkout` is the YAML-parsing
-# problem again and every miss there is a false NEGATIVE on the one row
-# this change exists to close. Over-reading a `ref:` line can only make a
+# recognised checkout step, because binding it to `uses:
+# actions/checkout` is the YAML-parsing problem again and every miss
+# there is a false NEGATIVE on the one row this change exists to close. Over-reading a `ref:` line can only make a
 # file derive as executing PR code — never permit one.
 #
 # KNOWN LIMITS, named in action.yml's description too so a consumer
