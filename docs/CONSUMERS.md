@@ -257,12 +257,25 @@ These jobs carry the permissions declared by their callers. In particular,
 `labels.yml` runs under `pull_request_target`: it still checks out and
 executes no consumer PR code, but its write-scoped token now executes on the
 selected hardware. **Route these to a runner isolated from anything the token should not reach — never to a host that is itself part of the deploy path.**
-Self-hosted runners do **not** reset state between jobs unless run ephemerally, and **one runner executes one job at a time**. A
-high-volume consumer therefore needs several ephemeral runners rather than
-one. For example, incubator's `ci-box` is the only machine that can reach its
-tailnet-only Coolify API, and `deploy.yml` deliberately keeps all repository
-source off it (D-211/D-212/D-213), so incubator must stand up a second runner
-instead of reusing `ci-box`.
+Self-hosted runners do **not** reset state between jobs unless run ephemerally.
+Persistent installs therefore need consumer-owned cleanup, at minimum a
+scheduled `docker system prune`. **One runner process executes one job at a
+time.** A busy consumer needs several runner services. Several services on one
+host are enough and require no per-job provisioning.
+
+Keep these runners repo-scoped unless the organization can restrict a runner
+group to selected repositories. On GitHub Free, an organization runner in the
+Default group is available to every repository, including public repositories
+where a fork PR supplies the workflow file and can name the runner label. The
+`actions/runner-isolated` guard does not follow reusable-workflow calls or
+resolve this `runner` input's indirection, so consumers must enforce this
+registration and isolation boundary themselves.
+
+incubator's worked example has two guests on one `ci-server` host.
+`deploy-box` is the sole guest with the Coolify/tailnet grant.
+`ci-box` has no grants and carries the `ci-runner` label. Ceremony jobs go to
+`ci-runner`, keeping them off deploy-path hardware and out of the deploy
+runner's single-job queue.
 
 ## Release workflow
 
