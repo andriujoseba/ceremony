@@ -115,7 +115,9 @@ the machinery at all:
    guard was blind to until **unreleased** (#395). A
    `pull_request_target` file that checks out no PR ref executes none of
    it and passes however it is routed. Self-hosted labels are read from
-   `runs-on:` and from `with:` input values alike. It fires on the PR that
+   `runs-on:` and from `with:` input values alike, each value judged on
+   its own: two inputs passed on one line are two runners, and vouching
+   for one of them does not vouch for the other. It fires on the PR that
    first puts PR-authored code on an unvouched self-hosted label; the two
    unblocks are splitting the workflow and
    [vouching for the tier](#vouching-for-a-runner-that-may-execute-pr-code).
@@ -329,7 +331,10 @@ A tier that fails any clause is not vouched for by writing it here; it is
 merely no longer guarded. `runs-on:` label sets are conjunctions, so naming
 one label of a set vouches for the whole set — and naming `self-hosted`
 itself vouches for **every** self-hosted tier you own, which is almost never
-what you mean.
+what you mean. A set is one **value**: where a job or a caller names two
+runners — two `with:` inputs on one line, say — vouching for one leaves the
+other guarded, and a set spread over `- ` list items is read as the one set
+it is.
 
 **Name the untrusted tier, never the trusted one.** incubator is the worked
 example, and the direction of its split is the whole point:

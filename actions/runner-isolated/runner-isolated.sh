@@ -56,6 +56,18 @@ set -euo pipefail
 # The empty allowlist therefore vouches nothing and reproduces the
 # pre-#395 verdict on every PR-code file (#395 decision 8).
 #
+# THE UNIT OF THAT ARGUMENT IS A VALUE, NOT A LINE (#395 round 2). One
+# line can name two runners — `with: {a: '["self-hosted","pr-runner"]',
+# b: '["self-hosted","ci-runner"]'}` is two reusable-workflow inputs and
+# two tiers — and reading it as one set made the vouched input vouch for
+# the unvouched one, because a set is vouched when any member is. Each
+# value of an inline flow mapping is therefore its own spec, judged on
+# its own labels; a fragment that is not a mapping is one value, so
+# `[self-hosted, ci-runner]` stays the single conjunction it is. One
+# line reports as many specs as it carries, which is also why a line
+# matching several shapes at once still reports once: the fragment is
+# chosen once, and there is one place that records it.
+#
 # THE RULE IS FILE-LEVEL, DELIBERATELY. The precise rule — no JOB
 # reachable from a PR-code trigger runs self-hosted — needs a YAML
 # parser, and a second parser in bash is a new class of guard bug bought
@@ -82,6 +94,10 @@ set -euo pipefail
 #     with:                                  # input value: the window a
 #       runner: '["self-hosted","ci-runner"]'#   bare `with:` opens over
 #                                            #   its more-indented block
+#     with:                                  # …and an input value may
+#       runner:                              #   itself be a block
+#         - self-hosted                      #   sequence, accumulated
+#         - ci-runner                        #   as one spec like above
 #
 # A `with:` value is judged identically to a `runs-on:` value, and only
 # AFTER the trigger axis has decided whether the file executes PR code at
@@ -99,8 +115,9 @@ set -euo pipefail
 # catches a hardcoded `refs/pull/N/head` besides. It is not tied to a
 # recognised checkout step, because binding it to `uses:
 # actions/checkout` is the YAML-parsing problem again and every miss
-# there is a false NEGATIVE on the one row this change exists to close. Over-reading a `ref:` line can only make a
-# file derive as executing PR code — never permit one.
+# there is a false NEGATIVE on the one row this change exists to close.
+# Over-reading a `ref:` line can only make a file derive as executing PR
+# code — never permit one.
 #
 # KNOWN LIMITS, named in action.yml's description too so a consumer
 # never reads silence as coverage:

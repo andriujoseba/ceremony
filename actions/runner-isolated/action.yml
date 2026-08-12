@@ -43,7 +43,9 @@ inputs:
       `pull_request_target` file with a self-hosted runner and no PR-ref
       checkout, which failed before #395 and passes now however it is
       routed. A `runs-on:` label set is a conjunction, so naming one
-      label of a set vouches for the whole set. Name the
+      label of a set vouches for the whole set — one set, one value:
+      two runners named on one line are two sets, and vouching for one
+      leaves the other guarded. Name the
       untrusted tier and never the trusted one: the runner you vouch for
       must publish no artifact a trusted job consumes, hold no credential
       the job should not have, and reach nothing the PR author should not
