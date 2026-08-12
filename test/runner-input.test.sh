@@ -13,6 +13,7 @@ source "$ROOT/test/harness.sh"
 LABELS="$ROOT/.github/workflows/labels.yml"
 SWEEP="$ROOT/.github/workflows/labels-sweep.yml"
 RELEASE="$ROOT/.github/workflows/release.yml"
+CONSUMERS="$ROOT/docs/CONSUMERS.md"
 
 runner_contract() { # $1 = reusable workflow
   awk '
@@ -20,6 +21,10 @@ runner_contract() { # $1 = reusable workflow
     in_runner && /^      [a-zA-Z0-9_-]+:$/ { exit }
     in_runner && /^        (type: string|required: false|default: '\''"ubuntu-latest"'\'')$/ { print }
   ' "$1"
+}
+
+count_fixed() { # $1 = literal, $2 = file
+  grep -cF "$1" "$2"
 }
 
 for workflow in "$LABELS" "$SWEEP" "$RELEASE"; do
@@ -31,11 +36,11 @@ for workflow in "$LABELS" "$SWEEP" "$RELEASE"; do
 done
 
 check "labels routes both jobs through the runner input" 0 "2" \
-  bash -c 'grep -cF '\''runs-on: ${{ fromJSON(inputs.runner) }}'\'' "$1"' _ "$LABELS"
+  count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$LABELS"
 check "labels-sweep routes reconcile through the runner input" 0 "1" \
-  bash -c 'grep -cF '\''runs-on: ${{ fromJSON(inputs.runner) }}'\'' "$1"' _ "$SWEEP"
+  count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$SWEEP"
 check "release routes both doors through the runner input" 0 "2" \
-  bash -c 'grep -cF '\''runs-on: ${{ fromJSON(inputs.runner) }}'\'' "$1"' _ "$RELEASE"
+  count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$RELEASE"
 
 # The local callers intentionally pass nothing: they exercise the unchanged
 # default route on ceremony's GitHub-hosted runner (#383 decision 6).
@@ -43,5 +48,14 @@ for caller in self-labels.yml self-labels-sweep.yml self-release.yml; do
   check "$caller does not override runner" 1 "" \
     grep -E '^[[:space:]]+runner:' "$ROOT/.github/workflows/$caller"
 done
+
+check "each caller stub shows the hosted JSON form" 0 "3" \
+  count_fixed "runner: '\"ubuntu-22.04\"'" "$CONSUMERS"
+check "each caller stub shows the multi-label JSON form" 0 "3" \
+  count_fixed "runner: '[\"self-hosted\",\"ci-runner\"]'" "$CONSUMERS"
+check "consumer doctrine carries the runner isolation requirement" 0 \
+  "should not reach, never to a box that is itself part of the deploy path." \
+  grep -F "should not reach, never to a box that is itself part of the deploy path." \
+  "$CONSUMERS"
 
 summary

@@ -243,6 +243,26 @@ precisely so the machinery is safe to work on
       `.github/actions/release-artifact/` — the full kept-vs-moved table
       is in [#1](https://github.com/heavy-duty/ceremony/issues/1).
 
+## Runner routing
+
+The reusable `release.yml`, `labels.yml`, and `labels-sweep.yml` workflows
+each accept one optional `runner` input and apply it to every job they own.
+The value is JSON, even for one label: omit it to keep `ubuntu-latest`, pass
+`'"ubuntu-22.04"'` to select another hosted label, or pass
+`'["self-hosted","ci-runner"]'` to require both labels on a self-hosted
+runner. A bare `ubuntu-latest` is invalid JSON and fails loudly; it never
+falls back to the default.
+
+These jobs carry the permissions declared by their callers. In particular,
+`labels.yml` runs under `pull_request_target`: it still checks out and
+executes no consumer PR code, but its write-scoped token now executes on the
+selected hardware. **Route these to a runner isolated from anything the token
+should not reach, never to a box that is itself part of the deploy path.** For
+example, incubator's `ci-box` is the only machine that can reach its
+tailnet-only Coolify API, and `deploy.yml` deliberately keeps all repository
+source off it (D-211/D-212/D-213), so incubator must stand up a second runner
+instead of reusing `ci-box`.
+
 ## Release workflow
 
 The reusable release workflow implements both doors of the ceremony — the
@@ -272,12 +292,15 @@ jobs:
     uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>
     with:
       version-source: file   # or: package-json
+      # Optional hosted override: runner: '"ubuntu-22.04"'
+      # Optional label set:      runner: '["self-hosted","ci-runner"]'
 ```
 
-`version-source` is the only input: `file` (a `VERSION` file — box, rig,
-incubator) or `package-json` (the version field, lockfile kept in sync on
-the post-release bump — cast). Everything else a repo might vary is a change
-to the ceremony itself, made in this repo, once.
+`version-source` selects `file` (a `VERSION` file — box, rig, incubator) or
+`package-json` (the version field, lockfile kept in sync on the post-release
+bump — cast). `runner` is the shared scheduling input described above.
+Everything else a repo might vary is a change to the ceremony itself, made
+in this repo, once.
 
 Keep the merge door on `push` to `main` — never `pull_request`: a
 `pull_request` run from a public fork gets a read-only `GITHUB_TOKEN` that
@@ -394,6 +417,8 @@ permissions:
 jobs:
   labels:
     uses: heavy-duty/ceremony/.github/workflows/labels.yml@<pinned-tag>
+    # Optional hosted override: with: { runner: '"ubuntu-22.04"' }
+    # Optional label set:      with: { runner: '["self-hosted","ci-runner"]' }
     # If the sweep caller below is named anything but labels-sweep.yml,
     # say so: `with: { sweep_workflow: <filename> }`. Ceremony's own
     # dogfood does (self-labels-sweep.yml).
@@ -440,6 +465,8 @@ permissions:
 jobs:
   sweep:
     uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@<pinned-tag>
+    # Optional hosted override: with: { runner: '"ubuntu-22.04"' }
+    # Optional label set:      with: { runner: '["self-hosted","ci-runner"]' }
     # If this repo's PR-facing labels caller is named anything but `labels`,
     # pass that name: `with: { pr_workflow_name: <name> }`. The sweep exports
     # it as SELF_WORKFLOW so the label machinery's own check entries (scope,
