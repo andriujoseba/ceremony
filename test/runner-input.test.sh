@@ -35,10 +35,13 @@ for workflow in "$LABELS" "$SWEEP" "$RELEASE"; do
     grep -F 'runs-on: ubuntu-latest' "$workflow"
 done
 
+# shellcheck disable=SC2016 # the GitHub expression is asserted literally
 check "labels routes both jobs through the runner input" 0 "2" \
   count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$LABELS"
+# shellcheck disable=SC2016 # the GitHub expression is asserted literally
 check "labels-sweep routes reconcile through the runner input" 0 "1" \
   count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$SWEEP"
+# shellcheck disable=SC2016 # the GitHub expression is asserted literally
 check "release routes both doors through the runner input" 0 "2" \
   count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$RELEASE"
 
