@@ -538,6 +538,39 @@ YAML
 check "both inline values vouched is still a pass" 0 "1 workflow file" \
   in_tree inline-two-vouched .github/workflows pr-runner
 
+# The split is at the MAPPING's commas, and the two things that decide
+# which commas those are — quote state and `[`/`{` nesting — each need a
+# row of their own, or a split that ignores either passes the suite. Both
+# shapes below are vouched conjunctions that must survive the split: an
+# unquoted flow list inside the mapping, and a quoted comma-separated
+# scalar with no brackets at all. Blind to nesting, the first breaks into
+# `self-hosted` alone and fails; blind to quotes, so does the second.
+wf inline-nested-list a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {runner: [self-hosted, ci-runner], note: nothing}
+YAML
+check "an unquoted list inside the mapping stays one conjunction" 0 \
+  "1 workflow file" in_tree inline-nested-list .github/workflows ci-runner
+check "…and still fails when that conjunction is unvouched" 1 \
+  "labels: self-hosted, ci-runner —" in_tree inline-nested-list
+
+wf inline-quoted-commas a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {runner: 'self-hosted,ci-runner', note: nothing}
+YAML
+check "a quoted comma-separated value stays one conjunction" 0 \
+  "1 workflow file" in_tree inline-quoted-commas .github/workflows ci-runner
+check "…and still fails when that conjunction is unvouched" 1 \
+  "labels: self-hosted, ci-runner —" in_tree inline-quoted-commas
+
 # claude-bot's first nit, the same defect reached through the `runs-on:`
 # arm: slicing the line at `runs-on:` swallowed the sibling key, and
 # labels_in strips a `key:` prefix, so `note: pr-runner` joined the set
