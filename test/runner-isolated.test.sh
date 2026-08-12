@@ -406,6 +406,68 @@ YAML
 check "pull_request_target + a checkout of github.head_ref fails" 1 "ci-runner" \
   in_tree target-github-head-ref
 
+# The fourth spelling, and the one that names neither expression above:
+# `refs/pull/N/merge` built from github.event.number. It is the same
+# checkout of the same PR-authored code, so the ref: match reads the path
+# as well as the two expressions (#395 round 1, claude-bot's first nit).
+wf target-refs-pull a.yml <<'YAML'
+name: ci
+on:
+  pull_request_target:
+jobs:
+  build:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.number }}/merge
+      - run: echo build
+YAML
+check "pull_request_target + a checkout of refs/pull/N/merge fails" 1 "ci-runner" \
+  in_tree target-refs-pull
+
+# …and the path match is a PR-ref match, not a "any refs/ string" one.
+# Without this row, widening the pattern to `refs/` would pass the suite.
+wf target-refs-heads a.yml <<'YAML'
+name: labels
+on:
+  pull_request_target:
+jobs:
+  labels:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/heads/main
+      - run: echo labels
+YAML
+check "pull_request_target + a checkout of refs/heads/main is not a PR checkout" 0 \
+  "1 workflow file" in_tree target-refs-heads
+
+# One line, one report. A callee input literally named `runs-on` inside an
+# open `with:` window is both halves of shape a and shape c, and the same
+# line was reported twice — same verdict, same labels, duplicated message
+# (#395 round 1, claude-bot's second nit).
+wf runs-on-in-with a.yml <<'YAML'
+name: pr-checks
+on:
+  pull_request:
+jobs:
+  check:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runs-on: '["self-hosted","ci-runner"]'
+YAML
+check "a runs-on: passed as a with: input is reported once" 1 \
+  "ci-runner" in_tree runs-on-in-with
+report_count() {
+  local n
+  n="$(in_tree runs-on-in-with 2>&1 | grep -c 'runs-on:.*self-hosted')"
+  echo "offending lines reported: $n"
+}
+check "…exactly once, not once per matching half" 0 \
+  "offending lines reported: 1" report_count
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml

@@ -92,8 +92,12 @@ set -euo pipefail
 #
 # PR-REF CHECKOUT DETECTION is deliberately loose in the SAFE direction:
 # any non-comment line carrying a `ref:` key together with
-# `github.event.pull_request` (which covers `.head.sha` and `.head.ref`)
-# or `github.head_ref`. It is not tied to a recognised checkout step,
+# `github.event.pull_request` (which covers `.head.sha` and `.head.ref`),
+# `github.head_ref`, or a `refs/pull/` path — the last one because the
+# same checkout is routinely spelled `refs/pull/${{ github.event.number
+# }}/merge`, whose expression names neither of the other two, and it
+# catches a hardcoded `refs/pull/N/head` besides. It is not tied to a
+# recognised checkout step,
 # because binding it to `uses: actions/checkout` is the YAML-parsing
 # problem again and every miss there is a false NEGATIVE on the one row
 # this change exists to close. Over-reading a `ref:` line can only make a
@@ -205,6 +209,7 @@ for file in "${files[@]}"; do
   prref_hit=""
   spec_lines=()
   spec_labels=()
+  spec_lineno=""
   in_on=0
   in_runs_on=0
   in_with=0
@@ -307,7 +312,7 @@ for file in "${files[@]}"; do
     case "$stripped" in
       *ref:*)
         case "$line" in
-          *github.event.pull_request* | *github.head_ref*)
+          *github.event.pull_request* | *github.head_ref* | *refs/pull/*)
             if [ -z "$prref_hit" ]; then
               prref_hit="$lineno: $stripped"
             fi
@@ -324,6 +329,7 @@ for file in "${files[@]}"; do
           *self-hosted*)
             spec_lines+=("$lineno: $line")
             spec_labels+=("$(labels_in "${stripped#*runs-on:}")")
+            spec_lineno="$lineno"
             ;;
         esac
         case "$stripped" in
@@ -351,22 +357,32 @@ for file in "${files[@]}"; do
             with_indent=$indent
             ;;
           *)
-            # The inline flow-mapping form, `with: {runner: …}`.
-            case "$line" in
-              *self-hosted*)
-                spec_lines+=("$lineno: $line")
-                spec_labels+=("$(labels_in "$rest")")
-                ;;
-            esac
+            # The inline flow-mapping form, `with: {runner: …}`. Same
+            # one-line-one-spec rule as the window arm below: the key
+            # inside the mapping may itself be `runs-on`.
+            if [ "$spec_lineno" != "$lineno" ]; then
+              case "$line" in
+                *self-hosted*)
+                  spec_lines+=("$lineno: $line")
+                  spec_labels+=("$(labels_in "$rest")")
+                  spec_lineno="$lineno"
+                  ;;
+              esac
+            fi
             ;;
         esac
         ;;
       *)
-        if [ "$in_with" -eq 1 ]; then
+        # One line is one spec, however many halves of the rule match it:
+        # a callee input literally named `runs-on` inside an open `with:`
+        # window is both shape a and shape c, and reporting it twice says
+        # "two offences" about one line.
+        if [ "$in_with" -eq 1 ] && [ "$spec_lineno" != "$lineno" ]; then
           case "$line" in
             *self-hosted*)
               spec_lines+=("$lineno: $line")
               spec_labels+=("$(labels_in "${stripped#*:}")")
+              spec_lineno="$lineno"
               ;;
           esac
         fi
