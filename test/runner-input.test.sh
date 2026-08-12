@@ -67,13 +67,15 @@ check "consumer doctrine warns that persistent runners retain state" 0 \
 check "consumer doctrine explains single-job runner concurrency" 0 \
   "one runner executes one job at a time" \
   grep -F "one runner executes one job at a time" "$CONSUMERS"
+# shellcheck disable=SC2016 # Markdown backticks are asserted literally
+event_with_note='existing `with:` key (alongside `sweep_workflow` when present); do not repeat the key'
+# shellcheck disable=SC2016 # Markdown backticks are asserted literally
+sweep_with_note='key (alongside `pr_workflow_name` when present); do not repeat the key'
 check "event caller preserves its existing with mapping" 0 \
-  'existing `with:` key (alongside `sweep_workflow` when present); do not repeat the key' \
-  grep -F 'existing `with:` key (alongside `sweep_workflow` when present); do not repeat the key' \
+  "$event_with_note" grep -F "$event_with_note" \
   "$CONSUMERS"
 check "sweep caller preserves its existing with mapping" 0 \
-  'key (alongside `pr_workflow_name` when present); do not repeat the key' \
-  grep -F 'key (alongside `pr_workflow_name` when present); do not repeat the key' \
+  "$sweep_with_note" grep -F "$sweep_with_note" \
   "$CONSUMERS"
 
 summary
