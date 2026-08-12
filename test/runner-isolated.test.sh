@@ -574,6 +574,14 @@ jobs:
     with: {runner: '["self-hosted","ci-runner"]'}
 YAML
 check "the inline with: {…} form is scanned too" 1 "ci-runner" in_tree with-inline
+# …and its labels come out as labels: the flow mapping carries a `key:`
+# INSIDE the value, and a label read as `runner: self-hosted` matches no
+# allowlist entry — failing safe, but refusing a consumer who vouched
+# correctly.
+check "the inline form's labels parse as labels, so vouching works" 0 \
+  "1 workflow file" in_tree with-inline .github/workflows ci-runner
+check "the inline form names the label cleanly" 1 \
+  "labels: self-hosted, ci-runner" in_tree with-inline
 
 # The with: window must close: a self-hosted mention indented BACK OUT to
 # a sibling key is not an input value. Without the indentation check this

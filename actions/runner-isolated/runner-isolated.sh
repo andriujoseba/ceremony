@@ -150,17 +150,20 @@ fi
 
 # labels_in <value> — the runner labels a `runs-on:` or input value names,
 # comma-separated on one line. JSON, YAML flow lists, block-sequence items
-# and bare scalars reduce to the same thing: brackets, quotes and the
-# item dash are punctuation.
+# and bare scalars reduce to the same thing: brackets, braces, quotes and
+# the item dash are punctuation. A `key:` prefix goes too, because the
+# inline flow-mapping form (`with: {runner: …}`) carries one INSIDE the
+# value — and a label parsed as `runner: self-hosted` matches no allowlist
+# entry, which fails safe but refuses a consumer who vouched correctly.
 labels_in() {
   local value="$1"
   case "$value" in
     *[[:space:]]'#'*) value="${value%%[[:space:]]#*}" ;;
   esac
   printf '%s' "$value" \
-    | tr -d "\"'[]" \
+    | tr -d "\"'[]{}" \
     | tr ',' '\n' \
-    | sed 's/^[[:space:]]*-*[[:space:]]*//; s/[[:space:]]*$//' \
+    | sed 's/^[[:space:]]*-*[[:space:]]*//; s/^[A-Za-z0-9_-]*:[[:space:]]*//; s/[[:space:]]*$//' \
     | grep -v '^$' \
     | paste -sd, - || true
 }
