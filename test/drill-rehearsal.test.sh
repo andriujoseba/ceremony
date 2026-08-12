@@ -765,6 +765,9 @@ check "a single unavailable pair gets singular wording" 0 \
 check "the ref-routed repo and fork ref share -2" 0 \
   "$FORK/.github/workflows/release.yml@drill/0.7.0-2" \
   cat "$TMP/ref-routed.md"
+check "the default path does no early extra read of its selected ref" 0 "" \
+  bash -c 'test "$(grep -cF "git/ref/heads/drill/0.7.0-2" "$1")" -eq 2' \
+  _ "$TMP/state/calls"
 
 stub_reset
 for taken in $(seq 1 10); do
@@ -820,6 +823,14 @@ check "the printed retry invocation round-trips every argument and value" 0 "" \
   diff -u "$TMP/retry.expected" "$retry_argv"
 check "the explicit-name refusal creates no suggested repo" 1 "" \
   test -d "$TMP/state/$(san "$SCRATCH_OWNER/ceremony-drill-0.7.0-3")"
+
+stub_reset
+seed_taken_repo "$EXPLICIT"
+: >"$TMP/explicit-both-taken.scenario"
+explicit_both_taken_out="$(run_rehearsal "$TMP/explicit-both-taken.scenario" \
+  --repo-name chosen-by-hand --out "$TMP/explicit-both-taken.md" 2>&1)"
+check "an explicit repo-name collision keeps its free explicit fork ref" 0 \
+  "--fork-ref $FORK@$FORK_REF" printf '%s\n' "$explicit_both_taken_out"
 
 stub_reset
 green_scenario "$TMP/explicit-free.scenario"

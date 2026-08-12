@@ -154,10 +154,10 @@ export DRILL_DATE DRILL_REPO DRILL_WORK DRILL_STAGE
 export DRILL_PROBES DRILL_SETUP
 trap 'rm -rf "$DRILL_WORK"' EXIT
 
-retry_command_for_attempt() { # <attempt> — print a complete paired invocation
-  local suggested="${1:?}" retry_command
+retry_command_for_attempt() { # <attempt> <fork-ref> — print a complete invocation
+  local suggested="${1:?}" suggested_ref="${2:?}" retry_command
   local -a retry_args=(drill/rehearsal.sh --owner "$owner" --version "$version"
-    --fork-ref "$fork_repo@drill/$version-$suggested" --candidate-sha "$candidate_sha"
+    --fork-ref "$fork_repo@$suggested_ref" --candidate-sha "$candidate_sha"
     --repo-name "ceremony-drill-$version-$suggested")
   [ -z "$candidate_ref" ] || retry_args+=(--candidate-ref "$candidate_ref")
   [ "$private" -eq 0 ] || retry_args+=(--private)
@@ -274,7 +274,7 @@ if [ "$fork_ref_explicit" -eq 1 ]; then
   fi
   if [ -n "$explicit_ref_sha" ]; then
     suggestion="$(attempt_first_free "$owner" "$version" "$fork_repo")" || exit 1
-    retry_command="$(retry_command_for_attempt "$suggestion")"
+    retry_command="$(retry_command_for_attempt "$suggestion" "drill/$version-$suggestion")"
     fork_ref_exists_refusal "$fork_repo" "$fork_ref" "$explicit_ref_sha" || true
     printf 'drill: Retry with: %s\n' "$retry_command" >&2
     exit 1
@@ -314,7 +314,9 @@ if [ -n "$repo_name" ]; then
     suggestion_fork_repo="$fork_repo"
     [ "$fork_ref_explicit" -eq 0 ] || suggestion_fork_repo=""
     suggestion="$(attempt_first_free "$owner" "$version" "$suggestion_fork_repo")" || exit 1
-    retry_command="$(retry_command_for_attempt "$suggestion")"
+    suggested_ref="$fork_ref"
+    [ "$fork_ref_explicit" -eq 1 ] || suggested_ref="drill/$version-$suggestion"
+    retry_command="$(retry_command_for_attempt "$suggestion" "$suggested_ref")"
     refuse "--repo-name '$repo_name' is already taken. Retry with: ${retry_command% }"
   fi
   [ "$explicit_rc" -eq 0 ] || setup_abort scratch_create "$explicit_rc" "$explicit_errors"
