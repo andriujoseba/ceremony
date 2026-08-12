@@ -12,6 +12,64 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.1 — 2026-08-12
+
+### Added
+
+- Let reusable labels, labels-sweep, and release callers route every job to a JSON-encoded hosted label or self-hosted label set (#383).
+- Grade the drill record by re-render: CI parses a bare-version tree's record back into the inputs that would render it and requires the bytes back, so a hand-edited record fails where a shape check passed it (#313, #373).
+
+### Changed
+
+- `BUILDER.md` tells a builder whose handoff was taken back to clear the
+  blocker rather than re-set the label, the stop condition the "optimistic
+  write" sentence left out (#377).
+- Make release-drill scratch repositories public by default, with an explicit private mode and records based on observed visibility (#372).
+- Number rehearsal scratch attempts and route default names around archived leftovers without reclaiming repositories or refs (#371).
+
+### Fixed
+
+- The reconciler says why it took a handoff back: a PR carrying
+  `state:needs-human` that degrades to `state:addressing` because a
+  `blocker:*` stands now gets one PR comment naming the take-back, the exact
+  blockers standing, and the precondition (#377).
+- That comment is marked with the blocker set and the head SHA, so a sweep
+  posts it once per episode — a new head or a changed blocker set earns one
+  new comment, the same head with the same blockers never a second (#377).
+- It speaks only for a take-back that landed: a label edit that failed, or one
+  skipped because the repo has no `state:addressing`, leaves the handoff
+  standing and says nothing — and marks no episode, so the pass where the edit
+  does land still speaks (#377).
+- The other three ways `state:needs-human` degrades — a draft, a pending
+  ruling, a directed hold — stay silent, each already carrying a visible
+  label that says why (#377).
+- Make drill probes fail on unread fragment, release, or branch data instead of scoring an answer no read established (#375).
+- Setup aborts now emit separate, non-releasable evidence records and archive any scratch repository they created (#370).
+- The drill instrument retries every read it makes after a write, bounded by
+  `DRILL_READ_TRIES` and `DRILL_READ_NAP_SECONDS`, so a stale or transient
+  answer from GitHub no longer aborts the setup (#369).
+- A drill read that never answers says so — naming the read, its target and
+  the attempt count — instead of asserting that the write it followed failed
+  (#369).
+- `drill_gh_soft` tells an absent answer from a failed one: a 404 is still
+  exit 0 and empty, and anything else is non-zero for the caller to retry or
+  abort on (#369).
+- A drill record no longer states what a read said when the read never
+  answered: the re-arm rows, the changelog comparisons and the label
+  confirmation before a merge each report the unread read instead of a claim
+  about the repository derived from it (#369).
+- A drill setup no longer writes on a read that never answered: an existence
+  read that fails to the end of its budget aborts the commit rather than
+  reading as "this repository is empty" and sending the bootstrap write to a
+  branch that already has a head (#369).
+- A candidate verification that read no workflow file refuses instead of
+  reporting the candidate SHA as verified — a verification that took no
+  measurement is not a verification (#369).
+- A disposal whose flag reads back `archived: false` for the whole retry
+  budget is recorded as an archive that did not land, distinctly from a read
+  that never answered at all — the first is a measurement, the second is the
+  absence of one (#369).
+
 ## 0.7.0 — 2026-08-10
 
 ### Added
