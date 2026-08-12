@@ -68,6 +68,15 @@ set -euo pipefail
 # matching several shapes at once still reports once: the fragment is
 # chosen once, and there is one place that records it.
 #
+# AND THE UNIT IS NOT BOUNDED BY THE LINE EITHER (#395 round 3). A flow
+# collection may open on one line and close on another, and a `runs-on:`
+# may sit inside a mapping that opened before it — so the fragment is
+# the COLLECTION, taken from its own `{` and read on until its own
+# bracket closes it, rather than the tail of a line. Both halves were
+# fail-OPEN: a sibling key's scalar vouching for a `runs-on:` value it
+# is no part of, and a `with: {` alone on a line losing every value
+# below it in silence. The machine is at flow_feed below.
+#
 # THE RULE IS FILE-LEVEL, DELIBERATELY. The precise rule — no JOB
 # reachable from a PR-code trigger runs self-hosted — needs a YAML
 # parser, and a second parser in bash is a new class of guard bug bought
@@ -98,6 +107,11 @@ set -euo pipefail
 #       runner:                              #   itself be a block
 #         - self-hosted                      #   sequence, accumulated
 #         - ci-runner                        #   as one spec like above
+#     with: {                                # …and a flow collection may
+#       safe: '["self-hosted","pr-runner"]', #   SPAN LINES: it is read on
+#       hot:  '["self-hosted","ci-runner"]'  #   until its own bracket
+#     }                                      #   closes it, one spec per
+#                                            #   value (#395 round 3)
 #
 # A `with:` value is judged identically to a `runs-on:` value, and only
 # AFTER the trigger axis has decided whether the file executes PR code at
@@ -188,60 +202,129 @@ labels_in() {
     | paste -sd, - || true
 }
 
-# spec_values <fragment> — the runner SPECS a fragment carries, one per
-# line. Usually exactly one: a `runs-on:` value, a `with:` input value.
-# The exception is the inline flow mapping `{a: …, b: …}`, where each
-# value is a spec of ITS OWN — two reusable-workflow inputs that happen
-# to share a line are two different runners, and the conjunction argument
-# above holds only WITHIN one value. Flattening the mapping let a vouched
-# tier vouch for an unvouched sibling on the same line, which is a
-# fail-OPEN (#395 round 2). The split is at the mapping's own commas —
-# depth 0, outside quotes — so a flow list like `[self-hosted, ci-runner]`
-# stays the single conjunction it is.
-spec_values() {
-  local text="$1"
-  text="${text#"${text%%[![:space:]]*}"}"
-  case "$text" in
-    '{'*) ;;
-    *)
-      printf '%s\n' "$text"
-      return
+# THE FRAGMENT IS A FLOW COLLECTION, NOT A SLICE OF A LINE — frag_start,
+# flow_feed and flow_flush below are that one idea, and the two shapes
+# #395 round 3 found are the two halves of it:
+#
+#   - A collection's values are ITS OWN. `{runs-on: [self-hosted,
+#     ci-runner], environment: pr-runner}` is a job written as a flow
+#     mapping, not a runner spec, and reading it from the `runs-on:` key
+#     to the end of the line let `environment`'s vouched scalar into the
+#     spec's label set. So a fragment carrying a flow mapping begins at
+#     the mapping's `{`, and its values are split apart there.
+#   - A collection NEED NOT CLOSE on the line that opens it. `with: {`
+#     alone on a line handed the splitter one character, and every value
+#     below it belonged to no open window at all — both specs vanished,
+#     a silent loss rather than a mis-vouch. So the split is a state
+#     machine fed one line at a time, carrying bracket depth between
+#     lines, rather than a function over one string.
+#
+# flow_split says whether the collection is a MAPPING, whose own depth-1
+# commas separate values, each judged alone (#395 round 2: two
+# reusable-workflow inputs sharing a line are two different runners, and
+# the conjunction argument holds only WITHIN one value). A `[…]` list or
+# a bare scalar is ONE value however many lines it spans, which is why
+# `[self-hosted, ci-runner]` is not split at its own comma.
+flow_open=0
+flow_split=0
+flow_depth=0
+flow_quote=""
+flow_cur=""
+flow_hit=""
+
+# flow_flush — the value that just ended becomes a spec if it names
+# self-hosted, reported at the first line the value's text appeared on:
+# the same choice the block-sequence window makes, and the reason a
+# collection spanning lines points at the line carrying the label rather
+# than at the bracket that opened it.
+flow_flush() {
+  case "$flow_cur" in
+    *self-hosted*)
+      spec_lines+=("${flow_hit:-$lineno: $line}")
+      spec_labels+=("$(labels_in "$flow_cur")")
       ;;
   esac
+  flow_cur=""
+  flow_hit=""
+}
 
-  local body="${text#\{}" cur="" quote="" depth=0 i=0 ch
-  while [ "$i" -lt "${#body}" ]; do
-    ch="${body:i:1}"
+# flow_feed <chunk> — one line's worth of an open collection.
+flow_feed() {
+  local text="$1" i=0 ch
+  while [ "$i" -lt "${#text}" ]; do
+    ch="${text:i:1}"
     i=$((i + 1))
-    if [ -n "$quote" ]; then
-      if [ "$ch" = "$quote" ]; then
-        quote=""
+    if [ -n "$flow_quote" ]; then
+      if [ "$ch" = "$flow_quote" ]; then
+        flow_quote=""
       fi
-      cur="$cur$ch"
+      flow_cur="$flow_cur$ch"
       continue
     fi
     case "$ch" in
-      '"' | "'") quote="$ch" ;;
-      '[' | '{') depth=$((depth + 1)) ;;
-      ']') depth=$((depth - 1)) ;;
-      '}')
-        # The mapping's own close: anything after it is not a value.
-        if [ "$depth" -eq 0 ]; then
-          break
+      '"' | "'") flow_quote="$ch" ;;
+      '[' | '{') flow_depth=$((flow_depth + 1)) ;;
+      ']' | '}')
+        if [ "$flow_depth" -gt 0 ]; then
+          flow_depth=$((flow_depth - 1))
+          # The collection's own close: what follows it on this line is
+          # not one of its values.
+          if [ "$flow_depth" -eq 0 ]; then
+            flow_flush
+            flow_open=0
+            return
+          fi
         fi
-        depth=$((depth - 1))
         ;;
       ',')
-        if [ "$depth" -eq 0 ]; then
-          printf '%s\n' "$cur"
-          cur=""
+        if [ "$flow_split" -eq 1 ] && [ "$flow_depth" -eq 1 ]; then
+          flow_flush
           continue
         fi
         ;;
     esac
-    cur="$cur$ch"
+    flow_cur="$flow_cur$ch"
   done
-  printf '%s\n' "$cur"
+
+  # A fragment with no collection open ends with its own line.
+  if [ "$flow_depth" -eq 0 ]; then
+    flow_flush
+    flow_open=0
+    return
+  fi
+
+  # Quote state is line-scoped on purpose: an apostrophe in an unquoted
+  # scalar must not make the rest of the file read as quoted text.
+  flow_quote=""
+  if [ -z "$flow_hit" ]; then
+    case "$flow_cur" in
+      *self-hosted*) flow_hit="$lineno: $line" ;;
+    esac
+  fi
+}
+
+# frag_start <fragment> — begin a fragment on this line. A leading `{` is
+# a flow mapping, whose values are split apart; anything else is one
+# value, collection or scalar.
+frag_start() {
+  local text="$1"
+  text="${text#"${text%%[![:space:]]*}"}"
+  flow_cur=""
+  flow_hit=""
+  flow_quote=""
+  flow_open=1
+  case "$text" in
+    '{'*)
+      flow_split=1
+      flow_depth=1
+      text="${text#\{}"
+      ;;
+    *)
+      flow_split=0
+      flow_depth=0
+      ;;
+  esac
+  flow_feed "$text"
 }
 
 # spec_vouched <comma-joined-labels> — true when the consumer has vouched
@@ -287,6 +370,12 @@ for file in "${files[@]}"; do
   with_indent=0
   seq_labels=""
   seq_hit=""
+  flow_open=0
+  flow_split=0
+  flow_depth=0
+  flow_quote=""
+  flow_cur=""
+  flow_hit=""
 
   lineno=0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -308,6 +397,21 @@ for file in "${files[@]}"; do
 
     indent=$((${#line} - ${#stripped}))
 
+    # A flow collection opened on an earlier line goes on consuming lines
+    # until its own bracket closes it — the whole of codex-bot's round-3
+    # blocker. It is BOUNDED at a top-level key, which a flow collection
+    # cannot contain: a file whose brackets never balance stops there
+    # rather than swallowing the rest of itself, trigger block and all,
+    # which would turn a malformed file into a silent pass.
+    if [ "$flow_open" -eq 1 ]; then
+      if [ "$indent" -gt 0 ]; then
+        flow_feed "$stripped"
+        continue
+      fi
+      flow_flush
+      flow_open=0
+    fi
+
     # Half two, shape b: the window a bare key opened over its list items
     # closes at the first line that is not a `- …` item, and the whole
     # sequence is ONE spec — its labels are read together, so a vouched
@@ -317,9 +421,11 @@ for file in "${files[@]}"; do
     # value" has to cover this shape too, and reading each `- …` item as
     # its own one-label spec refused a consumer who had vouched correctly
     # (#395 round 2, claude-bot's nit 2).
+    consumed_item=0
     if [ "$in_seq" -eq 1 ]; then
       case "$stripped" in
         '-'*)
+          consumed_item=1
           item_labels="$(labels_in "$stripped")"
           if [ -n "$item_labels" ]; then
             seq_labels="${seq_labels:+$seq_labels,}$item_labels"
@@ -396,15 +502,23 @@ for file in "${files[@]}"; do
         ;;
     esac
 
+    # A line consumed as an item of an open sequence window is already
+    # part of that window's one spec, so it selects no fragment of its
+    # own. THIS is what makes "one line, one report" structural rather
+    # than a sentence broader than the code: round 2 left the flush path
+    # and the arms below both able to record an item line, and a
+    # `- runs-on: […]` item under an open `with:` sequence was reported
+    # twice (#395 round 3, claude-bot's nit).
+    if [ "$consumed_item" -eq 1 ]; then
+      continue
+    fi
+
     # Half two, shapes a and c: WHICH FRAGMENT of this line carries
     # runner specs — a `runs-on:` value, or a label passed through an
     # input, which is what a caller writing
     # `runner: '["self-hosted","ci-runner"]'` is doing (#395 decision 5).
     # The fragment is chosen ONCE, and there is one recording point
-    # below, which is what makes "one line, one report" structural: round
-    # 1 held it with a line-number guard between arms that could each
-    # match, and the sequence-flush path did not consult that guard
-    # (#395 round 2, claude-bot's nit 2).
+    # below.
     frag=""
     case "$stripped" in
       'with:' | 'with:'[[:space:]]*)
@@ -434,9 +548,21 @@ for file in "${files[@]}"; do
       *)
         case "$stripped" in
           # A `runs-on:` that is not this line's own key — a job written
-          # as a flow mapping, say. Read loosely, because a miss here is
-          # a false NEGATIVE.
-          *runs-on:*) frag="${stripped#*runs-on:}" ;;
+          # as a flow mapping, say, which is the shape this arm's own
+          # comment named while reading straight past it: when a mapping
+          # opens BEFORE the key, the fragment is that mapping, taken
+          # from its `{`. Slicing the line at `runs-on:` instead runs to
+          # the end of it, and a sibling key's scalar joined the spec's
+          # labels and vouched for a runner it is no part of (#395 round
+          # 3, claude-bot's blocker — the round-2 fix reaching the third
+          # arm). With no mapping open, read loosely: a miss here is a
+          # false NEGATIVE.
+          *runs-on:*)
+            case "${stripped%%runs-on:*}" in
+              *'{'*) frag="{${stripped#*\{}" ;;
+              *) frag="${stripped#*runs-on:}" ;;
+            esac
+            ;;
           *)
             # An input inside an open `with:` window: a bare key opens a
             # block-sequence window exactly as `runs-on:` does, and a key
@@ -459,16 +585,11 @@ for file in "${files[@]}"; do
     esac
 
     # …and the verdict material: every VALUE that fragment carries which
-    # names self-hosted is a spec of its own, judged on its own labels.
+    # names self-hosted is a spec of its own, judged on its own labels —
+    # recorded here as each value ends, which may be on this line or on
+    # a later one if the collection stays open.
     if [ -n "$frag" ]; then
-      while IFS= read -r spec_value; do
-        case "$spec_value" in
-          *self-hosted*)
-            spec_lines+=("$lineno: $line")
-            spec_labels+=("$(labels_in "$spec_value")")
-            ;;
-        esac
-      done <<<"$(spec_values "$frag")"
+      frag_start "$frag"
     fi
   done <"$file"
 
@@ -476,6 +597,12 @@ for file in "${files[@]}"; do
   if [ -n "$seq_hit" ]; then
     spec_lines+=("$seq_hit")
     spec_labels+=("$seq_labels")
+  fi
+
+  # …and so does a flow collection the file ends inside of.
+  if [ "$flow_open" -eq 1 ]; then
+    flow_flush
+    flow_open=0
   fi
 
   # The derivation, in the order the ruling states it.
