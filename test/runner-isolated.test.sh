@@ -631,6 +631,158 @@ check "a runs-on: sequence inside with: carries the whole set" 1 \
 check "…and is reported once, not once per matching path" 0 \
   "offending specs reported: 1" specs_reported with-seq-runs-on
 
+# --- #395 round 3: the fragment is a flow collection, not a line ----------
+
+# claude-bot's blocker, shape 1: a whole JOB written as a flow mapping.
+# The `runs-on:` here is not the line's own key, so the loose arm read
+# it — and read `${stripped#*runs-on:}`, the rest of the LINE, so
+# `environment:`'s vouched scalar joined the runs-on value's label set
+# and vouched for a tier it is no part of. The block form of the same
+# job fails; the flow form passed. Both files are valid YAML.
+wf flow-job-mapping a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build: {runs-on: [self-hosted, ci-runner], environment: pr-runner, steps: [{run: make test}]}
+YAML
+check "a sibling key in a flow JOB cannot vouch for its runs-on value" 1 \
+  "ci-runner" in_tree flow-job-mapping .github/workflows pr-runner
+check "…and the spec's labels are the runs-on value's own" 1 \
+  "labels: self-hosted, ci-runner —" in_tree flow-job-mapping \
+  .github/workflows pr-runner
+check "…once, not once per key the line carries" 0 \
+  "offending specs reported: 1" specs_reported flow-job-mapping \
+  .github/workflows pr-runner
+# The mirror: vouching for the runner the job actually names still
+# passes, so the fix cannot rot into "a flow job always fails".
+check "…and vouching for the value's own tier still passes" 0 \
+  "1 workflow file" in_tree flow-job-mapping .github/workflows ci-runner
+
+# claude-bot's blocker, shape 2: the same mapping as a matrix entry,
+# where `- {runs-on: …, tier: …}` is the routine spelling.
+wf flow-matrix-include a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - {runs-on: [self-hosted, ci-runner], tier: pr-runner}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - run: make test
+YAML
+check "a matrix entry's sibling key cannot vouch either" 1 \
+  "labels: self-hosted, ci-runner —" in_tree flow-matrix-include \
+  .github/workflows pr-runner
+check "…and the expression that reads it is not a second spec" 0 \
+  "offending specs reported: 1" specs_reported flow-matrix-include \
+  .github/workflows pr-runner
+
+# codex-bot's blocker: a flow mapping that does not close on the line
+# that opens it. `with: {` handed the splitter one character and the
+# value lines below belonged to no open window at all — both specs
+# vanished, which is a silent loss rather than a mis-vouch.
+wf flow-multiline a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {
+      safe-runner: '["self-hosted","pr-runner"]',
+      privileged-runner: '["self-hosted","ci-runner"]'
+    }
+YAML
+check "a flow mapping spanning lines is scanned, not lost" 1 \
+  "labels: self-hosted, ci-runner —" in_tree flow-multiline \
+  .github/workflows pr-runner
+# …and each value is still judged alone across the line break: the
+# vouched sibling neither rescues the unvouched one nor is reported.
+check "…each of its values judged alone, so only one is reported" 0 \
+  "offending specs reported: 1" specs_reported flow-multiline \
+  .github/workflows pr-runner
+check_absent "…and the vouched value is not the one reported" 1 \
+  "safe-runner" in_tree flow-multiline .github/workflows pr-runner
+# The offence is reported at the line the value sits on, not at the
+# bracket three lines above it.
+check "…reported at the value's own line, not the line that opened it" 1 \
+  "8:       privileged-runner:" in_tree flow-multiline \
+  .github/workflows pr-runner
+
+wf flow-multiline-vouched a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {
+      safe-runner: '["self-hosted","pr-runner"]',
+      other-runner: '["self-hosted","pr-runner"]'
+    }
+YAML
+check "both values of a multiline mapping vouched is still a pass" 0 \
+  "1 workflow file" in_tree flow-multiline-vouched .github/workflows pr-runner
+
+# codex-bot's second half, the same parser boundary: a flow SEQUENCE
+# under a block `with:` key, spanning lines. A list is one value however
+# many lines it spans — so this is one conjunction, not two one-label
+# specs, and one vouched label covers it.
+wf flow-multiline-seq a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: [
+        self-hosted,
+        ci-runner
+      ]
+YAML
+check "a flow sequence spanning lines stays one conjunction" 0 \
+  "1 workflow file" in_tree flow-multiline-seq .github/workflows ci-runner
+check "…and it still fails, as one spec, when nothing is vouched" 1 \
+  "labels: self-hosted, ci-runner —" in_tree flow-multiline-seq
+check "…as one spec, not one per line it spans" 0 \
+  "offending specs reported: 1" specs_reported flow-multiline-seq
+
+# The bound on the accumulation, which nobody asked for and a guard
+# needs: a collection whose brackets never balance stops at the next
+# top-level key. Unbounded, this file's `on:` block would be swallowed
+# as collection text, the file would derive as executing no PR code, and
+# a malformed workflow would be a silent PASS — the one defect this
+# guard is not allowed to have.
+wf flow-unterminated a.yml <<'YAML'
+name: pr checks
+jobs:
+  build:
+    runs-on: { self-hosted,
+      ci-runner
+on: pull_request
+YAML
+check "an unterminated collection does not swallow the trigger block" 1 \
+  "self-hosted" in_tree flow-unterminated
+
+# claude-bot's nit: "one line, one report" was a sentence broader than
+# the code. A `- runs-on: …` item inside an open `with:` sequence window
+# was consumed by the window AND recorded again by the loose arm.
+wf seq-item-runs-on a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner:
+        - runs-on: '["self-hosted","ci-runner"]'
+YAML
+check "a sequence item that also matches an arm is reported once" 0 \
+  "offending specs reported: 1" specs_reported seq-item-runs-on
+check "…and it is the window's spec, carrying the whole set" 1 \
+  "labels: self-hosted, ci-runner —" in_tree seq-item-runs-on
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml
