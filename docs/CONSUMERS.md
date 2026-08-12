@@ -294,7 +294,17 @@ runner's single-job queue.
 `pr-code-runner-labels` — a comma-separated list of runner labels on which
 you assert PR-authored code may execute — **unreleased** (#395). It is empty by
 default, and an empty allowlist vouches for nothing: a consumer that passes
-nothing gets the guard it had before the input existed.
+nothing keeps the verdict it had on every file that executes PR-authored
+code.
+
+That is the input's compatibility claim, and it is deliberately narrower than
+"nothing changes". The same release corrects the axis, and the correction
+moves one verdict on its own: a file triggered by `pull_request_target` that
+names a self-hosted runner but checks out **no** PR ref executes no PR code,
+so it stops failing — it needs no allowlist entry and never did. If a pin
+bump makes this guard go quiet on a file you expected it to flag, that is the
+shape to check first: adding a PR-ref checkout to such a file brings the
+failure straight back.
 
 ```yaml
       - uses: heavy-duty/ceremony/actions/runner-isolated@<pinned-tag>
