@@ -36,14 +36,14 @@ inputs:
     description: >-
       Comma-separated runner labels on which PR-authored code MAY execute —
       the consumer's assertion, which no workflow file can prove. Empty by
-      default: nothing is vouched for, so every file that executes PR-
-      authored code keeps the verdict it had before the input existed. That
-      is the input's whole compatibility claim and not a wider one — the
-      axis correction above moves one verdict on its own, a
+      default: nothing is vouched for, so every file that executes
+      PR-authored code keeps the verdict it had before the input existed.
+      That is the input's whole compatibility claim and not a wider one:
+      the axis correction above moves one verdict on its own, a
       `pull_request_target` file with a self-hosted runner and no PR-ref
       checkout, which failed before #395 and passes now however it is
-      routed. A `runs-on:` label set is a conjunction, so
-      naming one label of a set vouches for the whole set. Name the
+      routed. A `runs-on:` label set is a conjunction, so naming one
+      label of a set vouches for the whole set. Name the
       untrusted tier and never the trusted one: the runner you vouch for
       must publish no artifact a trusted job consumes, hold no credential
       the job should not have, and reach nothing the PR author should not
