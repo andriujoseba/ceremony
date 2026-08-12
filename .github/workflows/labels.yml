@@ -34,6 +34,13 @@ name: labels
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          JSON-encoded runner label or label set. Keep the default for a
+          GitHub-hosted runner, or pass an array for a self-hosted runner.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
       sweep_workflow:
         description: >-
           Filename of the consumer's sweep caller — the workflow that
@@ -64,7 +71,7 @@ jobs:
       github.event.action != 'unlabeled' &&
       github.event.action != 'review_requested' &&
       github.event.action != 'review_request_removed'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner) }}
     concurrency:
       group: labels-scope-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -122,7 +129,7 @@ jobs:
     # `bootstrap` input (unexpected input), or without `actions: write`
     # on this caller (permission denied) fails HERE, visibly on the PR,
     # instead of silently never sweeping again.
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
       - name: dispatch the sweep
         env:

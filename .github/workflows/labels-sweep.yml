@@ -34,6 +34,13 @@ name: labels-sweep
 on:
   workflow_call:
     inputs:
+      runner:
+        description: >-
+          JSON-encoded runner label or label set. Keep the default for a
+          GitHub-hosted runner, or pass an array for a self-hosted runner.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
       pr_workflow_name:
         description: >-
           The `name:` of the consumer's PR-facing labels caller, exported
@@ -53,7 +60,7 @@ env:
 
 jobs:
   reconcile:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner) }}
     # ONE shared group: every reconcile sweeps every open PR, so cron and
     # dispatched runs must serialize or two sweeps race the same PR's labels
     # and both pass the request-the-human-once guard.
