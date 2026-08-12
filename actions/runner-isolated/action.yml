@@ -14,7 +14,9 @@ description: >-
   execute on. Empty by default, so a caller passing nothing vouches for
   nothing. Self-hosted labels are read from `runs-on:` (same-line and
   block-sequence) and from `with:` input values, the shape a reusable-
-  workflow caller uses. The rule is file-level, deliberately: a file that
+  workflow caller uses, and a flow collection is read to its own closing
+  bracket rather than to the end of its first line, so one written across
+  several lines is scanned like any other. The rule is file-level, deliberately: a file that
   executes PR code and names an unvouched self-hosted label anywhere fails,
   even across jobs — the fix is to split the workflow or vouch for the
   tier. Known gaps, so silence is never read as coverage: `workflow_call`
@@ -45,7 +47,8 @@ inputs:
       routed. A `runs-on:` label set is a conjunction, so naming one
       label of a set vouches for the whole set — one set, one value:
       two runners named on one line are two sets, and vouching for one
-      leaves the other guarded. Name the
+      leaves the other guarded. A value is one value however its lines
+      fall, so a collection spread over several is still one set. Name the
       untrusted tier and never the trusted one: the runner you vouch for
       must publish no artifact a trusted job consumes, hold no credential
       the job should not have, and reach nothing the PR author should not
