@@ -49,7 +49,9 @@ usage: drill/rehearsal.sh --owner <login> --version <X.Y.Z>
 
   --owner          where the disposable public scratch repo is created
   --version        the candidate's release version; the fixture arms X.Y.Z-dev
-  --fork-ref       the stub source; omitted ref is picked as drill/<version>-<n>
+  --fork-ref       the stub source; omitted ref is picked as drill/<version>-<n>;
+                   a taken explicit ref refuses before creating anything and
+                   prints a retry using the first free paired attempt
   --candidate-sha  the canonical candidate SHA every CEREMONY_SELF_REF is
                    rewritten to on that fork ref
   --repo-name      scratch repo name (default: first free ceremony-drill-<version>-<n>)
@@ -152,6 +154,19 @@ export DRILL_DATE DRILL_REPO DRILL_WORK DRILL_STAGE
 export DRILL_PROBES DRILL_SETUP
 trap 'rm -rf "$DRILL_WORK"' EXIT
 
+retry_command_for_attempt() { # <attempt> — print a complete paired invocation
+  local suggested="${1:?}" retry_command
+  local -a retry_args=(drill/rehearsal.sh --owner "$owner" --version "$version"
+    --fork-ref "$fork_repo@drill/$version-$suggested" --candidate-sha "$candidate_sha"
+    --repo-name "ceremony-drill-$version-$suggested")
+  [ -z "$candidate_ref" ] || retry_args+=(--candidate-ref "$candidate_ref")
+  [ "$private" -eq 0 ] || retry_args+=(--private)
+  retry_args+=(--out "$out")
+  [ -z "$stamp" ] || retry_args+=(--date "$stamp")
+  printf -v retry_command '%q ' "${retry_args[@]}"
+  printf '%s\n' "${retry_command% }"
+}
+
 # setup_ctx writes only facts the setup has actually established. In
 # particular, a planned scratch name is not evidence that the repo exists.
 setup_ctx() { # <file> [disposal]
@@ -248,6 +263,24 @@ fork_head=""
 pin=""
 caller_sha=""
 baseline=""
+
+# An explicit ref keeps its refuse-rather-than-route contract, but the read
+# now happens before the first remote write. The later fork_ref_prepare check
+# remains the race backstop for this rehearsal and every direct caller (#387).
+if [ "$fork_ref_explicit" -eq 1 ]; then
+  explicit_ref_sha=""
+  if ! explicit_ref_sha="$(scratch_ref_sha "$fork_repo" "$fork_ref")"; then
+    exit 1
+  fi
+  if [ -n "$explicit_ref_sha" ]; then
+    suggestion="$(attempt_first_free "$owner" "$version" "$fork_repo")" || exit 1
+    retry_command="$(retry_command_for_attempt "$suggestion")"
+    fork_ref_exists_refusal "$fork_repo" "$fork_ref" "$explicit_ref_sha" || true
+    printf 'drill: Retry with: %s\n' "$retry_command" >&2
+    exit 1
+  fi
+fi
+
 setup_capture runner authenticated_login drill_gh api user --jq '.login'
 
 attempt=""
@@ -281,16 +314,7 @@ if [ -n "$repo_name" ]; then
     suggestion_fork_repo="$fork_repo"
     [ "$fork_ref_explicit" -eq 0 ] || suggestion_fork_repo=""
     suggestion="$(attempt_first_free "$owner" "$version" "$suggestion_fork_repo")" || exit 1
-    suggested_ref="$fork_ref"
-    [ "$fork_ref_explicit" -eq 1 ] || suggested_ref="drill/$version-$suggestion"
-    retry_args=(drill/rehearsal.sh --owner "$owner" --version "$version"
-      --fork-ref "$fork_repo@$suggested_ref" --candidate-sha "$candidate_sha"
-      --repo-name "ceremony-drill-$version-$suggestion")
-    [ -z "$candidate_ref" ] || retry_args+=(--candidate-ref "$candidate_ref")
-    [ "$private" -eq 0 ] || retry_args+=(--private)
-    retry_args+=(--out "$out")
-    [ -z "$stamp" ] || retry_args+=(--date "$stamp")
-    printf -v retry_command '%q ' "${retry_args[@]}"
+    retry_command="$(retry_command_for_attempt "$suggestion")"
     refuse "--repo-name '$repo_name' is already taken. Retry with: ${retry_command% }"
   fi
   [ "$explicit_rc" -eq 0 ] || setup_abort scratch_create "$explicit_rc" "$explicit_errors"

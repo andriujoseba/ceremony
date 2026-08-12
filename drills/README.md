@@ -43,8 +43,10 @@ so partial setup evidence cannot satisfy the release gate.
    default fork ref gets the first free numbered ref and records that numeric
    attempt. Burned names are routed around and never reclaimed: an explicit
    repo name still refuses if it exists and prints the complete invocation
-   for the next free numbered pair, while an explicit fork ref is always
-   honored exactly.
+   for the next free numbered pair. An explicit fork ref is honored exactly:
+   if it already exists, the instrument refuses before creating the scratch
+   repo or any other remote artifact, writes no abort record, and prints a
+   complete invocation using the first free paired repo name and fork ref.
 
    The repo is disposable by design — but the
    disposal is split, because the builder cannot perform the delete: at the
