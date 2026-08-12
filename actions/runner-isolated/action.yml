@@ -1,19 +1,29 @@
 name: Runner isolated
 description: >-
-  Assert that no `pull_request`- (or `pull_request_target`-) triggered
-  workflow names a self-hosted runner (#58). A pull_request workflow runs
-  the PR branch's code — from a fork, unreviewed code — and a self-hosted
-  runner executes it on our own hardware, inside our own network; the
-  fork-PR write-token and secrets toggles protect credentials, not the
-  runner. The rule is file-level, deliberately: a file whose trigger block
-  names pull_request and which names self-hosted anywhere fails, even
-  across jobs — the fix is to split the workflow. Known gaps, so silence
-  is never read as coverage: workflow_call reachability is not followed
-  (a pull_request caller plus a self-hosted callee goes unseen), and
-  indirection is not resolved (runner groups, matrix or expression values
-  for runs-on). A missing workflows directory is a pass. The caller must
-  have checked out its own repository first: the guard reads the
-  consumer's tree at the workspace.
+  Assert that no workflow file which executes PR-authored code names a
+  self-hosted runner the consumer has not vouched for (#58, axis corrected
+  in #395). A file executes PR-authored code when it is `pull_request`-
+  triggered (unconditionally — the trigger implies the context) or when it
+  is `pull_request_target`-triggered AND checks out a PR ref; that second
+  row, base-branch privileges running PR-authored code, is the most
+  dangerous shape in the trigger surface and the one the first version
+  could not see. A `pull_request_target` file that checks out nothing
+  executes no PR code and passes with no allowlist entry. Whether a runner
+  tier is isolated cannot be read off a workflow file, so it stays an
+  assertion: `pr-code-runner-labels` names the labels PR-authored code may
+  execute on. Empty by default, so a caller passing nothing vouches for
+  nothing. Self-hosted labels are read from `runs-on:` (same-line and
+  block-sequence) and from `with:` input values, the shape a reusable-
+  workflow caller uses. The rule is file-level, deliberately: a file that
+  executes PR code and names an unvouched self-hosted label anywhere fails,
+  even across jobs — the fix is to split the workflow or vouch for the
+  tier. Known gaps, so silence is never read as coverage: `workflow_call`
+  reachability is not followed across files (only the label passed through
+  `with:` is seen), a PR head fetched by hand inside a `run:` block is not
+  a `ref:` key and is not detected, and indirection is not resolved (runner
+  groups, matrix or expression values for `runs-on`). A missing workflows
+  directory is a pass. The caller must have checked out its own repository
+  first: the guard reads the consumer's tree at the workspace.
 inputs:
   workflows-dir:
     description: >-
@@ -22,6 +32,21 @@ inputs:
       adopts.
     required: false
     default: .github/workflows
+  pr-code-runner-labels:
+    description: >-
+      Comma-separated runner labels on which PR-authored code MAY execute —
+      the consumer's assertion, which no workflow file can prove. Empty by
+      default: nothing is vouched for, and the guard behaves as it did
+      before the input existed. A `runs-on:` label set is a conjunction, so
+      naming one label of a set vouches for the whole set. Name the
+      untrusted tier and never the trusted one: the runner you vouch for
+      must publish no artifact a trusted job consumes, hold no credential
+      the job should not have, and reach nothing the PR author should not
+      reach — `docs/CONSUMERS.md` states the bar with incubator's split as
+      the worked example. Naming `self-hosted` itself vouches for every
+      self-hosted tier you have and is almost never what you mean (#395).
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -29,4 +54,5 @@ runs:
       shell: bash
       env:
         WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
+        PR_CODE_RUNNER_LABELS: ${{ inputs.pr-code-runner-labels }}
       run: bash "$GITHUB_ACTION_PATH/runner-isolated.sh"

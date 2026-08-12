@@ -393,7 +393,8 @@ for file in "${files[@]}"; do
   index=0
   while [ "$index" -lt "${#spec_lines[@]}" ]; do
     if ! spec_vouched "${spec_labels[index]}"; then
-      unvouched+=("${spec_lines[index]}"$'\n'"        labels: ${spec_labels[index]} — none of them is named in pr-code-runner-labels ($allowlist_shown)")
+      shown_labels="${spec_labels[index]//,/, }"
+      unvouched+=("${spec_lines[index]}"$'\n'"        labels: $shown_labels — none of them is named in pr-code-runner-labels ($allowlist_shown)")
     fi
     index=$((index + 1))
   done

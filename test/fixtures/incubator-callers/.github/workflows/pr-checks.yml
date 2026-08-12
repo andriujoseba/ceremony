@@ -1,0 +1,247 @@
+# PR checks — the CI half of the "review + CI gate" iron rule (GHCR
+# pipeline spec, 2026-07-10).
+#
+# Runs on GitHub-hosted runners ONLY — PR-triggered workflows execute
+# unreviewed branch code, which must never reach the self-hosted deploy
+# runner (D-213: that box is for the post-merge deploy trigger alone).
+#
+# RUNNER TIERS, and why this file did NOT move to a self-hosted runner
+# when three of its siblings did (#141). This repo has two self-hosted labels
+# and they are not interchangeable — both guests carry the implicit
+# `self-hosted` label, so the tier label is the ONLY discriminator:
+#
+#   ci-runner      → `ci-box` on `ci-server`. The unprivileged tier. NOT a
+#                    tailnet member at all: it cannot resolve or route to
+#                    `coolify-box`. main-guards.yml, build-images.yml and
+#                    retention-health.yml run there.
+#   the other      → `deploy-box`, the deploy plane. It holds the Coolify
+#                    route and the deploy token. Its label is spelled in
+#                    deploy.yml and NOWHERE ELSE — deliberately, so one
+#                    grep proves CI cannot reach the privileged plane —
+#                    which is why this note does not repeat it either
+#                    (#141 acceptance criterion 3).
+#
+# THE BLOCK IS MECHANICAL, NOT A PREFERENCE. `guards` below runs
+# `heavy-duty/ceremony/actions/runner-isolated`, which fails any workflow
+# file that is pull_request-triggered AND names `self-hosted` anywhere in
+# it — file-level on purpose, across jobs, and it does not care which tier
+# label follows. This file and refs-guard.yml are the repo's only two
+# pull_request-triggered workflows, so both stay hosted. Point either at
+# `ci-runner` and the very check enforcing the rule reds, on this PR and
+# on every push to `main` through main-guards.yml.
+#
+# The guard's stated unblock ("split the workflow") does not apply here:
+# the split it wants is PR-triggered work on hosted runners vs self-hosted
+# work behind push/dispatch triggers, and PR checks are PR-triggered by
+# definition. Moving these two is therefore a heavy-duty/ceremony
+# decision (its #58 / epic #56 D5) plus a release and a pin bump, not an
+# edit anyone can make in this repo. Until that lands, `ubuntu-latest`
+# here is correct and deliberate — do not "fix" it.
+#
+# EVERY CHECK RUNS AND REPORTS ON EVERY PR. That is the whole of the
+# 2026-07-23 operator ruling that survives, and it is load-bearing: a
+# workflow that always reports is what lets branch protection be enabled
+# without stranding docs-only PRs on a check that never runs, and the
+# ceremony guards below exist precisely to catch the PRs a docs-only skip
+# would hide from them (CHANGELOG.md, `.ceremony/`).
+#
+# What the 2026-08-11 ruling on discussion #92 narrowed (#100): the unit
+# is the CHECK, not the work inside it. `guards` and `check` stay
+# unconditional and whole. `test` also still runs and still reports on
+# every PR — what scopes is the fan-out INSIDE it, the suites it chooses
+# to run, computed from the PR's own diff by
+# `.github/scripts/affected-workspaces.sh`. The measurement that sized it:
+# over 41 runs in 9 days, `test` billed 197 of ~320 minutes, and 73% of
+# the last 30 PRs touched no `apps/*` or `packages/*` file at all — they
+# ran apps/core's 93 testcontainer suites against byte-identical code.
+#
+# What did NOT narrow, and must never be added to this file: `paths:` or
+# `paths-ignore:`. A `pull_request` workflow that filters itself out on
+# paths never triggers at all, so its checks never report and a required
+# check leaves the PR pending forever — that stranding is the failure
+# shape the ruling was written against, and it is why the mechanism is
+# refused here even where the principle is adopted.
+#
+# The draft gate on `test` is NOT that shape (#110, operator ruling on
+# discussion #92, 2026-08-11). A job skipped by a job-level `if:` still
+# reports — GitHub gives it a check run with conclusion `skipped`, which
+# branch protection scores as neutral rather than pending, and which the
+# review round reads as green (`.ceremony/BUILDER.md`: "skipped or
+# neutral is green"). So the check still appears on every PR; what the
+# gate keys on is readiness for review, never which files the PR
+# touches, leaving the ruling above untouched.
+#
+# `guards` and `check` are deliberately NOT gated: they are ~2 of the 8
+# billed minutes, they read the tree and return, and a draft head should
+# carry real greens rather than merely no check — crew's split, which
+# gates `ci-shell`/`ci-floor` and lets `release-guards.yml` run on every
+# PR including drafts. The measurement that sized the gate: 60 of the
+# last 105 `pull_request` runs here (57%) fired on heads nobody was
+# reviewing yet, ~480 of ~840 billed minutes, against GitHub Free's
+# 2,000/month on a private repo.
+#
+# The ruling names crew as the precedent, and crew splits its suite into
+# two workflows gated by workflow-level `paths:` filters (`ci-shell.yml`,
+# `ci-floor.yml`). The PRINCIPLE is adopted here; the MECHANISM is not,
+# for the reason in the paragraph above — crew can afford a check that
+# does not report, a repo heading for branch protection cannot.
+#
+# Scoping is conservative by construction: reachability from a declared
+# map (a `packages/ui-core` change runs everything that depends on it),
+# global trip-wires for anything that changes how the suite is built or
+# run, and fail-open on anything unclassified. apps/core's integration
+# suites use testcontainers — Docker is present on ubuntu-latest, and the
+# image warm-up is pulled only when apps/core is in the set.
+#
+# build-images.yml and deploy.yml keep their own filters — they gate
+# artifacts, not review.
+name: pr-checks
+
+on:
+  pull_request:
+    # Naming types replaces GitHub's defaults (`opened`, `synchronize`,
+    # `reopened`), and `ready_for_review` is what makes the draft gate on
+    # `test` wake at the head the panel will review. The two are one
+    # change and must never be split: gate `test` without this line and a
+    # PR built entirely in draft skips `test` on every run, flips to
+    # ready, fires nothing, and reaches the panel showing a green that
+    # came from a draft-era skip (#110).
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # The ceremony guards (heavy-duty/ceremony, pinned 0.7.1 — the same tag as
+  # release.yml's caller; bump every reference together, ceremony
+  # docs/CONSUMERS.md). They read the tree only — no write perms.
+  guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # changelog-monotonic compares HEAD against the merge base; a
+          # checkout that cannot resolve it is a hard failure in CI, not
+          # a skip (a guard that can quietly stop guarding is the failure
+          # shape these checks exist to refuse).
+          fetch-depth: 0
+      - uses: heavy-duty/ceremony/actions/changelog-armed@0.7.1
+      - uses: heavy-duty/ceremony/actions/changelog-monotonic@0.7.1
+      - uses: heavy-duty/ceremony/actions/changelog-assembled@0.7.1
+      - uses: heavy-duty/ceremony/actions/drill-recorded@0.7.1
+      - uses: heavy-duty/ceremony/actions/runner-isolated@0.7.1
+      - uses: heavy-duty/ceremony/actions/docs-sync@0.7.1
+      # The GHCR prune's shield computation is the one piece of shell whose
+      # failure deletes prod artifacts (#53); drive it with mocked gh/curl
+      # after every ceremony guard so its failure remains visible by step.
+      - run: bash .github/scripts/compute-prune-shields.test.sh
+      - run: bash .github/scripts/check-retention-health.test.sh
+      # The `test` job's fan-out decides which suites run at all, so its
+      # own logic is tested here — in the job that runs unconditionally and
+      # installs nothing (#100 D6).
+      - run: bash .github/scripts/affected-workspaces.test.sh
+
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  test:
+    # The draft gate — the one job-level `if:` in this file, and the
+    # reason the header above distinguishes a skipped job from a workflow
+    # that never triggers. `test` is the expensive half (6 of the 8
+    # billed minutes); a draft head is one nobody is reviewing yet. The
+    # `github.event_name` clause is crew's shape, kept verbatim so a
+    # future non-PR trigger here cannot silently inherit the gate.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The fan-out diffs against the PR's merge base; a checkout that
+          # cannot resolve it fails the job rather than scoping off an
+          # unresolvable diff (#100 D7).
+          fetch-depth: 0
+
+      - name: Select the workspaces this diff can reach
+        id: affected
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA}" ] || ! git rev-parse --verify --quiet "${BASE_SHA}^{commit}" >/dev/null; then
+            echo "::error::cannot resolve the PR base commit '${BASE_SHA}' — refusing to scope the suite off an unresolvable diff (#100 D7)"
+            exit 1
+          fi
+          # Three dots: the PR's own changes against the merge base, never
+          # the base branch's traffic since the branch point.
+          git diff --name-only "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/changed-files.txt"
+          echo "Changed files (${BASE_SHA}...HEAD):"
+          sed 's/^/  /' "${RUNNER_TEMP}/changed-files.txt"
+          bash .github/scripts/affected-workspaces.sh \
+            < "${RUNNER_TEMP}/changed-files.txt" \
+            > "${RUNNER_TEMP}/affected.txt"
+
+          args=""
+          while read -r ws; do args="${args} -w ${ws}"; done \
+            < "${RUNNER_TEMP}/affected.txt"
+          args="${args# }"
+
+          if [ -z "${args}" ]; then
+            plan="no workspace is reachable from this diff — running no suites"
+          else
+            plan="npm run test --if-present ${args}"
+          fi
+          echo "${plan}"
+          echo "npm-args=${args}" >> "${GITHUB_OUTPUT}"
+          # Only apps/core's suites use testcontainers (#100 D8).
+          if grep -qx 'apps/core' "${RUNNER_TEMP}/affected.txt"; then
+            echo "needs-postgres=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "needs-postgres=false" >> "${GITHUB_OUTPUT}"
+          fi
+          # A green `test` that ran zero suites has to say so on its face,
+          # or the check quietly becomes a lie (#100 D9).
+          {
+            echo "### \`test\` fan-out"
+            echo
+            echo "\`\`\`"
+            echo "${plan}"
+            echo "\`\`\`"
+            echo "<details><summary>Changed files</summary>"
+            echo
+            echo "\`\`\`"
+            cat "${RUNNER_TEMP}/changed-files.txt"
+            echo "\`\`\`"
+            echo
+            echo "</details>"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - if: steps.affected.outputs.npm-args != ''
+        run: npm ci
+
+      # Testcontainers' beforeAll must fit vitest's 10s hook timeout; a cold
+      # runner spends longer than that pulling the DB image. Warm the cache.
+      - if: steps.affected.outputs.needs-postgres == 'true'
+        run: docker pull -q postgres:16
+
+      - if: steps.affected.outputs.npm-args != ''
+        env:
+          NPM_ARGS: ${{ steps.affected.outputs.npm-args }}
+        run: npm run test --if-present ${NPM_ARGS}

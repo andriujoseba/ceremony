@@ -1,0 +1,67 @@
+name: release
+# The consumer caller from heavy-duty/ceremony docs/CONSUMERS.md (ceremony#16).
+# The ceremony lives on canonical heavy-duty/incubator: the release-labeled
+# ceremony PR is `<bot fork>:<branch> → heavy-duty:main` (ceremony#16 operator
+# ruling (iv), 2026-07-23), opened by a builder, merged by the operator. On a
+# fork this same file is a green NOTICE no-op for every ordinary merge — the
+# decide table's green rows are what make it safe to carry on both remotes.
+#
+# THIS FILE'S PIN IS THE REPO'S ONE PIN. docs-sync reads the ref from the
+# single `uses: heavy-duty/ceremony/.github/workflows/release.yml@<ref>` line
+# below and verifies the `.ceremony/` doctrine mirror against it, so bumping
+# here re-vendors the mirror in the same PR — and every other ceremony
+# reference in this directory is kept on the same tag so the two can never
+# disagree.
+#
+# RUNNER ROUTING (#144, mechanism ceremony#383, available at 0.7.1+). Both
+# release seats — `release-on-merge` and `release-on-tag` — run inside
+# ceremony, so their `runs-on` is the `runner` input below, read through
+# `fromJSON`. THE JSON ENCODING IS THE CONTRACT: a bare string cannot
+# express a label SET, and an unquoted `ubuntu-latest` inside the string is
+# invalid JSON that dies loudly at `fromJSON` rather than falling back to
+# the default. Copy the quoting exactly. `ci-runner` is `ci-box` on
+# `ci-server`, the unprivileged tier and not a tailnet member; never the
+# deploy plane's label, which is spelled in deploy.yml and nowhere else so
+# one grep proves CI cannot reach it (#141 acceptance criterion 3) — and the
+# release's `contents: write` token has no business on the deploy path. The
+# full reasoning, and the pull_request_target check that goes with it, are
+# in labels.yml's header.
+#
+# The target runner must carry `gh` and `jq`: these jobs are bash scripts
+# driving the GitHub CLI, so a runner without them fails at the first step
+# with routing that still looks correct on `.jobs[].labels` (#144).
+#
+# THE RELEASE SEAT NEEDS MORE THAN THAT, and the shortfall lands late.
+# `release-on-merge` calls back into this repo's own
+# `.github/actions/release-artifact` after the tag ref exists and before the
+# release is published, so the runner also needs a docker daemon it can
+# reach, working buildx, and push rights to ghcr.io — plus the same `jq`,
+# read there against buildx's metadata file, where a missing
+# `containerimage.digest` makes that action refuse by design. Unmet, the
+# tag is already cut when the publish aborts. All of it is present on
+# `ci-box` today: build-images run 31613893700 did buildx setup and both
+# `--push` builds there, green, on this same label (#141).
+#
+# Triggers and permissions MUST live here (a called workflow cannot define them):
+on:
+  # ONE push key, both filters — YAML maps are last-key-wins; a second sibling
+  # `push:` silently replaces the first and kills a door (rig's review catch).
+  push:
+    tags: ["**"]      # every tag — a wrong tag must FAIL the assert loudly,
+                      # never be skipped by a shape filter that didn't match
+    branches: [main]
+permissions:
+  contents: write       # tag ref create + release create + the bump push
+  pull-requests: write  # decide's label read; the bump-fallback `gh pr create`
+  issues: write         # --label on that fallback PR rides the issues API
+  # Incubator-only deviation from the stock stub: the release-artifact hook
+  # pushes the release image to GHCR with the workflow's own token (D-220:
+  # a repo's token pushes its own org, so upstream runs push ghcr.io/heavy-duty/*).
+  packages: write
+jobs:
+  release:
+    uses: heavy-duty/ceremony/.github/workflows/release.yml@0.7.1
+    with:
+      version-source: file
+      # JSON, and `ci-runner` — see RUNNER ROUTING in the header.
+      runner: '["self-hosted","ci-runner"]'

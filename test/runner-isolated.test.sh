@@ -92,7 +92,12 @@ YAML
 check "quoted \"on\": key + self-hosted fails" 1 "self-hosted" \
   in_tree quoted-on
 
-# 5: pull_request_target is the same threat with a scarier token.
+# 5: pull_request_target that CHECKS OUT THE PR HEAD — base-branch
+# privileges running PR-authored code, the most dangerous shape in the
+# trigger surface and the row the guard could not see before #395. Until
+# then this fixture had no checkout and failed for naming a label; the
+# axis change moved that shape to a pass (the row below), so the failing
+# row is now the one that earns it.
 wf target a.yml <<'YAML'
 name: ci
 on:
@@ -101,10 +106,15 @@ jobs:
   build:
     runs-on: self-hosted
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - run: echo build
 YAML
-check "pull_request_target + self-hosted fails" 1 "self-hosted" \
-  in_tree target
+check "pull_request_target + a checkout of head.sha + self-hosted fails" 1 \
+  "self-hosted" in_tree target
+check "that failure says the checkout is why it derived as PR code" 1 \
+  "checks out a PR ref" in_tree target
 
 # 6: two jobs in one file — a PR-triggered hosted check AND a self-hosted
 # job. Pins the file-level decision (#58 §3): a later "fix" to job
@@ -302,7 +312,304 @@ check "the env var drives the script the way action.yml does" 1 \
 own_tree() {
   (cd "$ROOT" && bash "$SCRIPT")
 }
-check "ceremony's own .github/workflows passes" 0 "no pull_request-triggered work" \
-  own_tree
+check "ceremony's own .github/workflows passes" 0 \
+  "no PR-authored code on an unvouched self-hosted runner" own_tree
+
+# --- #395: the axis is "executes PR-authored code", not "is PR-triggered" ----
+
+# The row the first version got backwards, and the reason the fixture
+# above had to change: a pull_request_target caller that checks out
+# nothing executes no PR-authored code. It passes with NO allowlist entry
+# — this is incubator's labels.yml shape, and requiring an opt-in here is
+# what sank #389 (decisions 4 and 6).
+wf target-no-checkout a.yml <<'YAML'
+name: labels
+on:
+  pull_request_target:
+    types: [opened, labeled]
+jobs:
+  labels:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - run: echo labels
+YAML
+check "pull_request_target + self-hosted + no PR checkout passes, no input" 0 \
+  "1 workflow file" in_tree target-no-checkout
+
+# …and it passes because it was READ, not because the scan skipped it: the
+# same tree fails the moment the trigger is the one that implies PR code.
+wf target-flipped a.yml <<'YAML'
+name: labels
+on:
+  pull_request:
+    types: [opened, labeled]
+jobs:
+  labels:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - run: echo labels
+YAML
+check "the same file under pull_request fails — the trigger is the axis" 1 \
+  "ci-runner" in_tree target-flipped
+
+# A ref: that is not a PR ref does not make a pull_request_target file
+# execute PR code. Without this row "any ref: line" would pass the suite.
+wf target-plain-ref a.yml <<'YAML'
+name: labels
+on:
+  pull_request_target:
+jobs:
+  labels:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - run: echo labels
+YAML
+check "pull_request_target + a checkout of main is not a PR checkout" 0 \
+  "1 workflow file" in_tree target-plain-ref
+
+# The other two spellings of the same checkout. head.ref is named by the
+# ruling; github.head_ref is the same shape in GitHub's own docs and is
+# read the same way — over-reading a ref: line can only make a file derive
+# as executing PR code, never permit one.
+wf target-head-ref a.yml <<'YAML'
+name: ci
+on:
+  pull_request_target:
+jobs:
+  build:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - run: echo build
+YAML
+check "pull_request_target + a checkout of head.ref fails" 1 "ci-runner" \
+  in_tree target-head-ref
+
+wf target-github-head-ref a.yml <<'YAML'
+name: ci
+on:
+  pull_request_target:
+jobs:
+  build:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - run: echo build
+YAML
+check "pull_request_target + a checkout of github.head_ref fails" 1 "ci-runner" \
+  in_tree target-github-head-ref
+
+# --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
+
+# in_tree passes the allowlist as the second argument, the way action.yml
+# passes it as an env var (both wirings are proved below).
+wf vouched a.yml <<'YAML'
+name: pr-checks
+on:
+  pull_request:
+jobs:
+  check:
+    runs-on: [self-hosted, pr-runner]
+    steps:
+      - run: echo check
+YAML
+check "pull_request + an unvouched self-hosted label fails" 1 "pr-runner" \
+  in_tree vouched
+check "pull_request + the label vouched for passes" 0 "1 workflow file" \
+  in_tree vouched .github/workflows pr-runner
+
+# The worst outcome of the whole change would be a silent pass on a typo,
+# so the typo is a fixture.
+check "an allowlist entry that misspells the label still fails" 1 "pr-runner" \
+  in_tree vouched .github/workflows pr-runer
+check "a vouched OTHER tier does not vouch for this one" 1 "pr-runner" \
+  in_tree vouched .github/workflows ci-runner
+
+# The allowlist reaches the script through the env var too — action.yml's
+# wiring, not the argument's.
+env_allow_tree() {
+  (cd "$TMP/vouched" && PR_CODE_RUNNER_LABELS="$1" bash "$SCRIPT")
+}
+check "the allowlist env var drives the script the way action.yml does" 0 \
+  "1 workflow file" env_allow_tree pr-runner
+check "the env var is honored, not ignored into a pass" 1 "pr-runner" \
+  env_allow_tree ci-runner
+# Comma-separated, with the spacing a human writes.
+check "a comma-separated list vouches for each label in it" 0 "1 workflow file" \
+  env_allow_tree "ci-runner, pr-runner"
+
+# A label set is a conjunction — every runner matching [self-hosted,
+# pr-runner] is in the pr-runner tier — so one vouched label covers the
+# set, including when the set is a block sequence spanning lines.
+wf vouched-seq a.yml <<'YAML'
+name: pr-checks
+on:
+  pull_request:
+jobs:
+  check:
+    runs-on:
+      - self-hosted
+      - pr-runner
+    steps:
+      - run: echo check
+YAML
+check "a block-sequence label set is judged as one set" 0 "1 workflow file" \
+  in_tree vouched-seq .github/workflows pr-runner
+check "…and still fails when nothing in that set is vouched" 1 "self-hosted" \
+  in_tree vouched-seq
+
+# Vouching for one job does not vouch for the file: the second job's tier
+# is still unvouched, and only that job's line is reported.
+wf two-tiers a.yml <<'YAML'
+name: pr-checks
+on:
+  pull_request:
+jobs:
+  check:
+    runs-on: [self-hosted, pr-runner]
+    steps:
+      - run: echo check
+  publish:
+    runs-on: [self-hosted, ci-runner]
+    steps:
+      - run: echo publish
+YAML
+check "a vouched job does not vouch for the unvouched job beside it" 1 \
+  "runs-on: [self-hosted, ci-runner]" in_tree two-tiers .github/workflows pr-runner
+check_absent "the vouched job's own line is not reported as an offence" 1 \
+  "runs-on: [self-hosted, pr-runner]" in_tree two-tiers .github/workflows pr-runner
+
+# --- #395 decision 5: a label passed through an input --------------------
+
+# The shape #383 introduced and heavy-duty/incubator#144 shipped: the
+# label never appears in a runs-on: block in this file at all.
+wf with-input a.yml <<'YAML'
+name: pr-checks
+on:
+  pull_request:
+jobs:
+  check:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.7.1
+    with:
+      runner: '["self-hosted","ci-runner"]'
+YAML
+check "a with:-passed self-hosted label is seen on a PR-code file" 1 \
+  "ci-runner" in_tree with-input
+check "…and the vouched form of the same file passes" 0 "1 workflow file" \
+  in_tree with-input .github/workflows ci-runner
+
+# The same input on a pull_request_target caller with no PR checkout —
+# incubator's three callers exactly — needs no entry at all (decision 6).
+wf with-input-target a.yml <<'YAML'
+name: labels
+on:
+  pull_request_target:
+    types: [opened]
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.7.1
+    with:
+      runner: '["self-hosted","ci-runner"]'
+YAML
+check "a with:-passed label on a no-PR-code file needs no entry" 0 \
+  "1 workflow file" in_tree with-input-target
+
+# …and the dangerous version of it is caught: same caller, plus a PR-head
+# checkout in a job beside it.
+wf with-input-target-checkout a.yml <<'YAML'
+name: labels
+on:
+  pull_request_target:
+    types: [opened]
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.7.1
+    with:
+      runner: '["self-hosted","ci-runner"]'
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+YAML
+check "the same caller plus a PR-head checkout fails" 1 "ci-runner" \
+  in_tree with-input-target-checkout
+
+# The inline flow-mapping form of with:.
+wf with-inline a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  check:
+    uses: ./.github/workflows/inner.yml
+    with: {runner: '["self-hosted","ci-runner"]'}
+YAML
+check "the inline with: {…} form is scanned too" 1 "ci-runner" in_tree with-inline
+
+# The with: window must close: a self-hosted mention indented BACK OUT to
+# a sibling key is not an input value. Without the indentation check this
+# would still fail, and the window would be unbounded.
+wf with-window a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  check:
+    uses: ./.github/workflows/inner.yml
+    with:
+      quiet: true
+  note:
+    name: not self-hosted, just prose in a job name
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo note
+YAML
+check "the with: window closes at the next sibling key" 0 "1 workflow file" \
+  in_tree with-window
+
+# --- #395: the failure message has to be actionable ------------------------
+
+check "the failure names the offending label" 1 "labels: self-hosted, ci-runner" \
+  in_tree with-input
+check "the failure names why the file derived as executing PR code" 1 \
+  "its trigger block names pull_request" in_tree with-input
+check "the failure names the input that would permit it" 1 \
+  "pr-code-runner-labels" in_tree with-input
+check "the failure says the allowlist is empty when it is" 1 \
+  "empty — no label is vouched for" in_tree with-input
+check "the failure shows the allowlist it was given" 1 "(pr-runner)" \
+  in_tree with-input .github/workflows pr-runner
+
+# --- #395 decision 6: incubator's callers, verbatim, as a regression -------
+
+# Four files copied byte for byte from heavy-duty/incubator@main —
+# provenance and blob SHAs in the fixture's README. #389 asserted these
+# would need an opt-in in the same PR as the pin bump; the ruling says
+# they need nothing, and that claim is worth a fixture rather than a
+# sentence, because it is the exact claim that was wrong last time.
+incubator_tree() {
+  (cd "$ROOT/test/fixtures/incubator-callers" && bash "$SCRIPT" "$@")
+}
+check "incubator's real callers pass with no input set" 0 \
+  "4 workflow file(s) scanned" incubator_tree
+
+# That pass has to come from the AXIS, not from the guard failing to read
+# their `runner:` input. Take their real labels.yml, change the trigger
+# and nothing else, and the same file must fail naming the label it
+# passes — the one mutation that separates "derives as no PR code" from
+# "never saw it".
+mkdir -p "$TMP/incubator-flipped/.github/workflows"
+sed 's/pull_request_target:/pull_request:/' \
+  "$ROOT/test/fixtures/incubator-callers/.github/workflows/labels.yml" \
+  >"$TMP/incubator-flipped/.github/workflows/labels.yml"
+check "…and their with:-passed label IS seen: flip the trigger and it fails" 1 \
+  "ci-runner" in_tree incubator-flipped
 
 summary
