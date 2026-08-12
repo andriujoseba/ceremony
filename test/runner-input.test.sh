@@ -54,8 +54,10 @@ check "each caller stub shows the hosted JSON form" 0 "3" \
 check "each caller stub shows the multi-label JSON form" 0 "3" \
   count_fixed "runner: '[\"self-hosted\",\"ci-runner\"]'" "$CONSUMERS"
 check "consumer doctrine carries the runner isolation requirement" 0 \
-  "should not reach, never to a box that is itself part of the deploy path." \
-  grep -F "should not reach, never to a box that is itself part of the deploy path." \
+  "route these to a runner isolated" \
+  grep -F "route these to a runner isolated" \
   "$CONSUMERS"
+check "the isolation requirement rules out deploy-path hardware" 0 \
+  "of the deploy path." grep -F "of the deploy path." "$CONSUMERS"
 
 summary

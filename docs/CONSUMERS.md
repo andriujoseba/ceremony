@@ -256,8 +256,9 @@ falls back to the default.
 These jobs carry the permissions declared by their callers. In particular,
 `labels.yml` runs under `pull_request_target`: it still checks out and
 executes no consumer PR code, but its write-scoped token now executes on the
-selected hardware. **Route these to a runner isolated from anything the token
-should not reach, never to a box that is itself part of the deploy path.** For
+selected hardware. The isolation rule is: **route these to a runner isolated
+from anything the token should not reach, never to a box that is itself part
+of the deploy path.** For
 example, incubator's `ci-box` is the only machine that can reach its
 tailnet-only Coolify API, and `deploy.yml` deliberately keeps all repository
 source off it (D-211/D-212/D-213), so incubator must stand up a second runner
@@ -292,8 +293,13 @@ jobs:
     uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>
     with:
       version-source: file   # or: package-json
-      # Optional hosted override: runner: '"ubuntu-22.04"'
-      # Optional label set:      runner: '["self-hosted","ci-runner"]'
+```
+
+To route this caller, add one of these lines under its existing `with:` key:
+
+```yaml
+runner: '"ubuntu-22.04"'
+runner: '["self-hosted","ci-runner"]' # choose one; do not repeat the key
 ```
 
 `version-source` selects `file` (a `VERSION` file — box, rig, incubator) or
@@ -417,11 +423,16 @@ permissions:
 jobs:
   labels:
     uses: heavy-duty/ceremony/.github/workflows/labels.yml@<pinned-tag>
-    # Optional hosted override: with: { runner: '"ubuntu-22.04"' }
-    # Optional label set:      with: { runner: '["self-hosted","ci-runner"]' }
     # If the sweep caller below is named anything but labels-sweep.yml,
     # say so: `with: { sweep_workflow: <filename> }`. Ceremony's own
     # dogfood does (self-labels-sweep.yml).
+```
+
+To route the event-facing caller, add a `with:` mapping under its `uses:`:
+
+```yaml
+with: { runner: '"ubuntu-22.04"' }
+with: { runner: '["self-hosted","ci-runner"]' } # choose one
 ```
 
 And the complete sweep caller, `labels-sweep.yml` beside it — the hourly
@@ -465,13 +476,18 @@ permissions:
 jobs:
   sweep:
     uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@<pinned-tag>
-    # Optional hosted override: with: { runner: '"ubuntu-22.04"' }
-    # Optional label set:      with: { runner: '["self-hosted","ci-runner"]' }
     # If this repo's PR-facing labels caller is named anything but `labels`,
     # pass that name: `with: { pr_workflow_name: <name> }`. The sweep exports
     # it as SELF_WORKFLOW so the label machinery's own check entries (scope,
     # trigger) never count toward blocker:ci-red — a red trigger means "fix
     # the caller", which no PR edit can do (#208 reads it).
+```
+
+To route the sweep caller, add a `with:` mapping under its `uses:`:
+
+```yaml
+with: { runner: '"ubuntu-22.04"' }
+with: { runner: '["self-hosted","ci-runner"]' } # choose one
 ```
 
 Naming any permission sets every unnamed permission to `none`. Public
