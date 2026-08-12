@@ -1100,6 +1100,8 @@ rc_scenario() { # <file> <awk-line-number> <replacement-line>
     >"$1.tmp" && mv "$1.tmp" "$1"
 }
 probe_row() { awk -F'|' -v n=" $2 " '$2 == n { print; exit }' "$1"; }
+row_has() { probe_row "$1" "$2" | grep -qF -- "$3"; }
+row_lacks() { ! row_has "$1" "$2" "$3"; }
 
 stub_reset
 rc_scenario "$TMP/rc-stamped.scenario" 10 \
@@ -1962,29 +1964,29 @@ faulted_probe_run fragment-before "$fragment_fault"
 check "probe 7 reds when its before-fragment list never reads" 0 \
   "the fragment list did not read back at $SCRATCH@main before the rc cut" \
   probe_row "$TMP/fragment-before.md" 7
-check "the before-read failure never claims the fragment set changed" 1 "" \
-  probe_row "$TMP/fragment-before.md" 7 | grep -qF 'the fragment set changed'
+check "the before-read failure never claims the fragment set changed" 0 "" \
+  row_lacks "$TMP/fragment-before.md" 7 'the fragment set changed'
 
 printf -v fragment_fault '2\t10\tGET repos/%s/git/trees/main*\t500\tInternal Server Error' "$SCRATCH"
 faulted_probe_run fragment-after "$fragment_fault"
 check "probe 7 reds when its after-fragment list never reads" 0 \
   "the fragment list did not read back at $SCRATCH@main after the rc cut" \
   probe_row "$TMP/fragment-after.md" 7
-check "the after-read failure never claims the fragment set changed" 1 "" \
-  probe_row "$TMP/fragment-after.md" 7 | grep -qF 'the fragment set changed'
+check "the after-read failure never claims the fragment set changed" 0 "" \
+  row_lacks "$TMP/fragment-after.md" 7 'the fragment set changed'
 
 printf -v fragment_fault '3\t10\tGET repos/%s/git/trees/main*\t500\tInternal Server Error' "$SCRATCH"
 faulted_probe_run fragment-promotion "$fragment_fault"
 check "probe 8 reds when its fragment list never reads" 0 \
   "the fragment list did not read back at $SCRATCH@main after the promotion" \
   probe_row "$TMP/fragment-promotion.md" 8
-check "the unread promotion list produces exactly one row problem" 1 "" \
-  probe_row "$TMP/fragment-promotion.md" 8 | grep -qF ';'
-check "the unread promotion list never accuses the marker" 1 "" \
-  probe_row "$TMP/fragment-promotion.md" 8 | \
-    grep -qF 'changelog.d/README.md is gone after the promotion'
-check "the unread promotion list never accuses leftovers" 1 "" \
-  probe_row "$TMP/fragment-promotion.md" 8 | grep -qF 'fragments survived the promotion'
+check "the unread promotion list produces exactly one row problem" 0 "" \
+  row_lacks "$TMP/fragment-promotion.md" 8 ';'
+check "the unread promotion list never accuses the marker" 0 "" \
+  row_lacks "$TMP/fragment-promotion.md" 8 \
+    'changelog.d/README.md is gone after the promotion'
+check "the unread promotion list never accuses leftovers" 0 "" \
+  row_lacks "$TMP/fragment-promotion.md" 8 'fragments survived the promotion'
 
 # Release endpoint call indices that search a completed list rather than count
 # it: probes 1, 5, 6, 7 and 8. These are hard reads, so one failure is enough.
@@ -1995,8 +1997,8 @@ while IFS=$'\t' read -r release_name release_skip release_probe release_when rel
   check "probe $release_probe reds when its release list fails" 0 \
     "the release list did not read back at $SCRATCH $release_when" \
     probe_row "$TMP/$release_name.md" "$release_probe"
-  check "probe $release_probe does not restore its old release verdict" 1 "" \
-    probe_row "$TMP/$release_name.md" "$release_probe" | grep -qF "$release_old"
+  check "probe $release_probe does not restore its old release verdict" 0 "" \
+    row_lacks "$TMP/$release_name.md" "$release_probe" "$release_old"
 done <<'RELEASE_CASES'
 release-1	3	1	after the ceremony	no '0.7.0' release exists
 release-5	16	5	after the tag door ran	no '0.7.1' release exists
@@ -2018,8 +2020,8 @@ run_rehearsal "$TMP/release-absent.scenario" --out "$TMP/release-absent.md" \
 check "a read release list that lacks the tag keeps the existing accusation" 0 \
   "no '0.7.0' release exists after the ceremony" \
   probe_row "$TMP/release-absent.md" 1
-check "a read release list is never reported as unread" 1 "" \
-  probe_row "$TMP/release-absent.md" 1 | grep -qF 'release list did not read back'
+check "a read release list is never reported as unread" 0 "" \
+  row_lacks "$TMP/release-absent.md" 1 'release list did not read back'
 
 # The fifth matching ref read is probe 2's setup read. Exhaust it, then prove
 # the row, every later probe, disposal and the final record all survive. Probe
@@ -2035,7 +2037,7 @@ check "a branch-SHA failure becomes probe 2's read-named row" 0 \
 check "a branch-SHA failure still leaves all eight rows" 0 "8" \
   bash -c 'grep -cE "^\| [1-8] \|" "$1"' _ "$TMP/branch-sha.md"
 check "the last probe still runs after a branch-SHA failure" 0 "" \
-  probe_row "$TMP/branch-sha.md" 8
+  row_has "$TMP/branch-sha.md" 8 '| 8 |'
 check "the branch-SHA failure still archives the scratch repo" 0 \
   "archived=true" cat "$TMP/branch-sha.md"
 check "the branch-SHA failure still emits a valid record" 0 \
