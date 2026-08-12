@@ -256,10 +256,10 @@ falls back to the default.
 These jobs carry the permissions declared by their callers. In particular,
 `labels.yml` runs under `pull_request_target`: it still checks out and
 executes no consumer PR code, but its write-scoped token now executes on the
-selected hardware. The isolation rule is: **route these to a runner isolated
-from anything the token should not reach, never to a box that is itself part
-of the deploy path.** For
-example, incubator's `ci-box` is the only machine that can reach its
+selected hardware. **Route these to a runner isolated from anything the token should not reach — never to a host that is itself part of the deploy path.**
+Self-hosted runners do **not** reset state between jobs unless run ephemerally, and **one runner executes one job at a time**. A
+high-volume consumer therefore needs several ephemeral runners rather than
+one. For example, incubator's `ci-box` is the only machine that can reach its
 tailnet-only Coolify API, and `deploy.yml` deliberately keeps all repository
 source off it (D-211/D-212/D-213), so incubator must stand up a second runner
 instead of reusing `ci-box`.
@@ -428,7 +428,7 @@ jobs:
     # dogfood does (self-labels-sweep.yml).
 ```
 
-To route the event-facing caller, add a `with:` mapping under its `uses:`:
+To route the event-facing caller, add one of these lines under its existing `with:` key (alongside `sweep_workflow` when present); do not repeat the key:
 
 ```yaml
 with: { runner: '"ubuntu-22.04"' }
@@ -483,7 +483,7 @@ jobs:
     # the caller", which no PR edit can do (#208 reads it).
 ```
 
-To route the sweep caller, add a `with:` mapping under its `uses:`:
+To route the sweep caller, add one of these lines under its existing `with:` key (alongside `pr_workflow_name` when present); do not repeat the key:
 
 ```yaml
 with: { runner: '"ubuntu-22.04"' }

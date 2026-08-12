@@ -56,11 +56,24 @@ check "each caller stub shows the hosted JSON form" 0 "3" \
   count_fixed "runner: '\"ubuntu-22.04\"'" "$CONSUMERS"
 check "each caller stub shows the multi-label JSON form" 0 "3" \
   count_fixed "runner: '[\"self-hosted\",\"ci-runner\"]'" "$CONSUMERS"
-check "consumer doctrine carries the runner isolation requirement" 0 \
-  "route these to a runner isolated" \
-  grep -F "route these to a runner isolated" \
+check "consumer doctrine carries the exact runner isolation requirement" 0 \
+  "Route these to a runner isolated from anything the token should not reach — never to a host that is itself part of the deploy path." \
+  grep -F "Route these to a runner isolated from anything the token should not reach — never to a host that is itself part of the deploy path." \
   "$CONSUMERS"
-check "the isolation requirement rules out deploy-path hardware" 0 \
-  "of the deploy path." grep -F "of the deploy path." "$CONSUMERS"
+check "consumer doctrine warns that persistent runners retain state" 0 \
+  "Self-hosted runners do **not** reset state between jobs unless run ephemerally" \
+  grep -F "Self-hosted runners do **not** reset state between jobs unless run ephemerally" \
+  "$CONSUMERS"
+check "consumer doctrine explains single-job runner concurrency" 0 \
+  "one runner executes one job at a time" \
+  grep -F "one runner executes one job at a time" "$CONSUMERS"
+check "event caller preserves its existing with mapping" 0 \
+  'existing `with:` key (alongside `sweep_workflow` when present); do not repeat the key' \
+  grep -F 'existing `with:` key (alongside `sweep_workflow` when present); do not repeat the key' \
+  "$CONSUMERS"
+check "sweep caller preserves its existing with mapping" 0 \
+  'key (alongside `pr_workflow_name` when present); do not repeat the key' \
+  grep -F 'key (alongside `pr_workflow_name` when present); do not repeat the key' \
+  "$CONSUMERS"
 
 summary
