@@ -189,6 +189,10 @@ fi
 # inline flow-mapping form (`with: {runner: …}`) carries one INSIDE the
 # value — and a label parsed as `runner: self-hosted` matches no allowlist
 # entry, which fails safe but refuses a consumer who vouched correctly.
+# The prefixes are stripped to a FIXED POINT: a value taken from a nested
+# mapping carries one per level (`build: runs-on: self-hosted`), and one
+# strip left the message naming something that is not a label at all
+# (#395 round 4, claude-bot's nit 2).
 labels_in() {
   local value="$1"
   case "$value" in
@@ -197,7 +201,9 @@ labels_in() {
   printf '%s' "$value" \
     | tr -d "\"'[]{}" \
     | tr ',' '\n' \
-    | sed 's/^[[:space:]]*-*[[:space:]]*//; s/^[A-Za-z0-9_-]*:[[:space:]]*//; s/[[:space:]]*$//' \
+    | sed -e 's/^[[:space:]]*-*[[:space:]]*//' \
+          -e ':k' -e 's/^[A-Za-z0-9_-]*:[[:space:]]*//' -e 'tk' \
+          -e 's/[[:space:]]*$//' \
     | grep -v '^$' \
     | paste -sd, - || true
 }
@@ -219,15 +225,36 @@ labels_in() {
 #     machine fed one line at a time, carrying bracket depth between
 #     lines, rather than a function over one string.
 #
-# flow_split says whether the collection is a MAPPING, whose own depth-1
-# commas separate values, each judged alone (#395 round 2: two
-# reusable-workflow inputs sharing a line are two different runners, and
-# the conjunction argument holds only WITHIN one value). A `[…]` list or
-# a bare scalar is ONE value however many lines it spans, which is why
-# `[self-hosted, ci-runner]` is not split at its own comma.
+# flow_kinds is the open collections' BRACKET KINDS, innermost last —
+# `{[` is a list inside a mapping. A comma separates values when the
+# collection it sits in is a MAPPING, each value judged alone (#395 round
+# 2: two reusable-workflow inputs sharing a line are two different
+# runners, and the conjunction argument holds only WITHIN one value); a
+# `[…]` list or a bare scalar is ONE value however many lines it spans,
+# which is why `[self-hosted, ci-runner]` is not split at its own comma.
+# The kind is carried per level rather than the depth counted, because a
+# depth-1 test made that rule true of the OUTERMOST mapping only: nest a
+# second bracket before the key — `jobs: {build: {runs-on: […], tier:
+# pr-runner}}` is the routine spelling — and the nested mapping was one
+# value again, its sibling scalar back in the spec's label set. Round 3's
+# defect, one level in (#395 round 4, claude-bot's blocker 1).
+#
+# A QUOTED SCALAR IS OPAQUE, AND IT IS OPAQUE ACROSS ITS PHYSICAL LINES.
+# flow_quote used to be cleared at every line end, so a quoted label
+# wrapping a line stopped being quoted and the first `]` in its
+# continuation was counted as the collection's own close: everything
+# after it belonged to no window and vanished — a self-hosted label
+# passing with an empty allowlist, no vouch needed (#395 round 4, codex
+# and kimi blocking, claude-bot's blocker 2). What that reset defended
+# against was an apostrophe in a plain scalar (`don't`) reading as a
+# quote, and flow_fresh defends it more narrowly: a quote OPENS only
+# where a scalar can start — a fragment's beginning, or after `{`, `[`,
+# `,` or `:`. Inside the quote, YAML's own escaping is honoured, so a
+# JSON-in-a-string value written `"[\"self-hosted\"]"` yields labels and
+# not backslashes, and a correct vouch is not refused (codex, converse).
 flow_open=0
-flow_split=0
-flow_depth=0
+flow_kinds=""
+flow_fresh=1
 flow_quote=""
 flow_cur=""
 flow_hit=""
@@ -250,52 +277,80 @@ flow_flush() {
 
 # flow_feed <chunk> — one line's worth of an open collection.
 flow_feed() {
-  local text="$1" i=0 ch
+  local text="$1" i=0 ch esc
   while [ "$i" -lt "${#text}" ]; do
     ch="${text:i:1}"
     i=$((i + 1))
     if [ -n "$flow_quote" ]; then
+      # Inside a double-quoted scalar `\` escapes the next character,
+      # which is text whatever it is — `\"` is a quote the scalar
+      # CONTAINS, not its end, and the backslash is not part of the
+      # label. A single-quoted scalar has no backslash escape; its own
+      # is `''`, a literal quote that does not close the scalar.
+      if [ "$flow_quote" = '"' ] && [ "$ch" = '\' ] && [ "$i" -lt "${#text}" ]; then
+        esc="${text:i:1}"
+        i=$((i + 1))
+        flow_cur="$flow_cur$esc"
+        continue
+      fi
       if [ "$ch" = "$flow_quote" ]; then
+        if [ "$flow_quote" = "'" ] && [ "${text:i:1}" = "'" ]; then
+          i=$((i + 1))
+          flow_cur="$flow_cur'"
+          continue
+        fi
         flow_quote=""
       fi
       flow_cur="$flow_cur$ch"
       continue
     fi
     case "$ch" in
-      '"' | "'") flow_quote="$ch" ;;
-      '[' | '{') flow_depth=$((flow_depth + 1)) ;;
+      '"' | "'")
+        if [ "$flow_fresh" -eq 1 ]; then
+          flow_quote="$ch"
+        fi
+        flow_fresh=0
+        ;;
+      '[' | '{')
+        flow_kinds="$flow_kinds$ch"
+        flow_fresh=1
+        ;;
       ']' | '}')
-        if [ "$flow_depth" -gt 0 ]; then
-          flow_depth=$((flow_depth - 1))
+        if [ -n "$flow_kinds" ]; then
+          flow_kinds="${flow_kinds%?}"
           # The collection's own close: what follows it on this line is
           # not one of its values.
-          if [ "$flow_depth" -eq 0 ]; then
+          if [ -z "$flow_kinds" ]; then
             flow_flush
             flow_open=0
             return
           fi
         fi
+        flow_fresh=0
         ;;
       ',')
-        if [ "$flow_split" -eq 1 ] && [ "$flow_depth" -eq 1 ]; then
+        flow_fresh=1
+        # A separator only inside a mapping — see flow_kinds above.
+        if [ "${flow_kinds: -1}" = '{' ]; then
           flow_flush
           continue
         fi
         ;;
+      ':') flow_fresh=1 ;;
+      ' ' | '	') ;;
+      *) flow_fresh=0 ;;
     esac
     flow_cur="$flow_cur$ch"
   done
 
-  # A fragment with no collection open ends with its own line.
-  if [ "$flow_depth" -eq 0 ]; then
+  # A fragment ends with its own line unless something is still open:
+  # a collection, or a quoted scalar wrapping onto the next line.
+  if [ -z "$flow_kinds" ] && [ -z "$flow_quote" ]; then
     flow_flush
     flow_open=0
     return
   fi
 
-  # Quote state is line-scoped on purpose: an apostrophe in an unquoted
-  # scalar must not make the rest of the file read as quoted text.
-  flow_quote=""
   if [ -z "$flow_hit" ]; then
     case "$flow_cur" in
       *self-hosted*) flow_hit="$lineno: $line" ;;
@@ -303,27 +358,19 @@ flow_feed() {
   fi
 }
 
-# frag_start <fragment> — begin a fragment on this line. A leading `{` is
-# a flow mapping, whose values are split apart; anything else is one
-# value, collection or scalar.
+# frag_start <fragment> — begin a fragment on this line. Whatever opens
+# it is fed like any other character, so a leading `{` is a mapping whose
+# values are split apart and anything else is one value, collection or
+# scalar; a fragment begins where a scalar may.
 frag_start() {
   local text="$1"
   text="${text#"${text%%[![:space:]]*}"}"
   flow_cur=""
   flow_hit=""
   flow_quote=""
+  flow_kinds=""
+  flow_fresh=1
   flow_open=1
-  case "$text" in
-    '{'*)
-      flow_split=1
-      flow_depth=1
-      text="${text#\{}"
-      ;;
-    *)
-      flow_split=0
-      flow_depth=0
-      ;;
-  esac
   flow_feed "$text"
 }
 
@@ -371,8 +418,8 @@ for file in "${files[@]}"; do
   seq_labels=""
   seq_hit=""
   flow_open=0
-  flow_split=0
-  flow_depth=0
+  flow_kinds=""
+  flow_fresh=1
   flow_quote=""
   flow_cur=""
   flow_hit=""
@@ -397,15 +444,38 @@ for file in "${files[@]}"; do
 
     indent=$((${#line} - ${#stripped}))
 
+    # Half one, second question: does this file check out a PR ref? Only
+    # `pull_request_target` files are asked (a `pull_request` one already
+    # derives as executing PR code), but the answer is collected for
+    # every file — the trigger block may sit below the checkout. Asked
+    # HERE, before any window can consume the line: an unterminated
+    # collection above it used to eat the file's own `ref:` line, and a
+    # file that checks out the PR head then derived as executing no PR
+    # code — a silent pass, the one verdict this guard may not reach by
+    # accident (#395 round 4, claude-bot's nit 1).
+    case "$stripped" in
+      *ref:*)
+        case "$line" in
+          *github.event.pull_request* | *github.head_ref* | *refs/pull/*)
+            if [ -z "$prref_hit" ]; then
+              prref_hit="$lineno: $stripped"
+            fi
+            ;;
+        esac
+        ;;
+    esac
+
     # A flow collection opened on an earlier line goes on consuming lines
     # until its own bracket closes it — the whole of codex-bot's round-3
-    # blocker. It is BOUNDED at a top-level key, which a flow collection
-    # cannot contain: a file whose brackets never balance stops there
-    # rather than swallowing the rest of itself, trigger block and all,
-    # which would turn a malformed file into a silent pass.
+    # blocker. The line break itself folds to a space, as YAML folds it,
+    # so a scalar wrapping a line does not lose the word boundary. It is
+    # BOUNDED at a top-level key, which a flow collection cannot contain:
+    # a file whose brackets never balance stops there rather than
+    # swallowing the rest of itself, trigger block and all, which would
+    # turn a malformed file into a silent pass.
     if [ "$flow_open" -eq 1 ]; then
       if [ "$indent" -gt 0 ]; then
-        flow_feed "$stripped"
+        flow_feed " $stripped"
         continue
       fi
       flow_flush
@@ -485,22 +555,6 @@ for file in "${files[@]}"; do
         *pull_request*) trig_pr=1 ;;
       esac
     fi
-
-    # Half one, second question: does this file check out a PR ref? Only
-    # `pull_request_target` files are asked (a `pull_request` one already
-    # derives as executing PR code), but the answer is collected for
-    # every file — the trigger block may sit below the checkout.
-    case "$stripped" in
-      *ref:*)
-        case "$line" in
-          *github.event.pull_request* | *github.head_ref* | *refs/pull/*)
-            if [ -z "$prref_hit" ]; then
-              prref_hit="$lineno: $stripped"
-            fi
-            ;;
-        esac
-        ;;
-    esac
 
     # A line consumed as an item of an open sequence window is already
     # part of that window's one spec, so it selects no fragment of its
