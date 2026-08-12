@@ -818,6 +818,237 @@ check "a sequence item that also matches an arm is reported once" 0 \
 check "…and it is the window's spec, carrying the whole set" 1 \
   "labels: self-hosted, ci-runner —" in_tree seq-item-runs-on
 
+# --- #395 round 4: the collection's KIND, and a quoted scalar's opacity ----
+
+# claude-bot's blocker 1: the round-3 rule ("a collection's values are
+# ITS OWN") was written as a depth-1 test, so it held for the OUTERMOST
+# mapping only. Put a second bracket before the key — a whole `jobs:`
+# map inline, which is one of the two routine spellings — and the nested
+# mapping is one value again: `environment:`'s vouched scalar rejoins the
+# runs-on value's label set and vouches for a tier it is no part of. Same
+# arrival path and direction as round 3's blocker, one level in.
+wf nested-flow-job a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs: {build: {runs-on: [self-hosted, ci-runner], environment: pr-runner, steps: [{run: make test}]}}
+YAML
+check "a sibling key in a NESTED flow mapping cannot vouch either" 1 \
+  "labels: self-hosted, ci-runner —" in_tree nested-flow-job \
+  .github/workflows pr-runner
+check "…and it is one spec, not one per key the nesting carries" 0 \
+  "offending specs reported: 1" specs_reported nested-flow-job \
+  .github/workflows pr-runner
+# The mirror: the value's own tier vouched still passes, so the fix
+# cannot rot into "a nested mapping always fails".
+check "…and vouching for the nested value's own tier passes" 0 \
+  "1 workflow file" in_tree nested-flow-job .github/workflows ci-runner
+
+# The same defect at the nesting depth `matrix.include` reaches, where a
+# flow SEQUENCE sits between the two mappings (`{[{`). The block-sequence
+# spelling of this very file is already a row above; the only difference
+# between them is where the author put a line break, which is not
+# something the verdict may depend on.
+wf nested-matrix-include a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    strategy:
+      matrix: {include: [{runs-on: [self-hosted, ci-runner], tier: pr-runner}]}
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - run: make test
+YAML
+check "a mapping nested through a list is split at its own commas" 1 \
+  "labels: self-hosted, ci-runner —" in_tree nested-matrix-include \
+  .github/workflows pr-runner
+check "…and the line-break spelling of it reaches the same verdict" 1 \
+  "labels: self-hosted, ci-runner —" in_tree flow-matrix-include \
+  .github/workflows pr-runner
+
+# …and the shape with no bracket to stop a slice, which is what tells
+# "split by the innermost collection's kind" apart from "stop at the
+# runner list's own `]`".
+wf nested-flow-scalar a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs: {build: {runs-on: self-hosted, environment: pr-runner, steps: [{run: make test}]}}
+YAML
+check "a bare scalar runner nested in a flow job is judged alone" 1 \
+  "labels: self-hosted —" in_tree nested-flow-scalar \
+  .github/workflows pr-runner
+
+# The conjunction, which the kind-aware split must NOT break: the comma
+# inside `[self-hosted, pr-runner]` sits in a LIST however deeply that
+# list is nested, so the set stays one value and one vouched label covers
+# it — while the mapping's own comma still keeps `ci-runner` out of it.
+wf nested-flow-conjunction a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs: {build: {runs-on: [self-hosted, pr-runner], environment: ci-runner, steps: [{run: make test}]}}
+YAML
+check "a nested label set is still one conjunction, not two specs" 0 \
+  "1 workflow file" in_tree nested-flow-conjunction .github/workflows pr-runner
+
+# labels_in strips a `key:` prefix per nesting level, so one strip left
+# the message naming `runs-on: self-hosted`, which is not a label the
+# consumer could ever vouch for. It failed safe and read as a typo
+# (claude-bot's nit 2).
+check_absent "the message names labels, not the keys they were nested under" 1 \
+  "labels: runs-on:" in_tree nested-flow-job .github/workflows pr-runner
+
+# codex-bot's and kimi-bot's blocker, claude-bot's blocker 2: quote state
+# was cleared at every physical newline, so a quoted label wrapping a
+# line stopped being quoted and the first `]` in its continuation counted
+# as the collection's own close. Everything after it belonged to no
+# window: this file exited 0 with an EMPTY allowlist — a fail-open
+# needing no vouch at all. PyYAML reads the value as the three labels
+# `linux ]tier`, `self-hosted` and `ci-runner`.
+wf quoted-wrap-close a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {
+      runner: '["linux
+        ]tier","self-hosted","ci-runner"]'
+    }
+YAML
+check "a ] inside a wrapped quoted label does not close the collection" 1 \
+  "ci-runner" in_tree quoted-wrap-close
+check "…and the whole wrapped value is one spec's label set" 1 \
+  "labels: linux tier, self-hosted, ci-runner —" in_tree quoted-wrap-close
+
+# Its vouched mirror, so the row cannot rot into "a wrapped quoted value
+# always fails": the same shape whose set names a vouched tier passes.
+wf quoted-wrap-vouched a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {
+      runner: '["linux
+        ]tier","self-hosted","pr-runner"]'
+    }
+YAML
+check "…and the same shape vouched for its own tier passes" 0 \
+  "1 workflow file" in_tree quoted-wrap-vouched .github/workflows pr-runner
+
+# claude-bot's blocker 2 as it arrives in prose rather than in a label: a
+# wrapped `note:` closed the mapping early and the `hot:` runner below it
+# was never a spec at all. No vouch needed, so no consumer opt-in gates
+# it.
+wf quoted-wrap-note a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with: {
+      note: 'a long note that wraps
+        onto a second line]',
+      hot: '["self-hosted","ci-runner"]' }
+YAML
+check "a wrapped quoted note does not lose the values after it" 1 \
+  "labels: self-hosted, ci-runner —" in_tree quoted-wrap-note
+check "…and the offence is reported at the runner value's own line" 1 \
+  "9:       hot:" in_tree quoted-wrap-note
+
+# The nearer variant, where the RUNNER value is the one that wraps: it is
+# one value across both its lines, and the unvouched sibling beside it is
+# still its own spec.
+wf quoted-wrap-runner a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with: {
+      safe: '["self-hosted",
+        "pr-runner"]',
+      hot: '["self-hosted","ci-runner"]' }
+YAML
+check "a runner value wrapping a line is one value, judged whole" 1 \
+  "labels: self-hosted, ci-runner —" in_tree quoted-wrap-runner \
+  .github/workflows pr-runner
+check "…so only the unvouched sibling is reported" 0 \
+  "offending specs reported: 1" specs_reported quoted-wrap-runner \
+  .github/workflows pr-runner
+
+# What the line-scoped reset was defending, kept: an apostrophe inside a
+# PLAIN scalar must not make the rest of the file read as quoted text. A
+# quote opens only where a scalar can start, so `it's` stays plain and
+# the runner value two lines down is still read.
+wf plain-apostrophe a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with: {
+      note: it's a plain scalar,
+      hot: '["self-hosted","ci-runner"]' }
+YAML
+check "an apostrophe in a plain scalar does not swallow the file" 1 \
+  "labels: self-hosted, ci-runner —" in_tree plain-apostrophe
+
+# YAML's own escapes, both spellings. `\"` inside a double-quoted scalar
+# is a quote the scalar CONTAINS — the JSON-in-a-string form a caller
+# writes by hand — and carrying the backslashes into the labels refused a
+# consumer who had vouched correctly: fail-CLOSED, the converse defect
+# (codex-bot, kimi-bot's blocker 2).
+wf escaped-double-quotes a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {runner: "[\"self-hosted\",\"ci-runner\"]"}
+YAML
+check "an escaped-quote value's labels come out as labels" 1 \
+  "labels: self-hosted, ci-runner —" in_tree escaped-double-quotes
+check "…so vouching for the tier it names is honoured" 0 "1 workflow file" \
+  in_tree escaped-double-quotes .github/workflows ci-runner
+
+# …and `''`, which is a single-quoted scalar's own escape: it does not
+# end the scalar, so the `]` after it is still inside the quote and the
+# runner value below is still read.
+wf escaped-single-quote a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with: {
+      note: 'it''s wrapped in one scalar]',
+      hot: '["self-hosted","ci-runner"]' }
+YAML
+check "a '' escape does not end the scalar it sits in" 1 \
+  "labels: self-hosted, ci-runner —" in_tree escaped-single-quote
+
+# claude-bot's nit 1: the accumulation is bounded at a top-level key, so
+# the trigger block survives an unterminated collection (the row above
+# proves it) — but the file's own `ref:` line sits at indent > 0 and was
+# eaten, so a pull_request_target file checking out the PR head derived
+# as executing NO PR code and exited 0. GitHub would reject this file,
+# which is why it is a nit; a guard reaching a silent pass by accident is
+# why it is fixed rather than reworded.
+wf unterminated-eats-ref a.yml <<'YAML'
+name: pr checks
+on: pull_request_target
+jobs:
+  build:
+    runs-on: [self-hosted, ci-runner
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+YAML
+check "an unterminated collection cannot eat the file's own ref:" 1 \
+  "checks out a PR ref at line 9" in_tree unterminated-eats-ref
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml
