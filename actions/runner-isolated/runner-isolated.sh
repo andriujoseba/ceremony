@@ -274,6 +274,10 @@ set -euo pipefail
 workflows_dir="${1:-${WORKFLOWS_DIR:-.github/workflows}}"
 allowlist_raw="${2:-${PR_CODE_RUNNER_LABELS:-}}"
 
+# The separator a label SET is joined with — a newline, because a label
+# may contain a comma (labels_in).
+nl=$'\n'
+
 # The consumer's assertion, comma-separated. Newlines are accepted too, so
 # a YAML block scalar in a caller is not a silent misparse.
 allowed=()
@@ -295,7 +299,7 @@ else
 fi
 
 # labels_in <value> — the runner labels a `runs-on:` or input value names,
-# comma-separated on one line. JSON, YAML flow lists, block-sequence items
+# ONE PER LINE. JSON, YAML flow lists, block-sequence items
 # and bare scalars reduce to the same thing: brackets, braces, quotes and
 # the item dash are punctuation. A `key:` prefix goes too, because the
 # inline flow-mapping form (`with: {runner: …}`) carries one INSIDE the
@@ -318,17 +322,41 @@ fi
 # cut a quoted `#` out of a label the file really names, because the
 # accumulated value of a collection is not a line and has no tail to
 # trim (#395 round 5).
+#
+# A `,` SEPARATES LABELS ONLY WHERE THE VALUE HAS FLOW STRUCTURE — the
+# same "an indicator is only an indicator in flow context" sentence
+# no_comment and flow_feed carry, in the third place that needed it. A
+# BLOCK-context plain scalar may contain a comma, so `runs-on:
+# a,#self-hosted` names the single label `a,#self-hosted`; splitting
+# there reported `a` and `#self-hosted`, two things the file does not
+# name, and — the half that reaches the verdict — let
+# `pr-code-runner-labels: pr-runner` vouch for `pr-runner,#self-hosted`,
+# a label YAML says does not exist (#395 round 8, claude-bot's nit). A
+# bracket anywhere in the value is that structure, INCLUDING inside a
+# quoted scalar: `'["self-hosted","ci-runner"]'` is one YAML scalar whose
+# text is a JSON list, and reading it as two labels is exactly what
+# decision 5 asks for, so quotes stay punctuation here rather than
+# becoming opaque.
+#
+# The result is newline-separated and stays that way through the
+# sequence and block windows and into spec_vouched, because a label may
+# now CONTAIN a comma and a comma-joined set cannot carry one: the
+# representation would have re-split what this function just refused to.
+# Only the consumer's own `pr-code-runner-labels` stays comma-separated —
+# that is its documented contract, and it is an allowlist of labels
+# somebody typed, not a value read out of a file.
 labels_in() {
-  local value="$1"
-  printf '%s' "$value" \
-    | tr -d "\"'[]{}" \
-    | tr ',' '\n' \
+  local value="$1" flat
+  flat="$(printf '%s' "$value" | tr -d "\"'[]{}")"
+  case "$value" in
+    *'['* | *']'* | *'{'* | *'}'*) flat="${flat//,/$'\n'}" ;;
+  esac
+  printf '%s' "$flat" \
     | sed -e 's/^[[:space:]]*-*[[:space:]]*//' \
           -e 's/^&[A-Za-z0-9_-]*[[:space:]]*//' \
           -e ':k' -e 's/^[A-Za-z0-9_-]*:[[:space:]]*//' -e 'tk' \
           -e 's/[[:space:]]*$//' \
-    | grep -v '^$' \
-    | paste -sd, - || true
+    | grep -v '^$' || true
 }
 
 # no_comment <line> — a physical line without its trailing YAML comment,
@@ -493,13 +521,56 @@ no_comment() {
 alias_names=()
 alias_values=()
 
-# anchor_record <line> — an `&name` heading a VALUE, with the rest of its
-# line as that value. Only at the head of a value (`KEY: &name …`, or a
-# sequence item's `- &name …`), because a bare `&` elsewhere on a line is
-# ordinarily not an anchor at all — `run: a && b` is the routine case,
-# and reading one there would let a shell fragment answer to an alias.
+# The anchors anchor_record is part way through reading on one line, as a
+# stack: name, the offset its value starts at, and the bracket depth it
+# was written at. Scratch for that one call, reset by it.
+pend_names=()
+pend_starts=()
+pend_depths=()
+pend_n=0
+
+# anchor_record <line> — every `&name` this line writes AT THE HEAD OF A
+# VALUE, with that value.
+#
+# WHERE A NODE MAY BEGIN IS THE WHOLE RULE, and round 7 had it true of
+# one position: the value the LINE's own key introduces. A flow
+# collection is a place values live too, so
+# `env: { RUNNER_INPUT: &runner-input '["self-hosted","ci-runner"]' }`
+# heads a value at its `:` inside the mapping — round 7 cut the line at
+# its FIRST `:`, asked whether what was left began with `&`, and never
+# recorded it. The alias below then stayed unresolved and the file passed
+# with an empty allowlist: the fail-open direction, on the shape a caller
+# writes when it names its runner once and uses it twice (#395 round 8,
+# codex-bot blocking).
+#
+# So the positions are: the head of the line's own value (`KEY: &name …`
+# or a sequence item's `- &name …`), and, inside a flow collection, after
+# any of `{`, `[`, `,` and `:`. Whitespace PRESERVES the position rather
+# than creating one — that is what keeps `run: a && b` and
+# `run: gh api foo &bar baz` from defining anchors, a bare `&` mid-scalar
+# being ordinarily not an anchor at all, and reading one there would let
+# a shell fragment answer to an alias.
+#
+# FLOW CONTEXT IS ENTERED ONLY WHERE YAML ENTERS IT: a `[` or `{` opens a
+# collection only where a node may begin, so the brace in
+# `run: foo { a: &b c }` is a character of a plain scalar and the `:` and
+# `&` inside it are too. Same sentence as the one flow_feed carries, in
+# the one function that had no notion of a collection at all.
+#
+# AND AN ANCHOR'S VALUE IS ITS OWN NODE, not the rest of the line: in
+# `{A: &a x, B: y}` the anchor names `x`, and taking the tail would
+# resolve `*a` to `x, B: y` and hand a sibling's scalar to the vouch test
+# — round 2's mis-vouch, re-entered through the alias table. So a pending
+# anchor closes at the `,` that ends its value at its own depth, at the
+# bracket that closes the collection holding it, or at the end of the
+# line, whichever comes first; nesting is a stack because
+# `{A: &a [x, &b y]}` defines both.
 anchor_record() {
-  local text="$1" name="" value=""
+  local text="$1" i=0 ch quote="" kinds="" fresh=1 name
+  pend_names=()
+  pend_starts=()
+  pend_depths=()
+  pend_n=0
   case "$text" in
     '-'[[:space:]]*)
       text="${text#-}"
@@ -514,33 +585,151 @@ anchor_record() {
       ;;
     *) return ;;
   esac
-  case "$text" in
-    '&'*) ;;
-    *) return ;;
-  esac
-  text="${text#&}"
-  while [ -n "$text" ]; do
-    case "$text" in
-      [A-Za-z0-9_-]*)
-        name="$name${text:0:1}"
-        text="${text:1}"
+  while [ "$i" -lt "${#text}" ]; do
+    ch="${text:i:1}"
+    if [ -n "$quote" ]; then
+      i=$((i + 1))
+      if [ "$quote" = '"' ] && [ "$ch" = "\\" ]; then
+        i=$((i + 1))
+        continue
+      fi
+      if [ "$ch" = "$quote" ]; then
+        if [ "$quote" = "'" ] && [ "${text:i:1}" = "'" ]; then
+          i=$((i + 1))
+          continue
+        fi
+        quote=""
+        fresh=0
+      fi
+      continue
+    fi
+    if [ "$ch" = '&' ] && [ "$fresh" -eq 1 ]; then
+      i=$((i + 1))
+      name=""
+      while [ "$i" -lt "${#text}" ]; do
+        case "${text:i:1}" in
+          [A-Za-z0-9_-])
+            name="$name${text:i:1}"
+            i=$((i + 1))
+            ;;
+          *) break ;;
+        esac
+      done
+      if [ -z "$name" ]; then
+        fresh=0
+        continue
+      fi
+      while [ "$i" -lt "${#text}" ]; do
+        case "${text:i:1}" in
+          ' ' | '	') i=$((i + 1)) ;;
+          *) break ;;
+        esac
+      done
+      pend_names[pend_n]="$name"
+      pend_starts[pend_n]="$i"
+      pend_depths[pend_n]="${#kinds}"
+      pend_n=$((pend_n + 1))
+      continue
+    fi
+    i=$((i + 1))
+    case "$ch" in
+      '"' | "'")
+        if [ "$fresh" -eq 1 ]; then
+          quote="$ch"
+        else
+          fresh=0
+        fi
         ;;
-      *) break ;;
+      '[' | '{')
+        if [ "$fresh" -eq 1 ]; then
+          kinds="$kinds$ch"
+        else
+          fresh=0
+        fi
+        ;;
+      ']' | '}')
+        if [ -n "$kinds" ]; then
+          anchor_close "$((i - 1))" "${#kinds}" "$text"
+          kinds="${kinds%?}"
+        fi
+        fresh=0
+        ;;
+      ',')
+        if [ -n "$kinds" ]; then
+          anchor_close "$((i - 1))" "${#kinds}" "$text"
+          fresh=1
+        else
+          fresh=0
+        fi
+        ;;
+      ':')
+        if [ -n "$kinds" ]; then
+          fresh=1
+        else
+          fresh=0
+        fi
+        ;;
+      ' ' | '	') ;;
+      *) fresh=0 ;;
     esac
   done
-  value="${text#"${text%%[![:space:]]*}"}"
-  if [ -n "$name" ] && [ -n "$value" ]; then
-    alias_names+=("$name")
-    alias_values+=("$value")
-  fi
+  anchor_close "${#text}" 0 "$text"
 }
 
-# alias_expand <text> — every `*name` standing where a node may begin,
-# replaced by its anchor's value. An unknown name is left as it was
-# written: this guard resolves what the file itself defines and claims
+# anchor_close <end-offset> <depth> <line> — every pending anchor at or
+# inside <depth> ends here; its value is the text it heads up to this
+# point. Deepest first, so a nested anchor closes before the one holding
+# it and the two do not read each other's text.
+anchor_close() {
+  local end="$1" depth="$2" text="$3" idx start value
+  idx=$((pend_n - 1))
+  while [ "$idx" -ge 0 ]; do
+    if [ "${pend_depths[idx]}" -lt "$depth" ]; then
+      break
+    fi
+    start="${pend_starts[idx]}"
+    if [ "$end" -gt "$start" ]; then
+      value="${text:start:end-start}"
+      value="${value%"${value##*[![:space:]]}"}"
+      if [ -n "$value" ]; then
+        alias_names+=("${pend_names[idx]}")
+        alias_values+=("$value")
+      fi
+    fi
+    idx=$((idx - 1))
+    pend_n="$((idx + 1))"
+  done
+}
+
+# alias_expand <text> [<open-quote>] — every `*name` standing where a node
+# may begin, replaced by its anchor's value. An unknown name is left as it
+# was written: this guard resolves what the file itself defines and claims
 # nothing about an anchor it never saw (KNOWN LIMITS below).
+#
+# A QUOTED SCALAR IS TEXT, AND A `*` IN IT IS A CHARACTER. `with: {note:
+# "literal *runner-input"}` is a string a callee receives verbatim, and
+# expanding the anchor into it filed a spec naming `self-hosted,
+# ci-runner` for a file that names no runner at all — exit 1 on a correct
+# workflow. That direction is the expensive one: a guard's false positive
+# reds a consumer's main and nobody can unblock it by vouching, because
+# there is nothing to vouch for (#395 round 8, codex-bot blocking). So
+# this carries flow_feed's quote rule — a quote OPENS only where a scalar
+# can start, `\"` and `''` are the scalar's own — and the OPEN QUOTE IT IS
+# ALREADY INSIDE is passed in, because it is called on the continuation
+# lines of an open collection as well as at a fragment's start: a quoted
+# scalar wrapping a physical line stays opaque across it, which is round
+# 4's rule reaching the last function that lacked it.
+#
+# Its position rule stays the one round 7 shipped — a fragment's start, or
+# after separation whitespace or a flow indicator — and deliberately does
+# not narrow to anchor_record's "where a node may begin". The two err in
+# opposite directions on purpose: a mis-read ANCHOR poisons every alias
+# below it with text the file never anchored, while a mis-read ALIAS
+# resolves to a value the file really does define somewhere, which can
+# only make a label visible.
 alias_expand() {
   local text="$1" out="" i=0 ch prev name idx found
+  local quote="${2:-}" fresh=1
   case "$text" in
     *'*'*) ;;
     *)
@@ -554,11 +743,42 @@ alias_expand() {
     if [ "$i" -gt 0 ]; then
       prev="${text:i-1:1}"
     fi
+    if [ -n "$quote" ]; then
+      out="$out$ch"
+      i=$((i + 1))
+      if [ "$quote" = '"' ] && [ "$ch" = "\\" ] && [ "$i" -lt "${#text}" ]; then
+        out="$out${text:i:1}"
+        i=$((i + 1))
+        continue
+      fi
+      if [ "$ch" = "$quote" ]; then
+        if [ "$quote" = "'" ] && [ "${text:i:1}" = "'" ]; then
+          out="$out'"
+          i=$((i + 1))
+          continue
+        fi
+        quote=""
+        fresh=0
+      fi
+      continue
+    fi
     if [ "$ch" != '*' ]; then
       out="$out$ch"
       i=$((i + 1))
+      case "$ch" in
+        '"' | "'")
+          if [ "$fresh" -eq 1 ]; then
+            quote="$ch"
+          fi
+          fresh=0
+          ;;
+        '[' | '{' | ',' | ':') fresh=1 ;;
+        ' ' | '	') ;;
+        *) fresh=0 ;;
+      esac
       continue
     fi
+    fresh=0
     # Where a node may begin: a fragment's start, or after separation
     # whitespace or a flow indicator. A `*` anywhere else is a character
     # of the scalar it sits in — a `paths: ['**/*.yml']` glob, say.
@@ -831,20 +1051,28 @@ frag_start() {
   flow_feed "$text"
 }
 
-# spec_vouched <comma-joined-labels> — true when the consumer has vouched
-# for at least one label in the set. See the conjunction argument above.
+# spec_vouched <newline-joined-labels> — true when the consumer has
+# vouched for at least one label in the set. See the conjunction argument
+# above. The set arrives one label per line because a label may contain a
+# comma (labels_in), so this reads the lines rather than splitting again.
 spec_vouched() {
   local labels="$1" label allow
   while IFS= read -r label; do
     if [ -z "$label" ]; then
       continue
     fi
+    # The allowlist's own expansion is QUOTED — the alternative branch of
+    # `${x[@]+"${x[@]}"}` carries its own quotes, so a label with a space
+    # stays one word and a `*` is not globbed; the form is there for the
+    # empty array under `set -u`, not instead of quoting. Measured with
+    # `allowed=("a b" "*" "x")`, which iterates as three words (#395
+    # round 8, kimi-bot's note).
     for allow in ${allowed[@]+"${allowed[@]}"}; do
       if [ "$label" = "$allow" ]; then
         return 0
       fi
     done
-  done <<<"${labels//,/$'\n'}"
+  done <<<"$labels"
   return 1
 }
 
@@ -964,7 +1192,9 @@ for file in "${files[@]}"; do
     # turn a malformed file into a silent pass.
     if [ "$flow_open" -eq 1 ]; then
       if [ "$indent" -gt 0 ]; then
-        flow_feed " $(alias_expand "$stripped")"
+        # …resolved in the quote state the scanner is actually in, so a
+        # quoted scalar wrapping this line keeps its `*name` as text.
+        flow_feed " $(alias_expand "$stripped" "$flow_quote")"
         continue
       fi
       flow_flush
@@ -994,7 +1224,7 @@ for file in "${files[@]}"; do
           item_text="$(alias_expand "$(no_comment "$stripped")")"
           item_labels="$(labels_in "$item_text")"
           if [ -n "$item_labels" ]; then
-            seq_labels="${seq_labels:+$seq_labels,}$item_labels"
+            seq_labels="${seq_labels:+$seq_labels$nl}$item_labels"
           fi
           case "$item_text" in
             *self-hosted*)
@@ -1023,9 +1253,34 @@ for file in "${files[@]}"; do
           # only deeper than its key: after an item has been read the
           # value is the sequence, and at or outside the key's own indent
           # the line belongs to something else entirely.
+          #
+          # …AND A SCALAR IS A VALUE THERE TOO. Round 7 named `[` and `{`
+          # and left the plain and quoted spellings reaching no arm at
+          # all: `runner:` with `'["self-hosted","ci-runner"]'` on the
+          # line below is how a caller wraps a long JSON input, and
+          # `runs-on:` with a bare `self-hosted` under it is a runner
+          # GitHub schedules — both exit 0 with an empty allowlist, the
+          # fail-open half of the same blocker (#395 round 8, claude-bot
+          # blocking).
+          #
+          # A BLOCK MAPPING IS THE ONE SHAPE NOT TAKEN, and not taking it
+          # is the point: a first line of the form `key:` or `key: value`
+          # means the value is a mapping, which is `runs-on:`'s
+          # block-mapping form — out of #395 by decision 9 and disclosed
+          # in KNOWN LIMITS above. Reading its first line would close the
+          # `labels:`-first spelling of that gap and leave the
+          # `group:`-first one open, making the disclosure false in a new
+          # way rather than true. Under a `with:` key nothing narrows:
+          # the mapping's own lines keep being read by the input arm
+          # below, exactly as they were.
           if [ "$seq_items" -eq 0 ] && [ "$indent" -gt "$seq_indent" ]; then
             case "$stripped" in
-              '['* | '{'*)
+              '['* | '{'* | '"'* | "'"*)
+                consumed_item=1
+                frag_start "$stripped"
+                ;;
+              *:[[:space:]]* | *:) ;;
+              *)
                 consumed_item=1
                 frag_start "$stripped"
                 ;;
@@ -1048,7 +1303,7 @@ for file in "${files[@]}"; do
         consumed_item=1
         item_labels="$(labels_in "$stripped")"
         if [ -n "$item_labels" ]; then
-          blk_labels="${blk_labels:+$blk_labels,}$item_labels"
+          blk_labels="${blk_labels:+$blk_labels$nl}$item_labels"
         fi
         case "$line" in
           *self-hosted*)
@@ -1252,7 +1507,7 @@ for file in "${files[@]}"; do
   index=0
   while [ "$index" -lt "${#spec_lines[@]}" ]; do
     if ! spec_vouched "${spec_labels[index]}"; then
-      shown_labels="${spec_labels[index]//,/, }"
+      shown_labels="${spec_labels[index]//$nl/, }"
       unvouched+=("${spec_lines[index]}"$'\n'"        labels: $shown_labels — none of them is named in pr-code-runner-labels ($allowlist_shown)")
     fi
     index=$((index + 1))
