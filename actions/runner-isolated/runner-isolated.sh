@@ -213,11 +213,16 @@ fi
 # mapping carries one per level (`build: runs-on: self-hosted`), and one
 # strip left the message naming something that is not a label at all
 # (#395 round 4, claude-bot's nit 2).
+#
+# It takes a VALUE and not a line, so it does not remove comments: the
+# caller that reads a line removes that line's own comment (no_comment
+# below), and a value reaching here from the flow scanner never carries
+# one, that scanner having dropped it as it read. Trimming here as well
+# cut a quoted `#` out of a label the file really names, because the
+# accumulated value of a collection is not a line and has no tail to
+# trim (#395 round 5).
 labels_in() {
   local value="$1"
-  case "$value" in
-    *[[:space:]]'#'*) value="${value%%[[:space:]]#*}" ;;
-  esac
   printf '%s' "$value" \
     | tr -d "\"'[]{}" \
     | tr ',' '\n' \
@@ -226,6 +231,27 @@ labels_in() {
           -e 's/[[:space:]]*$//' \
     | grep -v '^$' \
     | paste -sd, - || true
+}
+
+# no_comment <line> — a physical line without its trailing YAML comment,
+# for the two windows that read a value a LINE at a time: a block
+# sequence's `- …` items. There the comment is the line's own tail, and
+# it is not part of the value or of the runner probe — a `- ubuntu-latest
+# # never self-hosted` item filed a spec for the word in its note (#395
+# round 5, codex-bot's converse in the block-sequence arm). The flow
+# scanner applies the same rule character by character, where it can also
+# see a quote; a whole comment LINE is skipped before either.
+#
+# A block SCALAR is deliberately not passed through this: `#` inside one
+# is literal text that reaches the callee, so a `self-hosted` there is a
+# label the file really passes, and dropping it would be the fail-open
+# shape d exists to close.
+no_comment() {
+  local text="$1"
+  case "$text" in
+    *[[:space:]]'#'*) printf '%s' "${text%%[[:space:]]#*}" ;;
+    *) printf '%s' "$text" ;;
+  esac
 }
 
 # THE FRAGMENT IS A FLOW COLLECTION, NOT A SLICE OF A LINE — frag_start,
@@ -484,13 +510,22 @@ for file in "${files[@]}"; do
     esac
 
     stripped="${line#"${line%%[![:space:]]*}"}"
-
-    # Comment lines are invisible to every half of the rule.
-    case "$stripped" in
-      '#'*) continue ;;
-    esac
-
     indent=$((${#line} - ${#stripped}))
+
+    # Comment lines are invisible to every half of the rule — EXCEPT
+    # inside an open block scalar, where a `#` opens no comment at all: a
+    # block scalar's lines are literal text, handed to the callee exactly
+    # as written, so a self-hosted label written under a `runner: |` with
+    # a `#` in front of it is a label the file passes and not a note
+    # about one. Found while writing round 5's own fix, the same
+    # comment-versus-content root one window over (#395 round 5).
+    case "$stripped" in
+      '#'*)
+        if [ "$in_blk" -eq 0 ] || [ "$indent" -le "$blk_indent" ]; then
+          continue
+        fi
+        ;;
+    esac
 
     # Half one, second question: does this file check out a PR ref? Only
     # `pull_request_target` files are asked (a `pull_request` one already
@@ -544,11 +579,15 @@ for file in "${files[@]}"; do
       case "$stripped" in
         '-'*)
           consumed_item=1
-          item_labels="$(labels_in "$stripped")"
+          # The item's own text: its trailing comment is the line's, not
+          # the value's, and the runner probe reads the same text the
+          # labels come from — a note is not a spec (#395 round 5).
+          item_text="$(no_comment "$stripped")"
+          item_labels="$(labels_in "$item_text")"
           if [ -n "$item_labels" ]; then
             seq_labels="${seq_labels:+$seq_labels,}$item_labels"
           fi
-          case "$line" in
+          case "$item_text" in
             *self-hosted*)
               if [ -z "$seq_hit" ]; then
                 seq_hit="$lineno: $line"

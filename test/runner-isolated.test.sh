@@ -1127,6 +1127,236 @@ check "the block window closes at the key's own indentation" 1 \
   "labels: self-hosted, ci-runner —" in_tree block-scalar-sibling \
   .github/workflows pr-runner
 
+# --- #395 round 5: a comment is not content, and it closes nothing --------
+
+# codex-bot's and claude-bot's blocker, the same root from two
+# directions: the flow scanner had no `#` at all, so a comment's own text
+# was read as collection syntax. Its `}` popped the open mapping, the
+# fragment closed on a line YAML has already ended, and every value below
+# belonged to no window — this file exited 0 with an EMPTY allowlist.
+# PyYAML reads `runner` as the second value of the `with:` mapping.
+wf comment-brace-close a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {
+      harmless: value, # } closes nothing in YAML
+      runner: '["self-hosted","ci-runner"]'
+    }
+YAML
+check "a } inside a comment does not close the collection" 1 \
+  "ci-runner" in_tree comment-brace-close
+check "…and the value below the comment is one spec's whole label set" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-brace-close
+# Its vouched mirror, so the row cannot rot into "a commented file always
+# fails": the same shape whose set names a vouched tier passes.
+wf comment-brace-vouched a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {
+      harmless: value, # } closes nothing in YAML
+      runner: '["self-hosted","pr-runner"]'
+    }
+YAML
+check "…and the same shape vouched for its own tier passes" 0 \
+  "1 workflow file" in_tree comment-brace-vouched .github/workflows pr-runner
+
+# claude-bot's second file, and the one that says the hole is in the
+# SCANNER rather than in the `with:` arm: a plain `runs-on:` list, no
+# reusable-workflow call anywhere, whose whole job runner set went
+# invisible because a comment on the opening line carries a `}`.
+wf comment-brace-runs-on a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: [ # the tiers below are ours (see docs} )
+      self-hosted, ci-runner]
+    steps:
+      - run: make test
+YAML
+check "a commented runs-on: [ does not lose the job's runner set" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-brace-runs-on
+
+# The converse, fail-CLOSED and needing no vouch to see: `labels_in`
+# truncates an accumulated value at its first ` #`, so a comment INSIDE a
+# multi-line collection ate the real labels after it and a consumer who
+# had vouched correctly was refused. Fixed at the source — the comment
+# never enters the value now — so this file passes on its own tier.
+wf comment-eats-vouched a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: [self-hosted, # our isolated tier
+      pr-runner]
+    steps:
+      - run: make test
+YAML
+check "a comment inside a collection does not eat the vouched label" 0 \
+  "1 workflow file" in_tree comment-eats-vouched .github/workflows pr-runner
+# …and the unvouched mirror, which is what tells that pass from a
+# fail-open: were the collection still closing at the comment, this file
+# would exit 0 with an empty allowlist too.
+check "…and the same file with nothing vouched still fails" 1 \
+  "labels: self-hosted, pr-runner —" in_tree comment-eats-vouched
+
+# The third symptom of the same root: with the comment's brackets
+# BALANCED the verdict was already right, but the value was truncated at
+# the ` #` and the report named no label at all — against the criterion
+# that the message names the offending label.
+wf comment-empties-labels a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: [self-hosted, # see runner list [above]
+      ci-runner]
+    steps:
+      - run: make test
+YAML
+check "a balanced-bracket comment still leaves the labels named" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-empties-labels
+
+# The opposite direction, codex-bot's converse: the guard used to read
+# the prose of a trailing comment as the line's own runner. `flow_flush`
+# tests the accumulated value for self-hosted, so this hosted job filed a
+# spec whose labels were `ubuntu-latest` — a false positive on a file
+# whose comment says the right thing.
+wf comment-prose-hosted a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest # do not move this to self-hosted
+    steps:
+      - run: make test
+YAML
+check "a self-hosted mention in a trailing comment is not a runner" 0 \
+  "1 workflow file" in_tree comment-prose-hosted
+# …and the pair that stops that row rotting into "a trailing comment
+# passes the file": the same line whose RUNNER is self-hosted still
+# fails, comment and all.
+wf comment-prose-real a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: [self-hosted, ci-runner] # keep this off the hosted pool
+    steps:
+      - run: make test
+YAML
+check "…while a real self-hosted runner beside a comment still fails" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-prose-real
+
+# YAML's own rule, and the reason the fix tests the preceding character:
+# a `#` NOT preceded by whitespace is part of the plain scalar it sits
+# in. Reading it as a comment would truncate the value here, so the row
+# is the message text — a `#`-carrying label reported whole — and a vouch
+# for that label, which a truncated value would refuse.
+wf hash-in-label a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: [self-hosted, ci#runner]
+    steps:
+      - run: make test
+YAML
+check "a # with no space before it is part of the label" 1 \
+  "labels: self-hosted, ci#runner —" in_tree hash-in-label
+check "…so vouching for that label is honoured" 0 "1 workflow file" \
+  in_tree hash-in-label .github/workflows "ci#runner"
+
+# …and inside a quoted scalar a `#` is text whatever precedes it, which
+# the quote branch already gave: the value is one spec and its labels
+# come out whole.
+wf hash-in-quoted a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with: {runner: '["self-hosted","ci #runner"]'}
+YAML
+check "a quoted # is text, not a comment" 1 \
+  "labels: self-hosted, ci #runner —" in_tree hash-in-quoted
+
+# The same converse in the BLOCK-SEQUENCE window, which reads a line at a
+# time and probed the raw line for self-hosted: this hosted job filed a
+# spec for the word in its own note.
+wf seq-comment-prose a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - ubuntu-latest # do not move this to self-hosted
+    steps:
+      - run: make test
+YAML
+check "a sequence item's note is not the item's runner" 0 "1 workflow file" \
+  in_tree seq-comment-prose
+# …and the item's own label survives its comment: the set is still both
+# labels, so a vouch for either covers it and neither is cut away.
+wf seq-comment-vouched a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - self-hosted # the tier below is ours
+      - pr-runner
+    steps:
+      - run: make test
+YAML
+check "a commented sequence item keeps its own label" 1 \
+  "labels: self-hosted, pr-runner —" in_tree seq-comment-vouched
+check "…and the set it belongs to is vouched by either label" 0 \
+  "1 workflow file" in_tree seq-comment-vouched .github/workflows pr-runner
+
+# The other direction of the same root, found while writing this round's
+# fix rather than reported: inside a BLOCK SCALAR a `#` opens no comment,
+# the whole block being literal text the callee receives. A label written
+# under `runner: |` behind a `#` is passed to the reusable workflow like
+# any other, and the file-level comment rule made it invisible — exit 0,
+# no vouch needed, the shape-d fail-open one character over.
+wf block-scalar-hash-line a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with:
+      runner: |
+        # ["self-hosted","ci-runner"]
+YAML
+check "a # line inside a block scalar is text the callee receives" 1 \
+  "ci-runner" in_tree block-scalar-hash-line
+check "…and vouching for the tier that text names is honoured" 0 \
+  "1 workflow file" in_tree block-scalar-hash-line .github/workflows ci-runner
+# …and the block still ENDS where it ended: a comment at the key's own
+# indentation or further out is a comment again, so a note beside the
+# input cannot be read as its value.
+wf block-scalar-hash-outdent a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with:
+      runner: |
+        ["ubuntu-latest"]
+      # self-hosted work lives in deploy.yml
+YAML
+check "a comment outside the block is a comment again" 0 "1 workflow file" \
+  in_tree block-scalar-hash-outdent
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml
