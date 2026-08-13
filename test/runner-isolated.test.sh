@@ -2224,13 +2224,36 @@ check "a sequence at its key's own indentation is still the key's value" 1 \
 check "…and vouching for its tier passes the same file" 0 "1 workflow file" \
   in_tree seq-at-key-indent .github/workflows ci-runner
 
-# THE ONE SHAPE THE WIDENING DELIBERATELY DOES NOT TAKE, pinned so it can
-# neither close nor widen in silence: a first line of the form `key:` or
-# `key: value` means the value is a block MAPPING, which is `runs-on:`'s
-# block-mapping form — out of #395 by decision 9 and disclosed in KNOWN
-# LIMITS. Reading its first line would close the `labels:`-first spelling
-# and leave the `group:`-first one open, making the disclosure false in a
-# new way rather than true.
+# THE BLOCK-MAPPING FORM OF `runs-on:`, which is the shape #402 closes:
+# `group:`/`labels:` keys one level in rather than a value beside the key,
+# documented GitHub syntax. The `labels:` key is the runner spec's label
+# set and is read; a `pull_request` file naming a self-hosted tier that
+# way exited 0 with an empty allowlist, no vouch asked and no finding
+# printed, on a line the guard already reads.
+wf block-labels-only a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      labels: [self-hosted, ci-runner]
+    steps:
+      - run: make test
+YAML
+check "a labels: key one level in is the runner spec" 1 \
+  "labels: self-hosted, ci-runner —" in_tree block-labels-only
+check "…and the finding names the file" 1 "a.yml" in_tree block-labels-only
+check "…and the line it found them on" 1 "6:       labels: [self-hosted, ci-runner]" \
+  in_tree block-labels-only
+check "…and vouching for one label of the set vouches the set" 0 \
+  "1 workflow file" in_tree block-labels-only .github/workflows ci-runner
+
+# THE TWO ROWS THAT PINNED THIS GAP AS A PASS, and their expected status
+# is this issue's deliverable arriving: #395 round 8 wrote them to hold
+# the boundary its own widening stopped at, one spelling each, so that
+# closing the gap could not happen in silence. #402 closes it, so they
+# flip together — the fixture text of neither is touched, which is what
+# makes the flip the measurement (#402 acceptance criterion 9).
 wf block-group-mapping a.yml <<'YAML'
 name: pr checks
 on: pull_request
@@ -2242,15 +2265,14 @@ jobs:
     steps:
       - run: make test
 YAML
-check "runs-on:'s block-mapping form stays the disclosed gap" 0 \
-  "1 workflow file" in_tree block-group-mapping
+check "a group: key above the labels: does not hide it" 1 \
+  "labels: self-hosted, ci-runner —" in_tree block-group-mapping
 
 # …and the spelling that decides it, because the group-first file above
-# would pass under either rule: with `labels:` on the FIRST line, taking
-# the next-line value would read it and this row would flip. Pinned so
-# the gap cannot be half-closed in silence — one spelling read and the
-# other not is worse than the disclosure, which is why the arm excludes
-# the shape rather than the first line's contents.
+# would have passed under either rule: with `labels:` on the FIRST line,
+# a next-line arm reading first lines would have read it and left the
+# group-first one open. Both are read now, by the same window, which is
+# why the exclusion could only come out with the indentation bound.
 wf block-labels-first a.yml <<'YAML'
 name: pr checks
 on: pull_request
@@ -2262,8 +2284,118 @@ jobs:
     steps:
       - run: make test
 YAML
-check "…in the labels-first spelling that would otherwise flip" 0 \
-  "1 workflow file" in_tree block-labels-first
+check "…and neither does one below it, in the labels-first spelling" 1 \
+  "labels: self-hosted, ci-runner —" in_tree block-labels-first
+
+# …and the `labels:` value may be a block SEQUENCE under a bare key,
+# which is the second of decision 1's two spellings. The `group:` line
+# above it proves the other half of the window's rule: a key that is not
+# `labels:` contributes nothing AND closes nothing, or the sequence
+# beneath the key below it would be outside every window again.
+wf block-group-seq-labels a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      group: linux
+      labels:
+        - self-hosted
+        - ci-runner
+    steps:
+      - run: make test
+YAML
+check "a block-sequence labels: under a non-labels key is read" 1 \
+  "labels: self-hosted, ci-runner —" in_tree block-group-seq-labels
+check "…and vouching for its tier passes the same file" 0 "1 workflow file" \
+  in_tree block-group-seq-labels .github/workflows ci-runner
+
+# A `labels:` VALUE GOES THROUGH THE SAME VALUE READER as every other
+# value: a flow collection spread across lines is one value, so the tier
+# on the second line is part of the set the first line opens (#402
+# decision 5). Nothing is invented for this key.
+wf block-labels-wrapped a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      labels: [self-hosted,
+        ci-runner]
+    steps:
+      - run: make test
+YAML
+check "a labels: collection written across lines is one value" 1 \
+  "labels: self-hosted, ci-runner —" in_tree block-labels-wrapped
+check "…so vouching for the tier on its second line passes it" 0 \
+  "1 workflow file" in_tree block-labels-wrapped .github/workflows ci-runner
+
+# A RUNNER GROUP IS NOT A LABEL, and this row asserts a KNOWN FALSE
+# NEGATIVE so that closing it later is a visible decision and reopening it
+# is a red row: a group names its hardware elsewhere, so its name cannot
+# be vouched for as a label, and #395 decision 9 kept it out. The group
+# here is itself named `self-hosted`, the shape that would pass by
+# accident if the rule were the string rather than the key (#402
+# decision 2).
+wf block-group-only a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      group: self-hosted
+    steps:
+      - run: make test
+YAML
+check "a group: named self-hosted with no labels: key still passes" 0 \
+  "1 workflow file" in_tree block-group-only
+
+# PARITY IS THE PROPERTY, so it is asserted as one row rather than as two
+# that could drift apart: the block mapping and the inline mapping of the
+# SAME value get the same verdict under the same allowlist. Two spellings
+# of one value cannot disagree, and a suite that grades them separately
+# would not notice when they did.
+wf parity-block a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      group: linux
+      labels: [self-hosted, ci-runner]
+    steps:
+      - run: make test
+YAML
+wf parity-inline a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: {group: linux, labels: [self-hosted, ci-runner]}
+    steps:
+      - run: make test
+YAML
+
+# same_verdict [<allowlist>] — the two spellings' exit statuses, reported
+# as one string: `agree: <status>` pins that they agree AND which verdict
+# they agree on, so a parity row can never be satisfied by both spellings
+# going quietly wrong in the same direction.
+same_verdict() {
+  local labels="${1:-}" block inline
+  (cd "$TMP/parity-block" && bash "$SCRIPT" .github/workflows "$labels") >/dev/null 2>&1
+  block=$?
+  (cd "$TMP/parity-inline" && bash "$SCRIPT" .github/workflows "$labels") >/dev/null 2>&1
+  inline=$?
+  if [ "$block" -eq "$inline" ]; then
+    printf 'agree: %s\n' "$block"
+  else
+    printf 'disagree: block %s, inline %s\n' "$block" "$inline"
+  fi
+}
+check "block and inline mappings of one value both fail unvouched" 0 \
+  "agree: 1" same_verdict
+check "…and both pass under the same allowlist" 0 "agree: 0" \
+  same_verdict ci-runner
 
 # …and under a `with:` key nothing narrows: the mapping's own lines keep
 # being read by the input arm, exactly as they were before the widening.
