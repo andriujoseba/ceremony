@@ -105,28 +105,28 @@ the machinery at all:
    `docs-sync` step ([below](#adopting-the-agent-team-flow)).
 
    `runner-isolated` asserts that no workflow file which **executes
-   PR-authored code** names a self-hosted runner you have not vouched for
-   — such a file runs the branch's code, and unreviewed fork code must
-   never execute on your own hardware
+   PR-authored code** names a self-hosted runner you have not vouched
+   for — such a file runs the branch's code, and unreviewed fork code
+   must never execute on your own hardware
    ([#58](https://github.com/heavy-duty/ceremony/issues/58)). A file
-   executes PR-authored code when it is `pull_request`-triggered, always,
-   or when it is `pull_request_target`-triggered **and** checks out a PR
-   ref — base-branch privileges running PR-authored code, the shape the
-   guard was blind to until **unreleased** (#395). A
+   executes PR-authored code when it is `pull_request`-triggered,
+   always, or when it is `pull_request_target`-triggered **and** checks
+   out a PR ref — base-branch privileges running PR-authored code, the
+   shape the guard was blind to until **unreleased** (#395). A
    `pull_request_target` file that checks out no PR ref executes none of
    it and passes however it is routed. Self-hosted labels are read from
-   `runs-on:` and from `with:` input values alike, each value judged on
-   its own: two inputs passed on one line are two runners, and vouching
-   for one of them does not vouch for the other, at any nesting depth. A
-   value is read to its own closing bracket, so a mapping or list written
-   across several lines is scanned like any other, and a quoted scalar is
-   opaque: a bracket or comma inside quotes is that value's text, not its
-   end. It fires on the PR that first puts PR-authored code on an
-   unvouched self-hosted label; the two unblocks are splitting the
-   workflow and
+   `runs-on:` and from `with:` input values alike — quoted, flow or
+   block-scalar (`runner: |`) — each value judged on its own: two inputs
+   passed on one line are two runners, and vouching for one of them does
+   not vouch for the other, at any nesting depth. A value is read to its
+   own closing bracket, so a mapping or list written across several
+   lines is scanned like any other, and a quoted scalar is opaque: a
+   bracket or comma inside quotes is that value's text, not its end. It
+   fires on the PR that first puts PR-authored code on an unvouched
+   self-hosted label; the two unblocks are splitting the workflow and
    [vouching for the tier](#vouching-for-a-runner-that-may-execute-pr-code).
-   A repo with **no** self-hosted runner still wants it: the guard's value
-   is the day somebody adds one.
+   A repo with **no** self-hosted runner still wants it: the guard's
+   value is the day somebody adds one.
 
    This guide documents `main`. A marker is the literal token
    `**unreleased**` immediately followed by its issue citation (for example,

@@ -119,6 +119,13 @@ set -euo pipefail
 #                                            #   collection's end, and
 #                                            #   the values after it are
 #                                            #   not lost (#395 round 4)
+#     with:                                  # …and a value may be a
+#       runner: |                            #   BLOCK SCALAR: its text
+#         ["self-hosted","ci-runner"]        #   reaches the callee like
+#                                            #   any other, so the block
+#                                            #   is one spec, closed at
+#                                            #   the key's own indent
+#                                            #   (#395 round 4)
 #     jobs: {build: {runs-on: [self-hosted], # A key BESIDE a spec never
 #       environment: pr-runner}}             #   joins it, however many
 #                                            #   brackets are between —
