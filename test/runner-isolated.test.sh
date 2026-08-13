@@ -1727,6 +1727,255 @@ check "the failure says the allowlist is empty when it is" 1 \
 check "the failure shows the allowlist it was given" 1 "(pr-runner)" \
   in_tree with-input .github/workflows pr-runner
 
+# --- #395 round 8: a bare key's value written as a flow collection ---------
+
+# The window a bare `runs-on:` opens is over its VALUE, and that value may
+# be a flow collection on the next line as legitimately as a `- …` list.
+# It closed recording nothing and the line reached no fragment arm, so
+# this file was read by nothing at all — exit 0, empty allowlist
+# (claude-bot blocking).
+wf next-line-flow a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      [self-hosted, ci-runner]
+    steps:
+      - run: echo build
+YAML
+check "a runs-on: value written as a flow list on the next line fails" 1 \
+  "self-hosted" in_tree next-line-flow
+check "…naming its labels, so a correct vouch is possible" 1 \
+  "labels: self-hosted, ci-runner" in_tree next-line-flow
+check "…and the vouched form of the same file passes" 0 "1 workflow file" \
+  in_tree next-line-flow .github/workflows ci-runner
+
+# The same shape one window in — the `with:`-passed spelling, which is the
+# capability #395 adds rather than one it inherited.
+wf next-line-flow-with a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  check:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner:
+        ["self-hosted","ci-runner"]
+YAML
+check "a with: input's flow value on the next line fails" 1 "ci-runner" \
+  in_tree next-line-flow-with
+check "…and vouching for its tier passes it" 0 "1 workflow file" \
+  in_tree next-line-flow-with .github/workflows ci-runner
+
+# …and `with:`'s OWN value may be that collection. Slicing the line at its
+# first `:` threw the mapping away, so `hot:` was read by nothing — and
+# the split per value has to survive the fix: `safe:` being vouched for
+# says nothing about the runner `hot:` names.
+wf next-line-flow-map a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  check:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      {safe: '["self-hosted","pr-runner"]', hot: '["self-hosted","ci-runner"]'}
+YAML
+check "a with: flow mapping on the next line is read" 1 "ci-runner" \
+  in_tree next-line-flow-map
+check "…and its values stay split: vouching for one does not vouch the other" 1 \
+  "labels: self-hosted, ci-runner" in_tree next-line-flow-map .github/workflows pr-runner
+check "…and vouching for the tier that is actually named passes it" 0 \
+  "1 workflow file" in_tree next-line-flow-map .github/workflows ci-runner,pr-runner
+
+# The window is over the KEY'S OWN value and nothing else: a flow list
+# under a key that is not a runner spec is not a runner spec. Without this
+# row, reading every next-line flow collection in the file would pass.
+wf next-line-flow-other a.yml <<'YAML'
+name: ci
+on:
+  pull_request:
+    branches:
+      [self-hosted]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build
+YAML
+check "a flow list under a key that is not a runner spec is not read" 0 \
+  "1 workflow file" in_tree next-line-flow-other
+
+# --- #395 round 8: an alias is its anchor's value --------------------------
+
+# GitHub Actions accepts anchors and aliases, so this passes
+# `["self-hosted","ci-runner"]` to the callee exactly as writing it out
+# would. The `with:` window saw only the token `*runner-input` while the
+# anchored value sat outside every window: a fail-open on PR-authored code
+# against the very criterion decision 5 exists for (codex-bot blocking).
+wf alias-with a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+env:
+  RUNNER_INPUT: &runner-input '["self-hosted","ci-runner"]'
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: *runner-input
+YAML
+check "a self-hosted label reaching with: through an alias fails" 1 \
+  "ci-runner" in_tree alias-with
+check "…naming the anchored labels and not the alias token" 1 \
+  "labels: self-hosted, ci-runner" in_tree alias-with
+check "…and vouching for that tier passes the same file" 0 "1 workflow file" \
+  in_tree alias-with .github/workflows ci-runner
+
+# The same resolution on the other axis, where the anchored value is the
+# `runs-on:` itself.
+wf alias-runs-on a.yml <<'YAML'
+name: ci
+on: pull_request
+env:
+  RUNNER: &runner [self-hosted, ci-runner]
+jobs:
+  build:
+    runs-on: *runner
+    steps:
+      - run: echo build
+YAML
+check "a runs-on: written as an alias is resolved and fails" 1 "ci-runner" \
+  in_tree alias-runs-on
+
+# Resolution happens where the VALUE is chosen, not where the spec is
+# recorded: expanding a whole accumulated collection instead would merge
+# these two inputs into one set, and a set is vouched when ANY member is —
+# round 2's mis-vouch, bought back by the alias fix.
+wf alias-split a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+env:
+  SAFE: &safe '["self-hosted","pr-runner"]'
+  HOT: &hot '["self-hosted","ci-runner"]'
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {a: *safe, b: *hot}
+YAML
+check "two aliased inputs on one line stay two specs" 1 \
+  "labels: self-hosted, ci-runner" in_tree alias-split .github/workflows pr-runner
+check "…and vouching for both tiers passes the file" 0 "1 workflow file" \
+  in_tree alias-split .github/workflows pr-runner,ci-runner
+
+# An anchor written where the spec is names no label of its own: `&r` is
+# not something a consumer can vouch for, so it does not reach the message
+# (#395 acceptance criterion 9).
+wf anchor-inline a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: &r [self-hosted, ci-runner]
+    steps:
+      - run: echo build
+YAML
+check "an anchor at the spec is not reported as a label" 1 \
+  "labels: self-hosted, ci-runner" in_tree anchor-inline
+
+# An anchor is the head of a VALUE. A `&` inside a shell command is not
+# one, and reading it there would let a script's words answer to an alias
+# — here shadowing a hosted runner with a self-hosted spec.
+wf anchor-in-run a.yml <<'YAML'
+name: ci
+on: pull_request
+env:
+  TIER: &tier ubuntu-latest
+jobs:
+  build:
+    runs-on: *tier
+    steps:
+      - run: ./x.sh --flag &tier self-hosted
+YAML
+check "a & inside a run: command is not an anchor definition" 0 \
+  "1 workflow file" in_tree anchor-in-run
+
+# The limit, pinned so it cannot close or widen in silence: an alias whose
+# anchor this file never defines stays as written. The guard resolves what
+# the document itself defines and claims nothing beyond it.
+wf alias-undefined a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: *defined-somewhere-else
+YAML
+check "an alias with no anchor in this file is left as written" 0 \
+  "1 workflow file" in_tree alias-undefined
+
+# --- #395 round 8: a flow indicator is only an indicator in flow context ---
+
+# `- a,#self-hosted` is the single plain scalar `a,#self-hosted` to YAML —
+# a `,` may sit in a block-context plain scalar where it may not in a flow
+# one. Cutting the value there dropped the tail and passed the file, which
+# is the fail-open direction (claude-bot's nit).
+wf block-comma-hash a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - a,#self-hosted
+    steps:
+      - run: echo build
+YAML
+check "a block-context ,# does not end the value" 1 "self-hosted" \
+  in_tree block-comma-hash
+
+# …and the identical defect one arm over, in the window whose rule the one
+# above is supposed to be. Fixing only the reported half would re-open the
+# stated-once-implemented-twice split round 6 closed.
+wf frag-comma-hash a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: a,#self-hosted
+    steps:
+      - run: echo build
+YAML
+check "a fragment's depth-0 ,# does not end the value either" 1 "self-hosted" \
+  in_tree frag-comma-hash
+
+# The converse, in both windows: a CLOSING bracket is the collection's own
+# indicator even as it returns the depth to zero, so `]#` still opens a
+# comment and the note behind it is not a label.
+wf close-bracket-hash a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: [ubuntu-latest]#self-hosted
+    steps:
+      - run: echo build
+YAML
+check "a ]# still comments, so the note behind it is not a label" 0 \
+  "1 workflow file" in_tree close-bracket-hash
+
+wf close-bracket-hash-item a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - [ubuntu-latest]#self-hosted
+    steps:
+      - run: echo build
+YAML
+check "…and in the block-sequence window too" 0 "1 workflow file" \
+  in_tree close-bracket-hash-item
+
 # --- #395 decision 6: incubator's callers, verbatim, as a regression -------
 
 # Four files copied byte for byte from heavy-duty/incubator@main —
