@@ -374,6 +374,25 @@ fi
 # dash followed by whitespace, or a dash alone, and it is peeled to a
 # fixed point so a nested `- - self-hosted` item still reduces.
 #
+# AND IT IS PEELED BEFORE THE QUOTES GO, which is the whole of where the
+# rule lives. Round 9 peeled after `tr` had already made quotes
+# punctuation and the value had been split at its commas, so a flow
+# ITEM's own text was read as structure: `runs-on: [self-hosted, "-
+# pr-runner"]` reported `pr-runner`, and `pr-code-runner-labels: -
+# pr-runner` — the exact tier the file names — could not vouch for it,
+# while `pr-runner`, a label the file does not name, could (#395 round
+# 10; codex-bot and kimi-bot blocking, claude-bot's nit, one shape). YAML
+# says the position is unique: a dash-plus-whitespace is an indicator
+# only at the head of a BLOCK sequence item's raw text, since inside a
+# flow collection `[a, - b]` does not parse and a scalar value cannot
+# open with one either (`runs-on: - self-hosted` is a scanner error) —
+# both measured under PyYAML 6.0.2. So the peel runs once, at the head of
+# the value as it arrived, and the line loop below no longer carries it:
+# `- "- pr-runner"` peels its indicator, meets the quote and stops, and
+# the label survives whole. A label from a quoted JSON list
+# (`'["- pr-runner","ci-runner"]'`) is never peeled at all, which is the
+# same sentence — its dash was never an indicator.
+#
 # The result is newline-separated and stays that way through the
 # sequence and block windows and into spec_vouched, because a label may
 # now CONTAIN a comma and a comma-joined set cannot carry one: the
@@ -387,14 +406,15 @@ fi
 # claude-bot's note).
 labels_in() {
   local value="$1" flat
+  value="$(printf '%s' "$value" \
+    | sed -e ':d' -e 's/^[[:space:]]*-\([[:space:]]\)/\1/' -e 'td' \
+          -e 's/^[[:space:]]*-[[:space:]]*$//')"
   flat="$(printf '%s' "$value" | tr -d "\"'[]{}")"
   case "$value" in
     *'['* | *']'* | *'{'* | *'}'*) flat="${flat//,/$'\n'}" ;;
   esac
   printf '%s' "$flat" \
-    | sed -e ':d' -e 's/^[[:space:]]*-\([[:space:]]\)/\1/' -e 'td' \
-          -e 's/^[[:space:]]*-[[:space:]]*$//' \
-          -e 's/^[[:space:]]*//' \
+    | sed -e 's/^[[:space:]]*//' \
           -e 's/^&[A-Za-z0-9_-]*[[:space:]]*//' \
           -e ':k' -e 's/^[A-Za-z0-9_-]*:[[:space:]]*//' -e 'tk' \
           -e 's/[[:space:]]*$//' \

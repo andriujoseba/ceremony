@@ -2422,6 +2422,96 @@ check "a null item is read with the set it sits in" 1 \
 check_absent "…and files no label of its own" 1 "self-hosted, -" \
   in_tree dash-empty
 
+# THE INDICATOR IS PEELED BEFORE THE QUOTES GO, which is round 9's rule at
+# the one position YAML permits it. Round 9 peeled after the value had
+# been unquoted and split at its commas, so a flow ITEM whose own text
+# opens with `- ` was read as structure — codex-bot's and kimi-bot's
+# blocker, claude-bot's nit, one shape. PyYAML 6.0.2 reads this file's
+# `runs-on` as ['self-hosted', '- pr-runner'], and `[a, - b]` does not
+# parse at all, so a dash-plus-whitespace inside a flow collection is
+# never an indicator in any spelling.
+wf quoted-dash-flow a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: [self-hosted, "- pr-runner"]
+    steps:
+      - run: echo build
+YAML
+check "a quoted label's own leading dash-space survives" 1 \
+  "labels: self-hosted, - pr-runner —" in_tree quoted-dash-flow
+check "…and the exact label the file names vouches for it" 0 \
+  "1 workflow file" in_tree quoted-dash-flow .github/workflows '- pr-runner'
+# The half that reaches the verdict, as in round 9: the erasure also let a
+# label the file does not name vouch for the tier.
+check "…while the peeled spelling does not" 1 \
+  "labels: self-hosted, - pr-runner —" in_tree quoted-dash-flow \
+  .github/workflows pr-runner
+
+# claude-bot's spelling of the same shape, where the dashed label is the
+# self-hosted one itself, so the vouch test reads it rather than its
+# neighbour. PyYAML: ['- self-hosted', 'linux'].
+wf quoted-dash-lone a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: ["- self-hosted", linux]
+    steps:
+      - run: echo build
+YAML
+check "a quoted dash-space label is named whole" 1 \
+  "labels: - self-hosted, linux —" in_tree quoted-dash-lone
+check "…vouched by itself" 0 "1 workflow file" \
+  in_tree quoted-dash-lone .github/workflows '- self-hosted'
+check "…and not by the label the peel used to leave" 1 \
+  "labels: - self-hosted, linux —" in_tree quoted-dash-lone \
+  .github/workflows self-hosted
+
+# …and through a `with:` key as a JSON list in a string, where the dash
+# was never an indicator in any window: the value is one YAML scalar
+# whose text is JSON, and its item's dash is the callee's label.
+wf quoted-dash-json a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: '["- self-hosted","ci-runner"]'
+YAML
+check "a JSON list's dashed item keeps its dash" 1 \
+  "labels: - self-hosted, ci-runner —" in_tree quoted-dash-json
+check "…and only that label vouches for it" 0 "1 workflow file" \
+  in_tree quoted-dash-json .github/workflows '- self-hosted'
+check "…the dashless one does not" 1 \
+  "labels: - self-hosted, ci-runner —" in_tree quoted-dash-json \
+  .github/workflows self-hosted
+
+# The row where the two rules meet in one value: a block sequence item
+# that IS an indicator followed by a quoted label whose text opens with
+# another `- `. The peel takes the first, meets the quote and stops.
+# PyYAML: ['- self-hosted'] for both quote styles.
+wf quoted-dash-item a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - "- self-hosted"
+      - '- ci-runner'
+    steps:
+      - run: echo build
+YAML
+check "an item's indicator goes and its quoted dash stays" 1 \
+  "labels: - self-hosted, - ci-runner —" in_tree quoted-dash-item
+check "…so the set is vouched by the label it really names" 0 \
+  "1 workflow file" in_tree quoted-dash-item .github/workflows '- self-hosted'
+check "…and not by the one the double peel would have left" 1 \
+  "labels: - self-hosted, - ci-runner —" in_tree quoted-dash-item \
+  .github/workflows self-hosted
+
 # --- #395 decision 6: incubator's callers, verbatim, as a regression -------
 
 # Four files copied byte for byte from heavy-duty/incubator@main —
