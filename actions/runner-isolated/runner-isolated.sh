@@ -1125,10 +1125,10 @@ frag_start() {
 
 # seq_flush — the bare-key window's accumulated value becomes a spec,
 # reported at the first line its text named self-hosted on. One place, and
-# it has to be one: the window now ends at three of them — a line at or
-# outside its key's indent, a next-line value read in its place, and the
-# end of the file — and a window that flushes at two of the three loses a
-# label set in silence.
+# it has to be one: the window now ends at four places — a line at or
+# outside its key's indent, a next-line value read in its place, a top-
+# level key, and the end of the file — and a window that flushes at three
+# of the four loses a label set in silence.
 seq_flush() {
   if [ -n "$seq_hit" ]; then
     spec_lines+=("$seq_hit")
@@ -1509,6 +1509,14 @@ for file in "${files[@]}"; do
     # most needs to read.
     case "$line" in
       [![:space:]]*)
+        # …and it is the backstop the window's own close rule does not
+        # need: a line at column 0 is at or outside every key's indent, so
+        # the rule above has closed and flushed the window already —
+        # except where that line is itself a `- …` item, which the item
+        # arm consumes before the rule can look at it. Flushing here as
+        # well is what stops the one path that could reset the window
+        # while it still held a label set.
+        seq_flush
         in_seq=0
         in_with=0
         case "$line" in
