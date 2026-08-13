@@ -25,7 +25,8 @@ example task list quoted in a fence enrols nothing.
 Keep a short repo-local roadmap beside the epics. The roadmap shows the whole
 ladder and points to each working surface; it does not duplicate the live
 member lists or ordering. A working surface can move when an epic becomes a
-ledger; § The ledger pattern defines that transition. (#248)
+ledger; [The ledger pattern](#the-ledger-pattern) defines that transition
+(#248).
 
 ## Release candidates
 
@@ -253,8 +254,8 @@ finding the new member's row in it (#343).
 
 Release membership is a decision, never a sweep default. Triage performs each
 flip only after the operator blesses the wave; the issue-flow sweep may resolve
-ordinary issue dependencies, but it does not choose a release's contents.
-(#248)
+ordinary issue dependencies, but it does not choose a release's contents
+(#248).
 
 ## The ledger pattern
 

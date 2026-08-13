@@ -59,11 +59,9 @@ In order of authority:
      action may hold that token only if it comes from an **established
      publisher** — a real organization with maintenance history and more
      than one maintainer, not a memberless shell or a lone account shipping
-     an unauditable `dist/` blob — and is **pinned by full commit SHA**. An
-     action from a memberless organization or lone account shipping an
-     unauditable `dist/` blob never holds a write token, however well it
-     works. Read-only jobs: ordinary dependency
-     judgement, SHA-pinning still required. This is bot-run infrastructure —
+     an unauditable `dist/` blob — and is **pinned by full commit SHA**.
+     Read-only jobs: ordinary dependency judgement, SHA-pinning still
+     required. This is bot-run infrastructure —
      no human watches runtime logs, so a compromised action's window is
      unbounded (#216).
 3. **The code itself** — correctness first, then tests (does the test plan's
@@ -87,8 +85,8 @@ saw Y" outranks one that says "this looks like it might".
   the author in either case (#224). If you
   are requested off-panel, post the verdict anyway and say in its body that
   it is advisory; neither your silence nor your request-changes is a gate the
-  reconciler enforces. Authorization and membership must not be conflated.
-  (#57)
+  reconciler enforces. Authorization and membership must not be conflated
+  (#57).
 - **Being requested is a wake condition of its own.** It is how work in a
   repo you have never heard of reaches you; a repo list finds only work in
   repos somebody thought to list.
