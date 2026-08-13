@@ -127,8 +127,8 @@ the machinery at all:
    scalar such as a wrapped `'["self-hosted","ci-runner"]'` — is that
    key's value as much as a `- …` list is. The one shape not read there
    is a block **mapping** under `runs-on:` (`group:` and `labels:` keys
-   beneath the key), which is unread before **unreleased** as much as
-   after it (#395). An **alias** is its anchor's value — a
+   beneath the key), unread both before and after
+   **unreleased** (#395). An **alias** is its anchor's value — a
    `runner: *runner-input` passes the labels `&runner-input` names and
    is judged on them, and the anchor is found wherever the line writes
    one, inside a flow collection included — while a `*name` inside a

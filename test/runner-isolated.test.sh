@@ -1933,6 +1933,14 @@ YAML
 check "a block-context ,# does not end the value" 1 "self-hosted" \
   in_tree block-comma-hash
 
+# …and the label SET carries it: `a,#self-hosted` is ONE label, so a
+# vouch for `a` vouches for nothing here. A comma-joined set cannot hold
+# a label containing a comma — it re-splits what labels_in refused to —
+# which is why the set is newline-joined from labels_in through this
+# window and into spec_vouched (#395 round 8).
+check "…and a vouch for its head does not vouch for the whole label" 1 \
+  "labels: a,#self-hosted —" in_tree block-comma-hash .github/workflows a
+
 # …and the identical defect one arm over, in the window whose rule the one
 # above is supposed to be. Fixing only the reported half would re-open the
 # stated-once-implemented-twice split round 6 closed.
