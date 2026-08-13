@@ -297,9 +297,13 @@ flow_flush() {
 
 # flow_feed <chunk> — one line's worth of an open collection.
 flow_feed() {
-  local text="$1" i=0 ch esc
+  local text="$1" i=0 ch prev esc
   while [ "$i" -lt "${#text}" ]; do
     ch="${text:i:1}"
+    prev=""
+    if [ "$i" -gt 0 ]; then
+      prev="${text:i-1:1}"
+    fi
     i=$((i + 1))
     if [ -n "$flow_quote" ]; then
       # Inside a double-quoted scalar `\` escapes the next character,
@@ -323,6 +327,26 @@ flow_feed() {
       fi
       flow_cur="$flow_cur$ch"
       continue
+    fi
+    # A COMMENT IS NOT CONTENT, AND IT CLOSES NOTHING. Outside a quoted
+    # scalar a `#` preceded by whitespace begins a YAML comment that runs
+    # to the end of its line, so the rest of this chunk is text belonging
+    # to nobody: stop reading it and leave every open collection OPEN,
+    # which is the whole difference from the line ending. Feeding it as
+    # content let a `}` or `]` inside a comment pop flow_kinds and close
+    # the fragment — the values below vanished, self-hosted and all, with
+    # no vouch needed — while a `# … self-hosted …` note beside a hosted
+    # runner filed a spec that named the comment's tier and refused a
+    # correct file (#395 round 5, codex-bot and claude-bot blocking).
+    # The whitespace is YAML's own rule and not caution: `ci#runner` is a
+    # label, not a label and a comment. A comment opening a continuation
+    # line is covered by it too, that line being fed with the folded
+    # newline in front of it; a whole comment LINE never arrives here at
+    # all, being skipped where every half of the rule skips one.
+    if [ "$ch" = '#' ]; then
+      case "$prev" in
+        ' ' | '	') break ;;
+      esac
     fi
     case "$ch" in
       '"' | "'")
