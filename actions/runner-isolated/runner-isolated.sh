@@ -180,7 +180,7 @@ set -euo pipefail
 #     `runs-on:` + `labels: [self-hosted, …]` underneath goes unseen.
 #     The inline spelling of the same mapping is read. Documented GitHub
 #     syntax, unread before #395 as much as after it, and out of #395 by
-#     decision 9 (#395 round 5, claude-bot's nit).
+#     decision 9 (#395 round 5, claude-bot's nit; discussion #401).
 #
 # COMMENTS ARE NOT CONTENT, and the rule is one sentence with one
 # exception. A workflow that merely mentions self-hosted in prose is not
