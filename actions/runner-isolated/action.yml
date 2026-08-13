@@ -19,8 +19,12 @@ description: >-
   end of its first line, so one written across several lines is scanned
   like any other; a quoted scalar is opaque, so a bracket or comma inside
   quotes is that value's text and not its end, wherever its lines fall. A
-  collection's values are its own at every nesting depth: a key beside a
-  runner spec never vouches for it, however many brackets separate them.
+  comment is the other way round: never part of a value, ending with its
+  own line and closing nothing, so a `}` inside one leaves the collection
+  open — except inside a block scalar, whose lines are literal text the
+  callee receives, `#` and all. A collection's values are its own at every
+  nesting depth: a key beside a runner spec never vouches for it, however
+  many brackets separate them.
   The rule is file-level, deliberately: a file that executes PR code and
   names an unvouched self-hosted label anywhere fails, even across jobs —
   the fix is to split the workflow or vouch for the tier. Known gaps, so

@@ -121,7 +121,10 @@ the machinery at all:
    not vouch for the other, at any nesting depth. A value is read to its
    own closing bracket, so a mapping or list written across several
    lines is scanned like any other, and a quoted scalar is opaque: a
-   bracket or comma inside quotes is that value's text, not its end. It
+   bracket or comma inside quotes is that value's text, not its end. A
+   comment is the other way round — it is never part of a value, ends
+   with its own line and closes nothing, so a `}` written inside one
+   leaves the collection open and the labels below it are still read. It
    fires on the PR that first puts PR-authored code on an unvouched
    self-hosted label; the two unblocks are splitting the workflow and
    [vouching for the tier](#vouching-for-a-runner-that-may-execute-pr-code).

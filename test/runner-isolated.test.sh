@@ -1360,6 +1360,24 @@ YAML
 check "a comment outside the block is a comment again" 0 "1 workflow file" \
   in_tree block-scalar-hash-outdent
 
+# The header's KNOWN LIMITS now says which spelling of the runner-group
+# mapping is read and which is not, and the half that IS read is a claim
+# this file should carry: `runs-on: {group: …, labels: […]}` inline is a
+# flow mapping like any other, so its label list is a value and a spec.
+# (The block-mapping spelling is the gap the same bullet discloses —
+# pre-existing, out of #395 by decision 9, and not fixtured here.)
+wf inline-group-mapping a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: {group: linux, labels: [self-hosted, ci-runner]}
+    steps:
+      - run: make test
+YAML
+check "the inline group mapping's label list is read" 1 \
+  "labels: self-hosted, ci-runner —" in_tree inline-group-mapping
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml

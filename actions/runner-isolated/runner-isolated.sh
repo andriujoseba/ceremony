@@ -126,6 +126,12 @@ set -euo pipefail
 #                                            #   is one spec, closed at
 #                                            #   the key's own indent
 #                                            #   (#395 round 4)
+#     with: {                                # …and a COMMENT is none of
+#       note: plain, # } closes nothing      #   those: it ends with its
+#       hot: '["self-hosted","ci-runner"]' } #   line and closes nothing,
+#                                            #   so the values below it
+#                                            #   are still read (#395
+#                                            #   round 5)
 #     jobs: {build: {runs-on: [self-hosted], # A key BESIDE a spec never
 #       environment: pr-runner}}             #   joins it, however many
 #                                            #   brackets are between —
@@ -164,16 +170,35 @@ set -euo pipefail
 #   - any trigger whose name contains `pull_request` (for example
 #     `pull_request_review`) reads as `pull_request` and derives as
 #     executing PR code. Pre-#395 behaviour, kept: conservative.
-#   - indirection is not resolved: a runner group (`runs-on: {group: …}`)
-#     or a matrix/expression value can reach self-hosted hardware without
-#     the string appearing on any line this guard reads.
+#   - indirection is not resolved: a runner GROUP names its hardware
+#     elsewhere, and a matrix or expression value is decided at run time,
+#     so either can reach self-hosted hardware without the string
+#     appearing on any line this guard reads.
+#   - …and one gap where the string IS on a line it reads: `runs-on:` in
+#     its BLOCK-MAPPING form — `group:` and `labels:` keys beneath the
+#     key rather than a value beside it — selects no fragment, so
+#     `runs-on:` + `labels: [self-hosted, …]` underneath goes unseen.
+#     The inline spelling of the same mapping is read. Documented GitHub
+#     syntax, unread before #395 as much as after it, and out of #395 by
+#     decision 9 (#395 round 5, claude-bot's nit).
 #
-# Comments are skipped on BOTH halves of the rule: a workflow that merely
-# mentions self-hosted in prose is not the bug (incubator's pr-checks.yml
-# header is exactly that prose), and a guard that cried wolf on comments
-# would be turned off within a week. A missing workflows directory is a
-# PASS, not an error — most repos in the family have one, but a guard
-# that fails on absence is a guard nobody adopts.
+# COMMENTS ARE NOT CONTENT, and the rule is one sentence with one
+# exception. A workflow that merely mentions self-hosted in prose is not
+# the bug — incubator's pr-checks.yml header is exactly that prose, and a
+# guard that cried wolf on comments would be turned off within a week —
+# so a comment line is skipped, and an inline comment ends its line's
+# text for every window that reads one: the flow scanner, which leaves
+# the collection OPEN because a comment closes nothing, and the
+# block-sequence window, whose item is a value and not a note about one.
+# A `#` is a comment only where YAML says: preceded by whitespace, and
+# outside a quoted scalar, so `ci#runner` is a label and a quoted `#` is
+# text. The exception is the BLOCK SCALAR, whose lines are literal text
+# the callee receives verbatim: there a `#` opens nothing and a label
+# written behind one is a label this file passes (#395 round 5).
+#
+# A missing workflows directory is a PASS, not an error — most repos in
+# the family have one, but a guard that fails on absence is a guard
+# nobody adopts.
 #
 # A file of its own (not inlined in action.yml) so
 # test/runner-isolated.test.sh can drive it against constructed trees —
