@@ -428,6 +428,10 @@ for file in "${files[@]}"; do
   in_seq=0
   in_with=0
   with_indent=0
+  in_blk=0
+  blk_indent=0
+  blk_labels=""
+  blk_hit=""
   seq_labels=""
   seq_hit=""
   flow_open=0
@@ -533,6 +537,39 @@ for file in "${files[@]}"; do
       esac
     fi
 
+    # …and shape d: a BLOCK SCALAR value, `runner: |` with its text
+    # indented under it. Found while re-reading round 4's own fix rather
+    # than reported: the callee receives that text exactly as it receives
+    # a quoted one, so a self-hosted label written this way was passed to
+    # a reusable workflow and seen by nothing — a fail-open needing no
+    # vouch, and against the same criterion decision 5 exists for. The
+    # whole block is ONE spec, like the sequence window above, and it
+    # closes when indentation returns to the key's own level.
+    if [ "$in_blk" -eq 1 ]; then
+      if [ "$indent" -gt "$blk_indent" ]; then
+        consumed_item=1
+        item_labels="$(labels_in "$stripped")"
+        if [ -n "$item_labels" ]; then
+          blk_labels="${blk_labels:+$blk_labels,}$item_labels"
+        fi
+        case "$line" in
+          *self-hosted*)
+            if [ -z "$blk_hit" ]; then
+              blk_hit="$lineno: $line"
+            fi
+            ;;
+        esac
+      else
+        in_blk=0
+        if [ -n "$blk_hit" ]; then
+          spec_lines+=("$blk_hit")
+          spec_labels+=("$blk_labels")
+        fi
+        blk_hit=""
+        blk_labels=""
+      fi
+    fi
+
     # The `with:` window closes when indentation returns to the key's own
     # level or further out.
     if [ "$in_with" -eq 1 ] && [ "$indent" -le "$with_indent" ]; then
@@ -609,6 +646,10 @@ for file in "${files[@]}"; do
         rest="${rest#"${rest%%[![:space:]]*}"}"
         case "$rest" in
           '' | '#'*) in_seq=1 ;;
+          '|'* | '>'*)
+            in_blk=1
+            blk_indent=$indent
+            ;;
           *) frag="$rest" ;;
         esac
         ;;
@@ -641,6 +682,10 @@ for file in "${files[@]}"; do
                   rest="${rest#"${rest%%[![:space:]]*}"}"
                   case "$rest" in
                     '' | '#'*) in_seq=1 ;;
+                    '|'* | '>'*)
+                      in_blk=1
+                      blk_indent=$indent
+                      ;;
                     *) frag="$rest" ;;
                   esac
                   ;;
@@ -664,6 +709,12 @@ for file in "${files[@]}"; do
   if [ -n "$seq_hit" ]; then
     spec_lines+=("$seq_hit")
     spec_labels+=("$seq_labels")
+  fi
+
+  # …and so does a block scalar the file ends inside of.
+  if [ -n "$blk_hit" ]; then
+    spec_lines+=("$blk_hit")
+    spec_labels+=("$blk_labels")
   fi
 
   # …and so does a flow collection the file ends inside of.
