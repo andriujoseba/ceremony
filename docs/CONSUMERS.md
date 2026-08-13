@@ -131,7 +131,8 @@ the machinery at all:
    **unreleased** (#395). A plain scalar that **folds** onto further
    lines is read on its first line only, which it always was: it is the
    one value that spans lines with no bracket, quote or block indicator
-   to follow, and it can only name a label containing spaces. An **alias** is its anchor's value — a
+   to follow, and it can only name a label containing spaces.
+   An **alias** is its anchor's value — a
    `runner: *runner-input` passes the labels `&runner-input` names and
    is judged on them, and the anchor is found wherever the line writes
    one, inside a flow collection included — while a `*name` inside a
