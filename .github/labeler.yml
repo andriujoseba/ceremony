@@ -64,6 +64,7 @@ scope:guards:
           - actions/drill-recorded/**
           - actions/refs-not-closing/**
           - actions/runner-isolated/**
+          - actions/sha-pinned/**
           - .github/workflows/refs-guard.yml
           - test/changelog-armed.test.sh
           - test/changelog-assembled.test.sh
@@ -72,6 +73,7 @@ scope:guards:
           - test/drill-recorded.test.sh
           - test/refs-not-closing.test.sh
           - test/runner-isolated.test.sh
+          - test/sha-pinned.test.sh
           - .github/scripts/marker-check.sh
           - test/marker-check.test.sh
           - .github/scripts/vendored-check.sh

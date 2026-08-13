@@ -149,7 +149,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The pushed head is what ships; its first parent (fetch-depth: 2)
           # is main the instant before the PR landed, which the version
@@ -157,7 +157,7 @@ jobs:
           # belt-and-braces fetch of event.before — cast's precedent).
           ref: ${{ github.sha }}
           fetch-depth: 2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # The self-consumption bypass (load-bearing — without it, ceremony's
         # own release deadlocks): on the dogfood path the workspace IS this
         # repo at the merge commit, libs included, so nothing is fetched —
@@ -330,8 +330,8 @@ jobs:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ fromJSON(inputs.runner) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # The self-consumption bypass — see the merge door's twin step.
         if: github.repository != 'heavy-duty/ceremony'
         with:

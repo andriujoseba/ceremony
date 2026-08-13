@@ -52,13 +52,13 @@ jobs:
         # take the consumer branch for real, and vice versa.
         shape: [dogfood, consumer]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # release.yml's first checkout, verbatim: the pushed head and its
           # first parent.
           ref: ${{ github.sha }}
           fetch-depth: 2
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # release.yml's second checkout — the consumer path's pinned
         # ceremony source, same `path:` wiring. One forced deviation: the
         # ref is github.sha, not CEREMONY_SELF_REF — the pinned tag cannot
@@ -358,6 +358,6 @@ jobs:
   fixture-chain:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: the merge door's script chain against a fixture ceremony
         run: bash test/release-chain.test.sh

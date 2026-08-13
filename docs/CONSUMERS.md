@@ -75,7 +75,7 @@ the machinery at all:
 5. **CI guard steps** in the repo's `ci.yml`:
 
    ```yaml
-       - uses: actions/checkout@v4
+       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
          with:
            # changelog-monotonic and changelog-assembled compare HEAD
            # against the merge base; a checkout that cannot resolve it is
@@ -96,6 +96,7 @@ the machinery at all:
        # Adopt this step with the pin bump to 0.2.0 or later; never mix
        # refs.
        - uses: heavy-duty/ceremony/actions/runner-isolated@<pinned-tag>
+       - uses: heavy-duty/ceremony/actions/sha-pinned@<pinned-tag>
    ```
 
    `changelog-armed` and `drill-recorded` take
@@ -103,6 +104,41 @@ the machinery at all:
    inputs and defaults are in its `action.yml`
    ([actions/](../actions/)). Adopting the agent team flow adds the
    `docs-sync` step ([below](#adopting-the-agent-team-flow)).
+
+   `sha-pinned` enforces the vendored rule that third-party actions and
+   reusable workflows use a full lowercase commit SHA followed by a readable
+   trailing comment. Adopt it only after pinning every existing reference,
+   then add the guard in that same PR: adding the step first merely makes the
+   known sweep red. Its two scan inputs are `workflows-dir` (default
+   `.github/workflows`, direct `*.yml`/`*.yaml` children) and `actions-dir`
+   (default `.github/actions`, one-level `*/action.yml`/`*/action.yaml`). A
+   repo that keeps composite actions at `actions/`, as ceremony does, passes
+   `actions-dir: actions`. Both directories may be absent. The scan is
+   deliberately non-recursive, so workflow fixtures nested elsewhere do not
+   become shipping policy by accident.
+
+   Local `./` references and references owned by `GITHUB_REPOSITORY`'s owner
+   are exempt. The latter keeps ceremony's one-release-pin model intact; use
+   `first-party-owner` only to override that derived owner. With neither a
+   repository value nor an override, no owner is exempt. The guard performs
+   no network lookup and cannot judge whether a publisher is established;
+   `docker://` references also remain outside it because image digests use a
+   different syntax.
+
+   Pin the commit a release tag ultimately names, not an annotated tag object.
+   Inspect the ref first, then dereference when its object type is `tag`:
+
+   ```sh
+   gh api /repos/O/R/git/ref/tags/vX --jq .object
+   gh api /repos/O/R/git/tags/<tag-object-sha> --jq .object
+   ```
+
+   The second command is required only for an annotated tag; its returned
+   commit SHA is the value that belongs after `@`. `actions/delete-package-versions@v5`
+   is a worked example where pinning the tag object's SHA would look plausible
+   but name the wrong object. The trailing comment may be `# v4`, a full
+   semantic version, or a date—the guard requires useful text but cannot
+   prove that prose true.
 
    `runner-isolated` asserts that no workflow file which **executes
    PR-authored code** names a self-hosted runner you have not vouched
@@ -198,7 +234,7 @@ the machinery at all:
      refs-not-closing:
        runs-on: ubuntu-latest
        steps:
-         - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+         - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
          - uses: heavy-duty/ceremony/actions/refs-not-closing@<pinned-tag>
    ```
 
