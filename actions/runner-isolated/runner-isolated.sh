@@ -269,6 +269,11 @@ fi
 # strip left the message naming something that is not a label at all
 # (#395 round 4, claude-bot's nit 2).
 #
+# An ANCHOR goes the same way, for the same reason: `runs-on: &r
+# [self-hosted, ci-runner]` names two labels and no runner carries `&r`,
+# so a message quoting it names something the consumer cannot vouch for
+# even in principle (#395 round 8).
+#
 # It takes a VALUE and not a line, so it does not remove comments: the
 # caller that reads a line removes that line's own comment (no_comment
 # below), and a value reaching here from the flow scanner never carries
@@ -282,6 +287,7 @@ labels_in() {
     | tr -d "\"'[]{}" \
     | tr ',' '\n' \
     | sed -e 's/^[[:space:]]*-*[[:space:]]*//' \
+          -e 's/^&[A-Za-z0-9_-]*[[:space:]]*//' \
           -e ':k' -e 's/^[A-Za-z0-9_-]*:[[:space:]]*//' -e 'tk' \
           -e 's/[[:space:]]*$//' \
     | grep -v '^$' \
@@ -315,6 +321,7 @@ labels_in() {
 # shape d exists to close.
 no_comment() {
   local text="$1" i=0 cut=-1 ch prev quote="" fresh=1 qend=0 was_qend=0
+  local kinds="" ind=0 was_ind=0
   while [ "$i" -lt "${#text}" ]; do
     ch="${text:i:1}"
     prev=""
@@ -323,6 +330,8 @@ no_comment() {
     fi
     was_qend="$qend"
     qend=0
+    was_ind="$ind"
+    ind=0
     i=$((i + 1))
     if [ -n "$quote" ]; then
       if [ "$quote" = '"' ] && [ "$ch" = "\\" ] && [ "$i" -lt "${#text}" ]; then
@@ -339,13 +348,24 @@ no_comment() {
       fi
       continue
     fi
+    # A FLOW INDICATOR IS ONLY AN INDICATOR IN FLOW CONTEXT, which is why
+    # the bracket kinds are carried here as well and not just in
+    # flow_feed. A `,` is illegal inside a flow-context plain scalar and
+    # so ends one — but a BLOCK-context plain scalar may contain it, so
+    # `- a,#self-hosted` is the single label `a,#self-hosted` and not a
+    # value with a note after it. Cutting there dropped the tail and
+    # passed the file: this window's own fail-open, the same class as the
+    # one round 6 closed, and reported as a nit rather than found by the
+    # suite (#395 round 8, claude-bot's nit). A closing `]` or `}` stays
+    # an indicator even as it returns the depth to zero — it is the
+    # collection's own — so `- [a]#b` still comments.
     if [ "$ch" = '#' ] && [ -n "$prev" ]; then
-      if [ "$was_qend" -eq 1 ]; then
+      if [ "$was_qend" -eq 1 ] || [ "$was_ind" -eq 1 ]; then
         cut=$((i - 1))
         break
       fi
       case "$prev" in
-        ' ' | '	' | '{' | '[' | ',' | ']' | '}')
+        ' ' | '	')
           cut=$((i - 1))
           break
           ;;
@@ -358,7 +378,25 @@ no_comment() {
         fi
         fresh=0
         ;;
-      '[' | '{' | ',' | ':') fresh=1 ;;
+      '[' | '{')
+        kinds="$kinds$ch"
+        ind=1
+        fresh=1
+        ;;
+      ']' | '}')
+        if [ -n "$kinds" ]; then
+          kinds="${kinds%?}"
+          ind=1
+        fi
+        fresh=0
+        ;;
+      ',')
+        if [ -n "$kinds" ]; then
+          ind=1
+        fi
+        fresh=1
+        ;;
+      ':') fresh=1 ;;
       ' ' | '	') ;;
       # A LEADING `- ` is the sequence item's own indicator and not a
       # character of its value, so a scalar may start after it — which is
@@ -385,6 +423,142 @@ no_comment() {
   # The comment's own separating whitespace goes with it, as the tail-trim
   # this replaced dropped it: a value's trailing space is nobody's label.
   printf '%s' "${text%"${text##*[![:space:]]}"}"
+}
+
+# AN ALIAS IS ITS ANCHOR'S VALUE, AND THE GUARD MUST READ IT AS ONE.
+# GitHub Actions accepts YAML anchors and aliases, so
+#
+#     env:
+#       RUNNER_INPUT: &runner-input '["self-hosted","ci-runner"]'
+#     jobs:
+#       call:
+#         uses: …
+#         with:
+#           runner: *runner-input
+#
+# passes `["self-hosted","ci-runner"]` to the callee exactly as writing it
+# out would. The `with:` window saw the token `*runner-input`, whose text
+# names no runner, while the anchored value sat outside every window —
+# exit 0 with an empty allowlist, a fail-open on PR-authored code and
+# against the criterion decision 5 exists for (#395 round 8, codex-bot
+# blocking).
+#
+# So anchors are recorded as the file is read and aliases are resolved
+# before a value is judged. Resolution happens where the VALUE is chosen
+# — at frag_start and on each line fed to an open collection — and
+# deliberately not at flush: expanding a whole accumulated collection
+# would merge `{runner: *a, hot: *b}` into one spec, and a set is vouched
+# when any member is, which is round 2's mis-vouch bought back.
+#
+# A document's anchors are its own, so the table is cleared per file. An
+# anchor must be DEFINED BEFORE the alias that uses it — YAML requires
+# it, and one pass over the lines gets it for free.
+alias_names=()
+alias_values=()
+
+# anchor_record <line> — an `&name` heading a VALUE, with the rest of its
+# line as that value. Only at the head of a value (`KEY: &name …`, or a
+# sequence item's `- &name …`), because a bare `&` elsewhere on a line is
+# ordinarily not an anchor at all — `run: a && b` is the routine case,
+# and reading one there would let a shell fragment answer to an alias.
+anchor_record() {
+  local text="$1" name="" value=""
+  case "$text" in
+    '-'[[:space:]]*)
+      text="${text#-}"
+      text="${text#"${text%%[![:space:]]*}"}"
+      ;;
+  esac
+  case "$text" in
+    '&'*) ;;
+    *:[[:space:]]*)
+      text="${text#*:}"
+      text="${text#"${text%%[![:space:]]*}"}"
+      ;;
+    *) return ;;
+  esac
+  case "$text" in
+    '&'*) ;;
+    *) return ;;
+  esac
+  text="${text#&}"
+  while [ -n "$text" ]; do
+    case "$text" in
+      [A-Za-z0-9_-]*)
+        name="$name${text:0:1}"
+        text="${text:1}"
+        ;;
+      *) break ;;
+    esac
+  done
+  value="${text#"${text%%[![:space:]]*}"}"
+  if [ -n "$name" ] && [ -n "$value" ]; then
+    alias_names+=("$name")
+    alias_values+=("$value")
+  fi
+}
+
+# alias_expand <text> — every `*name` standing where a node may begin,
+# replaced by its anchor's value. An unknown name is left as it was
+# written: this guard resolves what the file itself defines and claims
+# nothing about an anchor it never saw (KNOWN LIMITS below).
+alias_expand() {
+  local text="$1" out="" i=0 ch prev name idx found
+  case "$text" in
+    *'*'*) ;;
+    *)
+      printf '%s' "$text"
+      return
+      ;;
+  esac
+  while [ "$i" -lt "${#text}" ]; do
+    ch="${text:i:1}"
+    prev=""
+    if [ "$i" -gt 0 ]; then
+      prev="${text:i-1:1}"
+    fi
+    if [ "$ch" != '*' ]; then
+      out="$out$ch"
+      i=$((i + 1))
+      continue
+    fi
+    # Where a node may begin: a fragment's start, or after separation
+    # whitespace or a flow indicator. A `*` anywhere else is a character
+    # of the scalar it sits in — a `paths: ['**/*.yml']` glob, say.
+    case "$prev" in
+      '' | ' ' | '	' | '{' | '[' | ',' | ':') ;;
+      *)
+        out="$out$ch"
+        i=$((i + 1))
+        continue
+        ;;
+    esac
+    i=$((i + 1))
+    name=""
+    while [ "$i" -lt "${#text}" ]; do
+      case "${text:i:1}" in
+        [A-Za-z0-9_-])
+          name="$name${text:i:1}"
+          i=$((i + 1))
+          ;;
+        *) break ;;
+      esac
+    done
+    found=""
+    idx=0
+    while [ "$idx" -lt "${#alias_names[@]}" ]; do
+      if [ "${alias_names[idx]}" = "$name" ]; then
+        found="${alias_values[idx]}"
+      fi
+      idx=$((idx + 1))
+    done
+    if [ -n "$name" ] && [ -n "$found" ]; then
+      out="$out$found"
+    else
+      out="$out*$name"
+    fi
+  done
+  printf '%s' "$out"
 }
 
 # THE FRAGMENT IS A FLOW COLLECTION, NOT A SLICE OF A LINE — frag_start,
@@ -457,7 +631,7 @@ flow_flush() {
 
 # flow_feed <chunk> — one line's worth of an open collection.
 flow_feed() {
-  local text="$1" i=0 ch prev esc qend
+  local text="$1" i=0 ch prev esc qend ind=0 was_ind=0
   while [ "$i" -lt "${#text}" ]; do
     ch="${text:i:1}"
     prev=""
@@ -469,6 +643,8 @@ flow_feed() {
     # apostrophe inside a plain one and its `#` is plain text.
     qend="$flow_qend"
     flow_qend=0
+    was_ind="$ind"
+    ind=0
     i=$((i + 1))
     if [ -n "$flow_quote" ]; then
       # Inside a double-quoted scalar `\` escapes the next character,
@@ -526,12 +702,19 @@ flow_feed() {
     # continuation line arrives with its folded newline in front of it,
     # and the one text that does reach here beginning with a `#` is the
     # loose arm's slice of a plain scalar that CONTAINS one.
+    # …and an indicator is one only IN FLOW CONTEXT: a fragment that is a
+    # plain scalar carries no open bracket, and a block-context plain
+    # scalar may contain a `,` — `runs-on: a,#self-hosted` is one label to
+    # YAML, and cutting at that `,#` dropped the tail and passed the file.
+    # The same defect no_comment carries above, in the window this rule is
+    # stated in: fixing one and not the other would re-open the
+    # stated-once-implemented-twice split of round 6 (#395 round 8).
     if [ "$ch" = '#' ] && [ -n "$prev" ]; then
-      if [ "$qend" -eq 1 ]; then
+      if [ "$qend" -eq 1 ] || [ "$was_ind" -eq 1 ]; then
         break
       fi
       case "$prev" in
-        ' ' | '	' | '{' | '[' | ',' | ']' | '}') break ;;
+        ' ' | '	') break ;;
       esac
     fi
     case "$ch" in
@@ -544,10 +727,12 @@ flow_feed() {
       '[' | '{')
         flow_kinds="$flow_kinds$ch"
         flow_fresh=1
+        ind=1
         ;;
       ']' | '}')
         if [ -n "$flow_kinds" ]; then
           flow_kinds="${flow_kinds%?}"
+          ind=1
           # The collection's own close: what follows it on this line is
           # not one of its values.
           if [ -z "$flow_kinds" ]; then
@@ -560,6 +745,9 @@ flow_feed() {
         ;;
       ',')
         flow_fresh=1
+        if [ -n "$flow_kinds" ]; then
+          ind=1
+        fi
         # A separator only inside a mapping — see flow_kinds above.
         if [ "${flow_kinds: -1}" = '{' ]; then
           flow_flush
@@ -595,6 +783,7 @@ flow_feed() {
 frag_start() {
   local text="$1"
   text="${text#"${text%%[![:space:]]*}"}"
+  text="$(alias_expand "$text")"
   flow_cur=""
   flow_hit=""
   flow_quote=""
@@ -652,6 +841,10 @@ for file in "${files[@]}"; do
   blk_hit=""
   seq_labels=""
   seq_hit=""
+  seq_indent=0
+  seq_items=0
+  alias_names=()
+  alias_values=()
   flow_open=0
   flow_kinds=""
   flow_fresh=1
@@ -710,6 +903,20 @@ for file in "${files[@]}"; do
         ;;
     esac
 
+    # …and, before any window can consume the line either, the anchors it
+    # defines: an alias below may be the only place a runner label is
+    # named, and the definition routinely sits in a block — `env:` — that
+    # no window of this guard reads. Skipped inside an open block scalar,
+    # whose `&` is literal text the callee receives rather than an anchor
+    # (#395 round 8).
+    case "$stripped" in
+      *'&'*)
+        if [ "$in_blk" -eq 0 ] || [ "$indent" -le "$blk_indent" ]; then
+          anchor_record "$(no_comment "$stripped")"
+        fi
+        ;;
+    esac
+
     # A flow collection opened on an earlier line goes on consuming lines
     # until its own bracket closes it — the whole of codex-bot's round-3
     # blocker. The line break itself folds to a space, as YAML folds it,
@@ -720,7 +927,7 @@ for file in "${files[@]}"; do
     # turn a malformed file into a silent pass.
     if [ "$flow_open" -eq 1 ]; then
       if [ "$indent" -gt 0 ]; then
-        flow_feed " $stripped"
+        flow_feed " $(alias_expand "$stripped")"
         continue
       fi
       flow_flush
@@ -741,10 +948,13 @@ for file in "${files[@]}"; do
       case "$stripped" in
         '-'*)
           consumed_item=1
+          seq_items=$((seq_items + 1))
           # The item's own text: its trailing comment is the line's, not
           # the value's, and the runner probe reads the same text the
-          # labels come from — a note is not a spec (#395 round 5).
-          item_text="$(no_comment "$stripped")"
+          # labels come from — a note is not a spec (#395 round 5). An
+          # alias item is its anchor's value, resolved after the comment
+          # goes so a `*name` written in a note answers to nothing.
+          item_text="$(alias_expand "$(no_comment "$stripped")")"
           item_labels="$(labels_in "$item_text")"
           if [ -n "$item_labels" ]; then
             seq_labels="${seq_labels:+$seq_labels,}$item_labels"
@@ -765,6 +975,25 @@ for file in "${files[@]}"; do
           fi
           seq_hit=""
           seq_labels=""
+          # A BARE KEY'S VALUE MAY BE A FLOW COLLECTION ON THE NEXT LINE,
+          # not only a `- …` list: `runs-on:` with `[self-hosted,
+          # ci-runner]` indented underneath is the same value written the
+          # other way, and GitHub reads it the same. The window closed
+          # recording nothing and the line then matched no fragment arm,
+          # so it was read by NOTHING — including the `with:`-passed
+          # spelling this change exists to catch (#395 round 8,
+          # claude-bot blocking). Only as the window's FIRST line and
+          # only deeper than its key: after an item has been read the
+          # value is the sequence, and at or outside the key's own indent
+          # the line belongs to something else entirely.
+          if [ "$seq_items" -eq 0 ] && [ "$indent" -gt "$seq_indent" ]; then
+            case "$stripped" in
+              '['* | '{'*)
+                consumed_item=1
+                frag_start "$stripped"
+                ;;
+            esac
+          fi
           ;;
       esac
     fi
@@ -877,7 +1106,11 @@ for file in "${files[@]}"; do
         rest="${stripped#runs-on:}"
         rest="${rest#"${rest%%[![:space:]]*}"}"
         case "$rest" in
-          '' | '#'*) in_seq=1 ;;
+          '' | '#'*)
+            in_seq=1
+            seq_indent=$indent
+            seq_items=0
+            ;;
           '|'* | '>'*)
             in_blk=1
             blk_indent=$indent
@@ -909,11 +1142,22 @@ for file in "${files[@]}"; do
             # with a value hands that value over as the fragment.
             if [ "$in_with" -eq 1 ] && [ "$in_seq" -eq 0 ]; then
               case "$stripped" in
+                # …and `with:`'s OWN value may be a flow mapping on the
+                # next line, which is a value and not a key with one:
+                # slicing `{safe: [ok], hot: "self-hosted"}` at its first
+                # `:` threw away the mapping and everything the arm below
+                # needs to split, so `hot:` was read by nothing (#395
+                # round 8, claude-bot blocking).
+                '['* | '{'*) frag="$stripped" ;;
                 *:*)
                   rest="${stripped#*:}"
                   rest="${rest#"${rest%%[![:space:]]*}"}"
                   case "$rest" in
-                    '' | '#'*) in_seq=1 ;;
+                    '' | '#'*)
+                      in_seq=1
+                      seq_indent=$indent
+                      seq_items=0
+                      ;;
                     '|'* | '>'*)
                       in_blk=1
                       blk_indent=$indent
