@@ -347,13 +347,30 @@ fi
 # decision 5 asks for, so quotes stay punctuation here rather than
 # becoming opaque.
 #
+# A LEADING DASH IS PUNCTUATION ONLY WHERE IT IS THE INDICATOR — the
+# same sentence again, on the character the sequence window feeds in. A
+# `- ` opening a block item is structure and goes; a `-` that begins the
+# VALUE is text, and `-self-hosted` is a label GitHub schedules and
+# actionlint accepts. Stripping every leading dash rewrote it to
+# `self-hosted` before the vouch test ever saw it, which cost both
+# directions at once: `pr-code-runner-labels: -self-hosted` could not
+# vouch for the tier the file actually names, and — the half that reaches
+# the verdict — a vouch for `self-hosted`, a label the file does not
+# name, PASSED it (#395 round 9, codex-bot blocking). The indicator is a
+# dash followed by whitespace, or a dash alone, and it is peeled to a
+# fixed point so a nested `- - self-hosted` item still reduces.
+#
 # The result is newline-separated and stays that way through the
 # sequence and block windows and into spec_vouched, because a label may
 # now CONTAIN a comma and a comma-joined set cannot carry one: the
 # representation would have re-split what this function just refused to.
 # Only the consumer's own `pr-code-runner-labels` stays comma-separated —
 # that is its documented contract, and it is an allowlist of labels
-# somebody typed, not a value read out of a file.
+# somebody typed, not a value read out of a file. A label containing a
+# comma is therefore unvouchable, which is fail-CLOSED and stated here
+# rather than discovered: the input's separator is the consumer's own
+# contract, and widening it is a different change (#395 round 9,
+# claude-bot's note).
 labels_in() {
   local value="$1" flat
   flat="$(printf '%s' "$value" | tr -d "\"'[]{}")"
@@ -361,7 +378,9 @@ labels_in() {
     *'['* | *']'* | *'{'* | *'}'*) flat="${flat//,/$'\n'}" ;;
   esac
   printf '%s' "$flat" \
-    | sed -e 's/^[[:space:]]*-*[[:space:]]*//' \
+    | sed -e ':d' -e 's/^[[:space:]]*-\([[:space:]]\)/\1/' -e 'td' \
+          -e 's/^[[:space:]]*-[[:space:]]*$//' \
+          -e 's/^[[:space:]]*//' \
           -e 's/^&[A-Za-z0-9_-]*[[:space:]]*//' \
           -e ':k' -e 's/^[A-Za-z0-9_-]*:[[:space:]]*//' -e 'tk' \
           -e 's/[[:space:]]*$//' \

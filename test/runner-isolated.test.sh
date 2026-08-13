@@ -2294,6 +2294,115 @@ check "a quoted JSON list still splits into its labels" 0 \
   "1 workflow file" in_tree quoted-json-still-splits \
   .github/workflows pr-runner
 
+# A LEADING DASH IS PUNCTUATION ONLY WHERE IT IS THE INDICATOR, which is
+# the same sentence one character over. `-self-hosted` is a label GitHub
+# schedules and actionlint accepts (PyYAML reads this file's `runs-on` as
+# the scalar `-self-hosted`), and stripping every leading dash rewrote it
+# before the vouch test saw it (codex-bot's blocker).
+wf dash-flow a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: [-self-hosted]
+    steps:
+      - run: echo build
+YAML
+check "a value-leading dash stays part of the label" 1 \
+  "labels: -self-hosted —" in_tree dash-flow
+check "…and the exact label vouches for it" 0 "1 workflow file" \
+  in_tree dash-flow .github/workflows -self-hosted
+# The half that reaches the verdict: the erasure did not only refuse a
+# correct vouch, it let a vouch for a label the file does not name PASS —
+# PR-authored code on a tier nobody vouched for.
+check "…while a vouch for the dashless label does not" 1 \
+  "labels: -self-hosted —" in_tree dash-flow .github/workflows self-hosted
+
+# The same label in the plain spelling, which is how it would really be
+# written, so the fix cannot hold for the flow arm alone.
+wf dash-plain a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: -self-hosted
+    steps:
+      - run: echo build
+YAML
+check "a plain scalar's leading dash stays too" 1 \
+  "labels: -self-hosted —" in_tree dash-plain
+check "…vouched by the exact label, and only by it" 0 "1 workflow file" \
+  in_tree dash-plain .github/workflows -self-hosted
+
+# codex-bot's reported file, whose two labels differ only by the dash: the
+# message names them both whole, and EITHER vouches for the set — a spec
+# is vouched when any of its labels is, adding labels only narrowing the
+# runners that match (this script's header).
+wf dash-pair a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: [self-hosted, -self-hosted]
+    steps:
+      - run: echo build
+YAML
+check "two labels differing only by the dash are named apart" 1 \
+  "labels: self-hosted, -self-hosted —" in_tree dash-pair
+check "…and the dashed one vouches for the set" 0 "1 workflow file" \
+  in_tree dash-pair .github/workflows -self-hosted
+
+# …and the indicator itself still goes, which is what the narrowed rule
+# must not take back: the item's `- ` is structure, the value's dash is
+# text, and both spellings sit in one file's window.
+wf dash-item a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - -self-hosted
+    steps:
+      - run: echo build
+YAML
+check "a sequence item's indicator goes, its value's dash stays" 1 \
+  "labels: -self-hosted —" in_tree dash-item
+check "…so the item is vouched by the label it names" 0 "1 workflow file" \
+  in_tree dash-item .github/workflows -self-hosted
+
+wf plain-item a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - self-hosted
+    steps:
+      - run: echo build
+YAML
+check "an ordinary item is still read without its indicator" 1 \
+  "labels: self-hosted —" in_tree plain-item
+check "…and vouches with no dash in sight" 0 "1 workflow file" \
+  in_tree plain-item .github/workflows self-hosted
+
+# The indicator is peeled to a fixed point, so a nested item reduces
+# rather than leaving `- self-hosted` as a label no runner carries.
+# PyYAML reads this `runs-on` as [['self-hosted']].
+wf dash-nested a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - - self-hosted
+    steps:
+      - run: echo build
+YAML
+check "a nested item's indicators both go" 1 \
+  "labels: self-hosted —" in_tree dash-nested
+check "…leaving a label the consumer can vouch for" 0 "1 workflow file" \
+  in_tree dash-nested .github/workflows self-hosted
+
 # --- #395 decision 6: incubator's callers, verbatim, as a regression -------
 
 # Four files copied byte for byte from heavy-duty/incubator@main —
