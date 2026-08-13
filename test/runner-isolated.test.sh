@@ -1342,7 +1342,10 @@ check "…and vouching for the tier that text names is honoured" 0 \
   "1 workflow file" in_tree block-scalar-hash-line .github/workflows ci-runner
 # …and the block still ENDS where it ended: a comment at the key's own
 # indentation or further out is a comment again, so a note beside the
-# input cannot be read as its value.
+# input cannot be read as its value. The note carries a `key:` on
+# purpose — without one the line reaches no spec path at all and the row
+# would pass whether or not the exception respects the block's own
+# indentation, which is a fixture that asserts nothing.
 wf block-scalar-hash-outdent a.yml <<'YAML'
 name: pr-checks
 on: pull_request
@@ -1352,7 +1355,7 @@ jobs:
     with:
       runner: |
         ["ubuntu-latest"]
-      # self-hosted work lives in deploy.yml
+      # note: self-hosted work lives in deploy.yml
 YAML
 check "a comment outside the block is a comment again" 0 "1 workflow file" \
   in_tree block-scalar-hash-outdent
