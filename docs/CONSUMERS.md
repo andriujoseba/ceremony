@@ -124,7 +124,15 @@ the machinery at all:
    bracket or comma inside quotes is that value's text, not its end. A
    comment is the other way round — it is never part of a value, ends
    with its own line and closes nothing, so a `}` written inside one
-   leaves the collection open and the labels below it are still read. It
+   leaves the collection open and the labels below it are still read,
+   and it may begin anywhere YAML lets one begin: after a space, after a
+   `{`, `[`, `,`, `]` or `}`, or after a quoted scalar's closing quote.
+   A `#` is part of a value only where it continues a plain scalar
+   (`ci#runner`) or sits inside a quoted one. Every input's value is
+   read this way whatever the key is called, so prose passed to a
+   reusable workflow by a PR-code file is reported as a label set —
+   documented rather than narrowed, and the ruling question is
+   [discussion #403](https://github.com/heavy-duty/ceremony/discussions/403). It
    fires on the PR that first puts PR-authored code on an unvouched
    self-hosted label; the two unblocks are splitting the workflow and
    [vouching for the tier](#vouching-for-a-runner-that-may-execute-pr-code).

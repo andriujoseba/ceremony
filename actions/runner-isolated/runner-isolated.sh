@@ -132,6 +132,11 @@ set -euo pipefail
 #                                            #   so the values below it
 #                                            #   are still read (#395
 #                                            #   round 5)
+#     with: {# } closes nothing              # …and it may begin right
+#       hot: '["self-hosted","ci-runner"]'}  #   after a flow indicator or
+#                                            #   a quoted scalar's close,
+#                                            #   not only after a space
+#                                            #   (#395 round 6)
 #     jobs: {build: {runs-on: [self-hosted], # A key BESIDE a spec never
 #       environment: pr-runner}}             #   joins it, however many
 #                                            #   brackets are between —
@@ -174,6 +179,15 @@ set -euo pipefail
 #     elsewhere, and a matrix or expression value is decided at run time,
 #     so either can reach self-hosted hardware without the string
 #     appearing on any line this guard reads.
+#   - a `with:` input's value is read as runner labels WHATEVER THE KEY
+#     is called, the guard having no way to tell `runner:` from `body:`
+#     or `script:`, so prose passed to a reusable workflow by a PR-code
+#     file is reported as a label set. The cost of decision 5 being
+#     stated as "a with: value is judged identically to a runs-on:
+#     value": scoping it to inputs that look like runner specs buys a
+#     quieter guard and a false NEGATIVE for a caller who names the
+#     input `tier:`, which is the trade nobody has ruled on (#395 round
+#     6, claude-bot's nit 1; discussion #403).
 #   - …and one gap where the string IS on a line it reads: `runs-on:` in
 #     its BLOCK-MAPPING form — `group:` and `labels:` keys beneath the
 #     key rather than a value beside it — selects no fragment, so
@@ -190,11 +204,27 @@ set -euo pipefail
 # text for every window that reads one: the flow scanner, which leaves
 # the collection OPEN because a comment closes nothing, and the
 # block-sequence window, whose item is a value and not a note about one.
-# A `#` is a comment only where YAML says: preceded by whitespace, and
-# outside a quoted scalar, so `ci#runner` is a label and a quoted `#` is
-# text. The exception is the BLOCK SCALAR, whose lines are literal text
-# the callee receives verbatim: there a `#` opens nothing and a label
-# written behind one is a label this file passes (#395 round 5).
+# Both windows apply ONE implementation of that rule (no_comment, and
+# flow_feed character by character where it also carries quote state);
+# stating it once and implementing it twice made the two spellings of a
+# label set disagree (#395 round 6, claude-bot's nit 2).
+#
+# WHERE a `#` is content is a property of SCALARS. It is content only
+# where it CONTINUES A PLAIN SCALAR — so `ci#runner` is one label, and
+# `{a:#b}` is the single scalar `a:#b` rather than a key and a comment —
+# or where it sits inside a quoted one, which is text like everything
+# else there. Everywhere else it opens a comment: after separation
+# whitespace, after a flow indicator (`{`, `[`, `,`, `]`, `}`), which a
+# plain scalar cannot contain in flow context, and after a quoted
+# scalar's own closing quote. Asking only about whitespace left
+# `with: {# } closes nothing` — and its comma, bracket and quote
+# spellings — feeding a comment's `}` to the scanner, which popped the
+# collection and lost the runner value below it (#395 round 6, codex-bot
+# blocking).
+#
+# The exception is the BLOCK SCALAR, whose lines are literal text the
+# callee receives verbatim: there a `#` opens nothing and a label written
+# behind one is a label this file passes (#395 round 5).
 #
 # A missing workflows directory is a PASS, not an error — most repos in
 # the family have one, but a guard that fails on absence is a guard

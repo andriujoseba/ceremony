@@ -21,8 +21,12 @@ description: >-
   quotes is that value's text and not its end, wherever its lines fall. A
   comment is the other way round: never part of a value, ending with its
   own line and closing nothing, so a `}` inside one leaves the collection
-  open — except inside a block scalar, whose lines are literal text the
-  callee receives, `#` and all. A collection's values are its own at every
+  open — and it begins wherever YAML lets one begin, after a space, after
+  a `{`, `[`, `,`, `]` or `}`, or after a quoted scalar's closing quote,
+  a `#` being part of a value only where it continues a plain scalar
+  (`ci#runner`, `a:#b`) or sits inside a quoted one. The exception is a
+  block scalar, whose lines are literal text the callee receives, `#` and
+  all. A collection's values are its own at every
   nesting depth: a key beside a runner spec never vouches for it, however
   many brackets separate them.
   The rule is file-level, deliberately: a file that executes PR code and
@@ -31,8 +35,11 @@ description: >-
   silence is never read as coverage: `workflow_call` reachability is not
   followed across files (only the label passed through `with:` is seen), a
   PR head fetched by hand inside a `run:` block is not a `ref:` key and is
-  not detected, and indirection is not resolved (runner groups, matrix or
-  expression values for `runs-on`). A missing workflows directory is a
+  not detected, indirection is not resolved (runner groups, matrix or
+  expression values for `runs-on`), and a `with:` input's value is read as
+  labels whatever the key is called, so prose a PR-code file passes to a
+  reusable workflow is reported as a label set. A missing workflows
+  directory is a
   pass. The caller must have checked out its own repository first: the
   guard reads the consumer's tree at the workspace.
 inputs:
