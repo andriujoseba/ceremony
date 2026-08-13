@@ -2512,6 +2512,27 @@ check "…and not by the one the double peel would have left" 1 \
   "labels: - self-hosted, - ci-runner —" in_tree quoted-dash-item \
   .github/workflows self-hosted
 
+# …and the spelling that is no collection at all, so the rule is pinned in
+# every window a value reaches labels_in through rather than in the two
+# that were reported. PyYAML reads this `runs-on` as the scalar
+# '- self-hosted'.
+wf quoted-dash-scalar a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: "- self-hosted"
+    steps:
+      - run: echo build
+YAML
+check "a quoted scalar's dash-space is the label's own text" 1 \
+  "labels: - self-hosted —" in_tree quoted-dash-scalar
+check "…and it is vouched by that text and no other" 0 "1 workflow file" \
+  in_tree quoted-dash-scalar .github/workflows '- self-hosted'
+check "…the dashless spelling vouching for nothing here" 1 \
+  "labels: - self-hosted —" in_tree quoted-dash-scalar \
+  .github/workflows self-hosted
+
 # --- #395 decision 6: incubator's callers, verbatim, as a regression -------
 
 # Four files copied byte for byte from heavy-duty/incubator@main —
