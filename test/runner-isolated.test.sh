@@ -2403,6 +2403,25 @@ check "a nested item's indicators both go" 1 \
 check "…leaving a label the consumer can vouch for" 0 "1 workflow file" \
   in_tree dash-nested .github/workflows self-hosted
 
+# …and an item that is only its indicator names nothing, rather than
+# filing `-` as a label and putting a character no runner carries in the
+# message. The dash-alone rule is the one arm no other row reaches.
+wf dash-empty a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - self-hosted
+      -
+    steps:
+      - run: echo build
+YAML
+check "a null item is read with the set it sits in" 1 \
+  "labels: self-hosted —" in_tree dash-empty
+check_absent "…and files no label of its own" 1 "self-hosted, -" \
+  in_tree dash-empty
+
 # --- #395 decision 6: incubator's callers, verbatim, as a regression -------
 
 # Four files copied byte for byte from heavy-duty/incubator@main —
