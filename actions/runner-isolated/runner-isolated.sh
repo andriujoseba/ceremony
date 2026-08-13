@@ -1113,6 +1113,38 @@ frag_start() {
   flow_feed "$text"
 }
 
+# seq_flush — the bare-key window's accumulated value becomes a spec,
+# reported at the first line its text named self-hosted on. One place, and
+# it has to be one: the window now ends at three of them — a line at or
+# outside its key's indent, a next-line value read in its place, and the
+# end of the file — and a window that flushes at two of the three loses a
+# label set in silence.
+seq_flush() {
+  if [ -n "$seq_hit" ]; then
+    spec_lines+=("$seq_hit")
+    spec_labels+=("$seq_labels")
+  fi
+  seq_hit=""
+  seq_labels=""
+}
+
+# seq_open <indent> — a bare key opens the window over its value. It
+# FLUSHES first, because a window may now be open when another opens
+# inside it: under a `with:` key the arms below go on reading a nested
+# mapping's own keys, and one of them opening a window while the outer one
+# still held labels merged two values into one spec — a set is vouched
+# when any member is, so a vouched inner tier would have vouched for the
+# outer one (#395 round 2's mis-vouch, re-entered through the widened
+# window). Taking the whole window's state through one function is what
+# stops seq_take surviving from a key that is not this one.
+seq_open() {
+  seq_flush
+  in_seq=1
+  seq_indent="$1"
+  seq_items=0
+  seq_take=1
+}
+
 # spec_vouched <newline-joined-labels> — true when the consumer has
 # vouched for at least one label in the set. See the conjunction argument
 # above. The set arrives one label per line because a label may contain a
@@ -1170,6 +1202,7 @@ for file in "${files[@]}"; do
   seq_hit=""
   seq_indent=0
   seq_items=0
+  seq_take=1
   alias_names=()
   alias_values=()
   flow_open=0
@@ -1263,88 +1296,157 @@ for file in "${files[@]}"; do
       flow_open=0
     fi
 
-    # Half two, shape b: the window a bare key opened over its list items
-    # closes at the first line that is not a `- …` item, and the whole
-    # sequence is ONE spec — its labels are read together, so a vouched
-    # tier label on a later line still covers the `self-hosted` one above
-    # it. The key is `runs-on:` itself or any input key inside an open
-    # `with:` window: "a with: value is judged identically to a runs-on:
-    # value" has to cover this shape too, and reading each `- …` item as
-    # its own one-label spec refused a consumer who had vouched correctly
-    # (#395 round 2, claude-bot's nit 2).
+    # Half two, shape b: the window a bare key opened over its value, and
+    # the whole of that value is ONE spec — its labels are read together,
+    # so a vouched tier label on a later line still covers the
+    # `self-hosted` one above it. The key is `runs-on:` itself or any
+    # input key inside an open `with:` window: "a with: value is judged
+    # identically to a runs-on: value" has to cover this shape too, and
+    # reading each `- …` item as its own one-label spec refused a consumer
+    # who had vouched correctly (#395 round 2, claude-bot's nit 2).
+    #
+    # THE WINDOW IS BOUNDED BY INDENTATION AND BY THE ITEM DASH, both
+    # (#402 decision 3). It used to close at the first line that was not a
+    # `- …` item, so a `runs-on:` written in its BLOCK-MAPPING form —
+    # `group:`/`labels:` keys one level in, documented GitHub syntax —
+    # closed the window at `labels:` and left the label set beneath it
+    # outside every window: exit 0 with an empty allowlist, no vouch
+    # asked, on a file whose `self-hosted` sits on a line this guard
+    # already reads. The `- …` half is KEPT rather than replaced by the
+    # indentation test, because YAML permits a sequence at its key's own
+    # indentation and an indentation-only bound would drop it (#402).
     consumed_item=0
     if [ "$in_seq" -eq 1 ]; then
       case "$stripped" in
         '-'*)
           consumed_item=1
           seq_items=$((seq_items + 1))
-          # The item's own text: its trailing comment is the line's, not
-          # the value's, and the runner probe reads the same text the
-          # labels come from — a note is not a spec (#395 round 5). An
-          # alias item is its anchor's value, resolved after the comment
-          # goes so a `*name` written in a note answers to nothing.
-          item_text="$(alias_expand "$(no_comment "$stripped")")"
-          item_labels="$(labels_in "$item_text")"
-          if [ -n "$item_labels" ]; then
-            seq_labels="${seq_labels:+$seq_labels$nl}$item_labels"
+          # An item is its KEY's value, and inside a block mapping the key
+          # it belongs to may be one whose value is no label set at all —
+          # `group:`, whose sequence contributes nothing (seq_take below).
+          if [ "$seq_take" -eq 1 ]; then
+            # The item's own text: its trailing comment is the line's, not
+            # the value's, and the runner probe reads the same text the
+            # labels come from — a note is not a spec (#395 round 5). An
+            # alias item is its anchor's value, resolved after the comment
+            # goes so a `*name` written in a note answers to nothing.
+            item_text="$(alias_expand "$(no_comment "$stripped")")"
+            item_labels="$(labels_in "$item_text")"
+            if [ -n "$item_labels" ]; then
+              seq_labels="${seq_labels:+$seq_labels$nl}$item_labels"
+            fi
+            case "$item_text" in
+              *self-hosted*)
+                if [ -z "$seq_hit" ]; then
+                  seq_hit="$lineno: $line"
+                fi
+                ;;
+            esac
           fi
-          case "$item_text" in
-            *self-hosted*)
-              if [ -z "$seq_hit" ]; then
-                seq_hit="$lineno: $line"
-              fi
-              ;;
-          esac
           ;;
         *)
-          in_seq=0
-          if [ -n "$seq_hit" ]; then
-            spec_lines+=("$seq_hit")
-            spec_labels+=("$seq_labels")
-          fi
-          seq_hit=""
-          seq_labels=""
-          # A BARE KEY'S VALUE MAY BE A FLOW COLLECTION ON THE NEXT LINE,
-          # not only a `- …` list: `runs-on:` with `[self-hosted,
-          # ci-runner]` indented underneath is the same value written the
-          # other way, and GitHub reads it the same. The window closed
-          # recording nothing and the line then matched no fragment arm,
-          # so it was read by NOTHING — including the `with:`-passed
-          # spelling this change exists to catch (#395 round 7,
-          # claude-bot blocking). Only as the window's FIRST line and
-          # only deeper than its key: after an item has been read the
-          # value is the sequence, and at or outside the key's own indent
-          # the line belongs to something else entirely.
-          #
-          # …AND A SCALAR IS A VALUE THERE TOO. Round 7 named `[` and `{`
-          # and left the plain and quoted spellings reaching no arm at
-          # all: `runner:` with `'["self-hosted","ci-runner"]'` on the
-          # line below is how a caller wraps a long JSON input, and
-          # `runs-on:` with a bare `self-hosted` under it is a runner
-          # GitHub schedules — both exit 0 with an empty allowlist, the
-          # fail-open half of the same blocker (#395 round 8, claude-bot
-          # blocking).
-          #
-          # A BLOCK MAPPING IS THE ONE SHAPE NOT TAKEN, and not taking it
-          # is the point: a first line of the form `key:` or `key: value`
-          # means the value is a mapping, which is `runs-on:`'s
-          # block-mapping form — out of #395 by decision 9 and disclosed
-          # in KNOWN LIMITS above. Reading its first line would close the
-          # `labels:`-first spelling of that gap and leave the
-          # `group:`-first one open, making the disclosure false in a new
-          # way rather than true. Under a `with:` key nothing narrows:
-          # the mapping's own lines keep being read by the input arm
-          # below, exactly as they were.
-          if [ "$seq_items" -eq 0 ] && [ "$indent" -gt "$seq_indent" ]; then
+          if [ "$indent" -le "$seq_indent" ]; then
+            # At or outside the key's own indent the line belongs to
+            # something else entirely, so the window closes on it.
+            in_seq=0
+            seq_flush
+          else
             case "$stripped" in
+              # A BARE KEY'S VALUE MAY BE A FLOW COLLECTION ON THE NEXT
+              # LINE, not only a `- …` list: `runs-on:` with
+              # `[self-hosted, ci-runner]` indented underneath is the same
+              # value written the other way, and GitHub reads it the same.
+              # The window closed recording nothing and the line then
+              # matched no fragment arm, so it was read by NOTHING —
+              # including the `with:`-passed spelling #395 exists to catch
+              # (#395 round 7, claude-bot blocking).
+              #
+              # …AND A SCALAR IS A VALUE THERE TOO. Round 7 named `[` and
+              # `{` and left the plain and quoted spellings reaching no
+              # arm at all: `runner:` with `'["self-hosted","ci-runner"]'`
+              # on the line below is how a caller wraps a long JSON input,
+              # and `runs-on:` with a bare `self-hosted` under it is a
+              # runner GitHub schedules — both exit 0 with an empty
+              # allowlist, the fail-open half of the same blocker (#395
+              # round 8, claude-bot blocking). A quoted spelling is
+              # matched BEFORE the mapping arm, a quoted scalar carrying a
+              # `: ` being its own value and not a key.
+              #
+              # Only as the value's FIRST line: after an item has been
+              # read the value is that sequence.
               '['* | '{'* | '"'* | "'"*)
-                consumed_item=1
-                frag_start "$stripped"
+                if [ "$seq_items" -eq 0 ] && [ "$seq_take" -eq 1 ]; then
+                  consumed_item=1
+                  in_seq=0
+                  seq_flush
+                  frag_start "$stripped"
+                fi
                 ;;
-              *:[[:space:]]* | *:) ;;
+              # A KEY ONE LEVEL IN IS THE BLOCK-MAPPING FORM, and its
+              # `labels:` key is the runner spec's label set (#402
+              # decisions 1 and 8). #395 refused this line rather than the
+              # shape's contents, because reading it as a value would have
+              # closed the `labels:`-first spelling of the gap and left
+              # the `group:`-first one open; the window's indentation
+              # bound above is what makes taking both spellings safe, so
+              # the exclusion comes out WITH it and never before it.
+              #
+              # ANY OTHER KEY CONTRIBUTES NOTHING AND CLOSES NOTHING —
+              # that is what lets `group:` sit above `labels:` without
+              # hiding it. `group:` is not read at all: a runner group
+              # names its hardware elsewhere, so its name is not a label
+              # and cannot be vouched for as one, and it stays the
+              # disclosed gap #395 decision 9 left it (#402 decision 2).
+              # The line is not CONSUMED either, so where this window sits
+              # inside an open `with:` one the input arm below still
+              # judges it exactly as it did before this widening: under
+              # `with:` the key axis is unbounded, the CALLEE naming its
+              # own inputs (#395 decision 5), while under `runs-on:` the
+              # schema is GitHub's and `labels:` is the whole of it.
+              *:[[:space:]]* | *:)
+                map_key="${stripped%%:*}"
+                map_key="${map_key#[\"\']}"
+                map_key="${map_key%[\"\']}"
+                if [ "$map_key" = labels ]; then
+                  consumed_item=1
+                  seq_take=1
+                  rest="${stripped#*:}"
+                  rest="${rest#"${rest%%[![:space:]]*}"}"
+                  case "$rest" in
+                    # A bare `labels:` opens the same window one level
+                    # further in: its value is the lines below, a `- …`
+                    # sequence or a next-line value, read by the arms
+                    # above. One `runs-on:` mapping is ONE spec, so those
+                    # labels accumulate into this window rather than
+                    # opening a second (#402 decision 4).
+                    '' | '#'*) seq_items=0 ;;
+                    # …and a block scalar is that value too, closed at the
+                    # key's own indent by the block window below, which
+                    # takes the lines this one would otherwise read twice.
+                    '|'* | '>'*)
+                      in_blk=1
+                      blk_indent=$indent
+                      in_seq=0
+                      seq_flush
+                      ;;
+                    # A value beside the key goes through the same value
+                    # reader as every other value: a flow collection
+                    # spread across lines is one value, a quoted scalar is
+                    # opaque, an inline comment closes nothing (#402
+                    # decision 5).
+                    *) frag_start "$rest" ;;
+                  esac
+                else
+                  seq_take=0
+                fi
+                ;;
               *)
-                consumed_item=1
-                frag_start "$stripped"
+                if [ "$seq_items" -eq 0 ] && [ "$seq_take" -eq 1 ]; then
+                  consumed_item=1
+                  in_seq=0
+                  seq_flush
+                  frag_start "$stripped"
+                fi
                 ;;
             esac
           fi
@@ -1460,11 +1562,7 @@ for file in "${files[@]}"; do
         rest="${stripped#runs-on:}"
         rest="${rest#"${rest%%[![:space:]]*}"}"
         case "$rest" in
-          '' | '#'*)
-            in_seq=1
-            seq_indent=$indent
-            seq_items=0
-            ;;
+          '' | '#'*) seq_open "$indent" ;;
           '|'* | '>'*)
             in_blk=1
             blk_indent=$indent
@@ -1494,7 +1592,16 @@ for file in "${files[@]}"; do
             # An input inside an open `with:` window: a bare key opens a
             # block-sequence window exactly as `runs-on:` does, and a key
             # with a value hands that value over as the fragment.
-            if [ "$in_with" -eq 1 ] && [ "$in_seq" -eq 0 ]; then
+            #
+            # IT NO LONGER ASKS WHETHER A WINDOW IS OPEN. That test was
+            # vacuous while a window closed at the first line that was not
+            # a `- …` item — every line reaching here had already closed
+            # it, an item having been consumed above — and the widened
+            # window (#402 decision 3) makes it wrong: a nested mapping's
+            # own keys are read HERE, and refusing them under an open
+            # window would have stopped `with:` seeing a value it sees
+            # today, which is the direction a guard may not move in.
+            if [ "$in_with" -eq 1 ]; then
               case "$stripped" in
                 # …and `with:`'s OWN value may be a flow mapping on the
                 # next line, which is a value and not a key with one:
@@ -1507,11 +1614,7 @@ for file in "${files[@]}"; do
                   rest="${stripped#*:}"
                   rest="${rest#"${rest%%[![:space:]]*}"}"
                   case "$rest" in
-                    '' | '#'*)
-                      in_seq=1
-                      seq_indent=$indent
-                      seq_items=0
-                      ;;
+                    '' | '#'*) seq_open "$indent" ;;
                     '|'* | '>'*)
                       in_blk=1
                       blk_indent=$indent
@@ -1535,11 +1638,8 @@ for file in "${files[@]}"; do
     fi
   done <"$file"
 
-  # A block sequence running to the end of the file still closes.
-  if [ -n "$seq_hit" ]; then
-    spec_lines+=("$seq_hit")
-    spec_labels+=("$seq_labels")
-  fi
+  # A bare key's value running to the end of the file still closes.
+  seq_flush
 
   # …and so does a block scalar the file ends inside of.
   if [ -n "$blk_hit" ]; then
