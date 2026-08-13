@@ -2066,6 +2066,50 @@ YAML
 check "an & after real text is not an anchor definition" 0 \
   "1 workflow file" in_tree anchor-mid-scalar
 
+# …and the two characters that would otherwise create a position where
+# YAML has none. A `:` and a `[` are indicators only IN FLOW CONTEXT, and
+# flow context is entered only where the value's own first character
+# enters it — so in a block-context plain scalar both are text and the
+# `&tier` after them defines nothing. Each file anchors `tier` FOR REAL
+# further up, so a false record would be visible rather than merely
+# unresolved: PyYAML 6.0.2 resolves `*tier` to `ubuntu-latest` in both,
+# and the guard must agree.
+wf anchor-after-colon a.yml <<'YAML'
+name: pr checks
+on: pull_request
+env:
+  TIER: &tier ubuntu-latest
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: prom_query up:&tier '["self-hosted","ci-runner"]'
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: *tier
+YAML
+check "a : inside a plain scalar opens no value head" 0 \
+  "1 workflow file" in_tree anchor-after-colon
+
+wf anchor-after-bracket a.yml <<'YAML'
+name: pr checks
+on: pull_request
+env:
+  TIER: &tier ubuntu-latest
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo [&tier '["self-hosted","ci-runner"]']
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: *tier
+YAML
+check "…and a [ inside one opens no collection" 0 \
+  "1 workflow file" in_tree anchor-after-bracket
+
 # A `*name` INSIDE A QUOTED SCALAR is text the callee receives verbatim,
 # not an alias. Expanding it filed a spec naming a runner the file does
 # not name — exit 1 on a correct workflow, and a guard's false positive
@@ -2177,6 +2221,26 @@ jobs:
 YAML
 check "runs-on:'s block-mapping form stays the disclosed gap" 0 \
   "1 workflow file" in_tree block-group-mapping
+
+# …and the spelling that decides it, because the group-first file above
+# would pass under either rule: with `labels:` on the FIRST line, taking
+# the next-line value would read it and this row would flip. Pinned so
+# the gap cannot be half-closed in silence — one spelling read and the
+# other not is worse than the disclosure, which is why the arm excludes
+# the shape rather than the first line's contents.
+wf block-labels-first a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      labels: [self-hosted, ci-runner]
+      group: linux
+    steps:
+      - run: make test
+YAML
+check "…in the labels-first spelling that would otherwise flip" 0 \
+  "1 workflow file" in_tree block-labels-first
 
 # …and under a `with:` key nothing narrows: the mapping's own lines keep
 # being read by the input arm, exactly as they were before the widening.
