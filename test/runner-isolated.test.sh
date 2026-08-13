@@ -2201,6 +2201,29 @@ check "a quoted JSON input on the next line is read" 1 \
 check "…and vouching for its tier passes it" 0 "1 workflow file" \
   in_tree next-line-quoted .github/workflows ci-runner
 
+# A SEQUENCE MAY SIT AT ITS KEY'S OWN INDENTATION, which YAML permits and
+# every other fixture in this file writes one level in. It is caught today
+# by the `- …` half of the window's close rule, and it is written down
+# BEFORE that rule gains an indentation half (#402 decision 3) so the
+# widening has a floor: an indentation-only bound would drop this row, and
+# a regression fixture added after the change could not tell a rule that
+# still holds from one the change wrote.
+wf seq-at-key-indent a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+    - self-hosted
+    - ci-runner
+    steps:
+      - run: make test
+YAML
+check "a sequence at its key's own indentation is still the key's value" 1 \
+  "labels: self-hosted, ci-runner —" in_tree seq-at-key-indent
+check "…and vouching for its tier passes the same file" 0 "1 workflow file" \
+  in_tree seq-at-key-indent .github/workflows ci-runner
+
 # THE ONE SHAPE THE WIDENING DELIBERATELY DOES NOT TAKE, pinned so it can
 # neither close nor widen in silence: a first line of the form `key:` or
 # `key: value` means the value is a block MAPPING, which is `runs-on:`'s
