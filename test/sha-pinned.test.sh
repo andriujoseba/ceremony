@@ -69,7 +69,7 @@ check "a quoted full SHA with a version comment passes" 0 \
   "every third-party reference is pinned" run_guard comments
 cat >"$TMP/comments/.github/workflows/ci.yml" <<'EOF'
 steps:
-  - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 #   
+  - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 #
 EOF
 check "a comment with no non-space content fails" 1 "ci.yml:2" run_guard comments
 
