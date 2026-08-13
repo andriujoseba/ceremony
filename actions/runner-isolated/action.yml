@@ -13,7 +13,8 @@ description: >-
   it stays an assertion: `pr-code-runner-labels` names the labels
   PR-authored code may execute on. Empty by default, so a caller passing
   nothing vouches for nothing. Self-hosted labels are read from `runs-on:`
-  (same-line and block-sequence) and from `with:` input values, the shape
+  (same-line, block-sequence and the `labels:` key of a block mapping,
+  inline or one level in) and from `with:` input values, the shape
   a reusable-workflow caller uses, quoted, flow or block-scalar alike, and
   a flow collection is read to its own closing bracket rather than to the
   end of its first line, so one written across several lines is scanned
@@ -21,8 +22,11 @@ description: >-
   quotes is that value's text and not its end, wherever its lines fall. A
   key's value is read wherever it begins: a flow collection, or a plain
   or quoted scalar, on the line after the key is that key's value as much
-  as a `- …` list is — a block mapping under `runs-on:` being the one
-  shape not read there — and an alias is its anchor's value, so
+  as a `- …` list is, and so is a block mapping under `runs-on:`: its
+  `labels:` key is the runner spec's label set, read in both of that
+  key's own spellings, while the mapping's other keys contribute nothing
+  and close nothing, so a `group:` above the `labels:` does not hide it.
+  An alias is its anchor's value, so
   `runner: *runner-input` is judged on the labels the anchor names,
   wherever the line writes the anchor; a `*name` inside a quoted scalar is
   that scalar's own text. A
@@ -43,11 +47,16 @@ description: >-
   silence is never read as coverage: `workflow_call` reachability is not
   followed across files (only the label passed through `with:` is seen), a
   PR head fetched by hand inside a `run:` block is not a `ref:` key and is
-  not detected, indirection is not resolved (runner groups, matrix or
+  not detected, any trigger whose name merely contains `pull_request`
+  (`pull_request_review`, say) reads as `pull_request` and derives as
+  executing PR code, which is conservative and deliberate, indirection is
+  not resolved (runner groups, matrix or
   expression values for `runs-on`), an alias is resolved only from an
   anchor the same file defines above it and an anchor is recorded from
-  the line it heads, `runs-on:` in its block-mapping form selects no
-  fragment, a plain scalar folding onto further lines is read on its
+  the line it heads, the `group:` key of a `runs-on:` block mapping
+  selects no fragment, so a group named `self-hosted` and no `labels:`
+  key beside it passes, a plain scalar folding onto further lines is read
+  on its
   first line only (the collection, quoted and block-scalar spellings are
   followed past theirs), and a `with:` input's value is read as
   labels whatever the key is called, so prose a PR-code file passes to a
