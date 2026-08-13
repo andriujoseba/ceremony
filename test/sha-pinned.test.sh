@@ -29,12 +29,14 @@ run_guard_repo() {
 
 tree unpinned
 cat >"$TMP/unpinned/.github/workflows/ci.yml" <<'EOF'
+name: CI
+on: pull_request
 jobs:
   test:
     steps:
       - uses: actions/checkout@v4
 EOF
-check "an unpinned workflow action fails" 1 "ci.yml:4" run_guard unpinned
+check "an unpinned PR-workflow action fails" 1 "ci.yml:6" run_guard unpinned
 check "failure names the reference" 1 "actions/checkout@v4" run_guard unpinned
 check "failure teaches the full-SHA fix" 1 \
   "@<40-lowercase-hex-commit-sha> # <version>" run_guard unpinned
@@ -59,6 +61,17 @@ steps:
 EOF
 check "a full SHA with a version comment passes" 0 "every third-party reference is pinned" \
   run_guard comments
+cat >"$TMP/comments/.github/workflows/ci.yml" <<'EOF'
+steps:
+  - uses: 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262' # v4.4.0
+EOF
+check "a quoted full SHA with a version comment passes" 0 \
+  "every third-party reference is pinned" run_guard comments
+cat >"$TMP/comments/.github/workflows/ci.yml" <<'EOF'
+steps:
+  - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 #   
+EOF
+check "a comment with no non-space content fails" 1 "ci.yml:2" run_guard comments
 
 for shape in \
   11d5960a326750d5838078e36cf38b85af67726 \
@@ -83,6 +96,14 @@ check "first-party owner input overrides repository ownership" 0 \
   .github/workflows .github/actions heavy-duty
 check "a first-party tag fails closed without owner context" 1 \
   "heavy-duty/ceremony/actions/runner-isolated@0.7.1" run_guard exemptions
+
+tree statuses
+cat >"$TMP/statuses/.github/workflows/ci.yml" <<'EOF'
+permissions:
+  statuses: read
+EOF
+check "statuses under permissions is not a uses key" 0 \
+  "every third-party reference is pinned" run_guard statuses
 
 tree reusable
 cat >"$TMP/reusable/.github/workflows/call.yml" <<'EOF'
@@ -112,9 +133,27 @@ check "a one-level composite action is scanned" 1 "action.yml:4" run_guard compo
 mkdir -p "$TMP/missing"
 check "both missing default directories pass" 0 "0 file(s) checked" run_guard missing
 
+mkdir -p "$TMP/missing-workflows/.github/actions/one"
+cat >"$TMP/missing-workflows/.github/actions/one/action.yml" <<'EOF'
+runs:
+  using: composite
+  steps:
+    - uses: ./local
+EOF
+check "a missing workflows directory passes independently" 0 "1 file(s) checked" \
+  run_guard missing-workflows
+
+mkdir -p "$TMP/missing-actions/.github/workflows"
+cat >"$TMP/missing-actions/.github/workflows/ci.yml" <<'EOF'
+steps:
+  - uses: vendor/action@0123456789abcdef0123456789abcdef01234567 # v1
+EOF
+check "a missing actions directory passes independently" 0 "1 file(s) checked" \
+  run_guard missing-actions
+
 tree nested
-mkdir -p "$TMP/nested/.github/workflows/fixtures/x"
-cat >"$TMP/nested/.github/workflows/fixtures/x/bad.yml" <<'EOF'
+mkdir -p "$TMP/nested/test/fixtures/x/.github/workflows"
+cat >"$TMP/nested/test/fixtures/x/.github/workflows/bad.yml" <<'EOF'
 steps:
   - uses: vendor/action@v1
 EOF

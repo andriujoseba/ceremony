@@ -22,6 +22,7 @@ if [ -d "$actions_dir" ]; then
 fi
 
 failures=0
+pin_pattern="^[\"']?[^[:space:]#\"']+@[0-9a-f]{40}[\"']?[[:space:]]+#[[:space:]]*[^[:space:]]"
 for file in "${files[@]}"; do
   line_number=0
   while IFS= read -r line || [ -n "$line" ]; do
@@ -47,7 +48,7 @@ for file in "${files[@]}"; do
       continue
     fi
 
-    if [[ "$value" =~ ^[^[:space:]#]+@[0-9a-f]{40}[[:space:]]+#[[:space:]]*[^[:space:]] ]]; then
+    if [[ "$value" =~ $pin_pattern ]]; then
       continue
     fi
 
