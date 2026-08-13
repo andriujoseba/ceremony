@@ -47,7 +47,9 @@ description: >-
   expression values for `runs-on`), an alias is resolved only from an
   anchor the same file defines above it and an anchor is recorded from
   the line it heads, `runs-on:` in its block-mapping form selects no
-  fragment, and a `with:` input's value is read as
+  fragment, a plain scalar folding onto further lines is read on its
+  first line only (the collection, quoted and block-scalar spellings are
+  followed past theirs), and a `with:` input's value is read as
   labels whatever the key is called, so prose a PR-code file passes to a
   reusable workflow is reported as a label set (ruled, not pending:
   ceremony discussion #403). A missing workflows

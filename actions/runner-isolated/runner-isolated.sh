@@ -232,6 +232,20 @@ set -euo pipefail
 #     under a `with:` input (round 8, claude-bot blocking). Only the
 #     block mapping above is not.
 #
+#     …AND ONE LINE IS AS FAR AS A PLAIN SCALAR IS FOLLOWED. A plain
+#     scalar FOLDING onto further lines — `runner:` with `some words`
+#     and `self-hosted` on the two lines below it, which YAML joins into
+#     one value — is read on its first line only. Pre-#395 behaviour on
+#     every spelling, and disclosed rather than closed: a folded plain
+#     scalar is a single value containing spaces, so for `runs-on:` it
+#     schedules nothing, and every multi-line spelling that IS a spec — a
+#     flow collection, a quoted scalar, a block scalar, a `- …` list — is
+#     followed past its first line already. The one shape where it could
+#     bite is an args-style input a callee splits on whitespace with the
+#     label on a continuation line, and reading that stays in-bounds
+#     later under decision 5's round-7 clause with no fresh ruling (#395
+#     round 9, claude-bot's nit).
+#
 # COMMENTS ARE NOT CONTENT, and the rule is one sentence with one
 # exception. A workflow that merely mentions self-hosted in prose is not
 # the bug — incubator's pr-checks.yml header is exactly that prose, and a
