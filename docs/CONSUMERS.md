@@ -121,18 +121,28 @@ the machinery at all:
    not vouch for the other, at any nesting depth. A value is read to its
    own closing bracket, so a mapping or list written across several
    lines is scanned like any other, and a quoted scalar is opaque: a
-   bracket or comma inside quotes is that value's text, not its end. A
+   bracket or comma inside quotes is that value's text, not its end. It
+   is read wherever it begins, too: a flow list or mapping written on
+   the line **after** its key is that key's value as much as a `- …`
+   list is, and an **alias** is its anchor's value — a
+   `runner: *runner-input` passes the labels `&runner-input` names and
+   is judged on them. A
    comment is the other way round — it is never part of a value, ends
    with its own line and closes nothing, so a `}` written inside one
    leaves the collection open and the labels below it are still read,
    and it may begin anywhere YAML lets one begin: after a space, after a
-   `{`, `[`, `,`, `]` or `}`, or after a quoted scalar's closing quote.
-   A `#` is part of a value only where it continues a plain scalar
-   (`ci#runner`) or sits inside a quoted one. Every input's value is
+   `{`, `[`, `,`, `]` or `}` **in flow context**, or after a quoted
+   scalar's closing quote. A `#` is part of a value only where it
+   continues a plain scalar (`ci#runner`, and `a,#b` in block context,
+   where a `,` may sit in one) or sits inside a quoted one. Every
+   input's value is
    read this way whatever the key is called, so prose passed to a
    reusable workflow by a PR-code file is reported as a label set —
-   documented rather than narrowed, and the ruling question is
-   [discussion #403](https://github.com/heavy-duty/ceremony/discussions/403). It
+   documented rather than narrowed, which
+   [discussion #403](https://github.com/heavy-duty/ceremony/discussions/403#discussioncomment-17996195)
+   ruled on 2026-08-13: the callee names its own inputs and this guard
+   never opens that file, so a key allowlist would be a false negative
+   sized by somebody else's naming. It
    fires on the PR that first puts PR-authored code on an unvouched
    self-hosted label; the two unblocks are splitting the workflow and
    [vouching for the tier](#vouching-for-a-runner-that-may-execute-pr-code).

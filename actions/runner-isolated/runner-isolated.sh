@@ -137,6 +137,17 @@ set -euo pipefail
 #                                            #   a quoted scalar's close,
 #                                            #   not only after a space
 #                                            #   (#395 round 6)
+#     runs-on:                               # …and a bare key's value may
+#       [self-hosted, ci-runner]             #   be a FLOW COLLECTION on
+#                                            #   the next line instead of
+#                                            #   a `- …` list — the same
+#                                            #   value, written the other
+#                                            #   way (#395 round 8)
+#     env:                                   # …and it may be an ALIAS,
+#       R: &r '["self-hosted","ci-runner"]'  #   which reaches the callee
+#     with:                                  #   as its ANCHOR'S value and
+#       runner: *r                           #   is read as one (#395
+#                                            #   round 8)
 #     jobs: {build: {runs-on: [self-hosted], # A key BESIDE a spec never
 #       environment: pr-runner}}             #   joins it, however many
 #                                            #   brackets are between —
@@ -182,19 +193,35 @@ set -euo pipefail
 #   - a `with:` input's value is read as runner labels WHATEVER THE KEY
 #     is called, the guard having no way to tell `runner:` from `body:`
 #     or `script:`, so prose passed to a reusable workflow by a PR-code
-#     file is reported as a label set. The cost of decision 5 being
-#     stated as "a with: value is judged identically to a runs-on:
-#     value": scoping it to inputs that look like runner specs buys a
-#     quieter guard and a false NEGATIVE for a caller who names the
-#     input `tier:`, which is the trade nobody has ruled on (#395 round
-#     6, claude-bot's nit 1; discussion #403).
-#   - …and one gap where the string IS on a line it reads: `runs-on:` in
-#     its BLOCK-MAPPING form — `group:` and `labels:` keys beneath the
-#     key rather than a value beside it — selects no fragment, so
-#     `runs-on:` + `labels: [self-hosted, …]` underneath goes unseen.
-#     The inline spelling of the same mapping is read. Documented GitHub
-#     syntax, unread before #395 as much as after it, and out of #395 by
-#     decision 9 (#395 round 5, claude-bot's nit; discussion #401).
+#     file is reported as a label set. RULED, not pending: the key axis
+#     is unbounded because the CALLEE names its own inputs and this
+#     guard never opens that file, so a name allowlist is a false
+#     negative whose size somebody else's naming sets; and a whole-item
+#     value test would drop a real spec embedded in a longer string
+#     (`args: --runner self-hosted --fast`) to the same probe that
+#     reports prose. Measured across the fleet's 36 workflow files the
+#     day it was ruled: every prose `self-hosted` sits on a comment line
+#     this guard skips, and every `with:`-passed one is a real spec — no
+#     live false positive was bought. Reopens on one real consumer file,
+#     as a bug with that file measured (#395 decision 5; discussion #403,
+#     ruled 2026-08-13).
+#   - an ALIAS is resolved only from an anchor THIS FILE defines above
+#     it, and an anchor is recorded from the line it heads: a value
+#     spanning further lines — a block scalar, or a collection opening
+#     on the anchor's line and closing below — is recorded as far as
+#     that line goes. An unresolved alias is left as written and reads
+#     as no label at all, which is the one direction that can fail open,
+#     so it is named here rather than left to silence (#395 round 8).
+#   - …and one gap where the string IS on a line it reads, one being all
+#     that is left of the two round 8 found: `runs-on:` in its
+#     BLOCK-MAPPING form — `group:` and `labels:` keys beneath the key
+#     rather than a value beside it — selects no fragment, so `runs-on:`
+#     + `labels: [self-hosted, …]` underneath goes unseen. The inline
+#     spelling of the same mapping is read. Documented GitHub syntax,
+#     unread before #395 as much as after it, and out of #395 by
+#     decision 9 (#395 round 5, claude-bot's nit; discussion #401). The
+#     other one — a FLOW COLLECTION opening on the line after its key —
+#     is read as of round 8 and no longer belongs on this list.
 #
 # COMMENTS ARE NOT CONTENT, and the rule is one sentence with one
 # exception. A workflow that merely mentions self-hosted in prose is not
@@ -214,13 +241,23 @@ set -euo pipefail
 # `{a:#b}` is the single scalar `a:#b` rather than a key and a comment —
 # or where it sits inside a quoted one, which is text like everything
 # else there. Everywhere else it opens a comment: after separation
-# whitespace, after a flow indicator (`{`, `[`, `,`, `]`, `}`), which a
-# plain scalar cannot contain in flow context, and after a quoted
-# scalar's own closing quote. Asking only about whitespace left
+# whitespace, after a flow indicator (`{`, `[`, `,`, `]`, `}`), and after
+# a quoted scalar's own closing quote. Asking only about whitespace left
 # `with: {# } closes nothing` — and its comma, bracket and quote
 # spellings — feeding a comment's `}` to the scanner, which popped the
 # collection and lost the runner value below it (#395 round 6, codex-bot
 # blocking).
+#
+# AND AN INDICATOR IS ONLY AN INDICATOR IN FLOW CONTEXT, which is that
+# same sentence read the other way. A plain scalar cannot contain a `,`
+# inside a flow collection — that is WHY the rule above holds — but in
+# BLOCK context it can, so `- a,#self-hosted` is one label named
+# `a,#self-hosted`, and cutting it at that `,#` dropped the tail and
+# passed the file. Both windows therefore carry the open bracket kinds,
+# and both keep the whitespace and quote-close arms unconditional; a
+# closing `]` or `}` counts as an indicator even where it returns the
+# depth to zero, being the collection's own (#395 round 8, claude-bot's
+# nit).
 #
 # The exception is the BLOCK SCALAR, whose lines are literal text the
 # callee receives verbatim: there a `#` opens nothing and a label written

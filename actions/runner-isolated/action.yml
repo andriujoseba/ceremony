@@ -19,12 +19,17 @@ description: >-
   end of its first line, so one written across several lines is scanned
   like any other; a quoted scalar is opaque, so a bracket or comma inside
   quotes is that value's text and not its end, wherever its lines fall. A
+  key's value is read wherever it begins: a flow collection on the line
+  after the key is that key's value as much as a `- …` list is, and an
+  alias is its anchor's value, so `runner: *runner-input` is judged on
+  the labels the anchor names. A
   comment is the other way round: never part of a value, ending with its
   own line and closing nothing, so a `}` inside one leaves the collection
   open — and it begins wherever YAML lets one begin, after a space, after
-  a `{`, `[`, `,`, `]` or `}`, or after a quoted scalar's closing quote,
-  a `#` being part of a value only where it continues a plain scalar
-  (`ci#runner`, `a:#b`) or sits inside a quoted one. The exception is a
+  a `{`, `[`, `,`, `]` or `}` in flow context, or after a quoted scalar's
+  closing quote, a `#` being part of a value only where it continues a
+  plain scalar (`ci#runner`, `a:#b`, and `a,#b` in block context where a
+  `,` may sit in one) or sits inside a quoted one. The exception is a
   block scalar, whose lines are literal text the callee receives, `#` and
   all. A collection's values are its own at every
   nesting depth: a key beside a runner spec never vouches for it, however
@@ -36,9 +41,12 @@ description: >-
   followed across files (only the label passed through `with:` is seen), a
   PR head fetched by hand inside a `run:` block is not a `ref:` key and is
   not detected, indirection is not resolved (runner groups, matrix or
-  expression values for `runs-on`), and a `with:` input's value is read as
+  expression values for `runs-on`), an alias is resolved only from an
+  anchor the same file defines above it and an anchor is recorded from
+  the line it heads, and a `with:` input's value is read as
   labels whatever the key is called, so prose a PR-code file passes to a
-  reusable workflow is reported as a label set. A missing workflows
+  reusable workflow is reported as a label set (ruled, not pending:
+  ceremony discussion #403). A missing workflows
   directory is a
   pass. The caller must have checked out its own repository first: the
   guard reads the consumer's tree at the workspace.
