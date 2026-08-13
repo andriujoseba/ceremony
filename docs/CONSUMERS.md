@@ -148,7 +148,7 @@ the machinery at all:
    executes PR-authored code when it is `pull_request`-triggered,
    always, or when it is `pull_request_target`-triggered **and** checks
    out a PR ref — base-branch privileges running PR-authored code, the
-   shape the guard was blind to until **unreleased** (#395). A
+   shape the guard was blind to until `0.7.2` (#395). A
    `pull_request_target` file that checks out no PR ref executes none of
    it and passes however it is routed. Self-hosted labels are read from
    `runs-on:` and from `with:` input values alike — quoted, flow or
@@ -161,10 +161,13 @@ the machinery at all:
    is read wherever it begins, too: a value written on the line
    **after** its key — a flow list or mapping, or a plain or quoted
    scalar such as a wrapped `'["self-hosted","ci-runner"]'` — is that
-   key's value as much as a `- …` list is. The one shape not read there
-   is a block **mapping** under `runs-on:` (`group:` and `labels:` keys
-   beneath the key), unread both before and after
-   **unreleased** (#395). A plain scalar that **folds** onto further
+   key's value as much as a `- …` list is, and so is a block mapping under
+   `runs-on:`: its `labels:` key is the runner spec's label set, read in
+   both of that key's own spellings, while the mapping's other keys
+   contribute nothing and close nothing, so a `group:` above the `labels:`
+   does not hide it. The surviving gap is the `group:` key itself: it
+   selects no label fragment, so a group named `self-hosted` with no
+   `labels:` key beside it passes (#402). A plain scalar that **folds** onto further
    lines is read on its first line only, which it always was: it is the
    one value that spans lines with no bracket, quote or block indicator
    to follow, and it can only name a label containing spaces.
@@ -351,7 +354,7 @@ group to selected repositories. On GitHub Free, an organization runner in the
 Default group is available to every repository, including public repositories
 where a fork PR supplies the workflow file and can name the runner label. The
 `actions/runner-isolated` guard reads this `runner` input's **value** where
-a caller spells it — **unreleased** (#395) — but it still
+a caller spells it — `0.7.2` (#395) — but it still
 does not follow the reusable-workflow call into the callee's own `runs-on:`,
 nor resolve a runner group, matrix or expression, so consumers must enforce
 this registration and isolation boundary themselves.
@@ -366,7 +369,7 @@ runner's single-job queue.
 
 `actions/runner-isolated` takes one optional input,
 `pr-code-runner-labels` — a comma-separated list of runner labels on which
-you assert PR-authored code may execute — **unreleased** (#395). It is empty by
+you assert PR-authored code may execute — `0.7.2` (#395). It is empty by
 default, and an empty allowlist vouches for nothing: a consumer that passes
 nothing keeps the verdict it had on every file that executes PR-authored
 code.
