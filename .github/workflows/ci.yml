@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Shellcheck
@@ -77,7 +77,7 @@ jobs:
   self-guards:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The monotonic guard compares HEAD against the merge base; a
           # shallow checkout cannot resolve it, and in CI that is a hard
@@ -110,7 +110,7 @@ jobs:
   action-exercise:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Construct a scratch history for the monotonic guard
         # The monotonic guard's input is a DIFF, so its exercise needs
         # history, not just a file: commit a scratch changelog, mark that
@@ -147,7 +147,7 @@ jobs:
   docs-sync-exercise:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: ceremony-src
       - name: Construct a fixture consumer at the workspace root

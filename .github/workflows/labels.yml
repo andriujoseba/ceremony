@@ -93,12 +93,12 @@ jobs:
       # script and workflow can never skew — and doubles as the #11
       # bootstrap: ceremony's own labels must work before any release tag
       # exists for the pinned checkout to fetch.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: github.repository == 'heavy-duty/ceremony'
         with:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: github.repository != 'heavy-duty/ceremony'
         with:
           repository: heavy-duty/ceremony
