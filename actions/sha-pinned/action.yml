@@ -1,0 +1,36 @@
+name: SHA pinned
+description: >-
+  Assert that third-party actions and reusable workflows are pinned to a
+  full lowercase commit SHA followed by a human-readable version comment.
+  Local `./` references and references owned by the repository owner are
+  exempt; the latter stay release-tagged so one ceremony pin governs a
+  consumer. The scan is deliberately non-recursive: workflow files directly
+  under `workflows-dir` and action.yml/action.yaml files one level under
+  `actions-dir`. Missing directories pass. Known gaps, so silence is never
+  read as coverage: `docker://` digest syntax and established-publisher
+  judgement are out of scope, and the guard resolves no tag or SHA upstream.
+inputs:
+  workflows-dir:
+    description: Directory whose direct `*.yml` and `*.yaml` children are scanned
+    required: false
+    default: .github/workflows
+  actions-dir:
+    description: Directory whose one-level `*/action.yml` and `*/action.yaml` files are scanned
+    required: false
+    default: .github/actions
+  first-party-owner:
+    description: >-
+      Owner exempt from SHA pinning. Defaults to the owner derived from
+      GITHUB_REPOSITORY; when neither value is available no owner is exempt.
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: SHA pinned
+      shell: bash
+      env:
+        WORKFLOWS_DIR: ${{ inputs.workflows-dir }}
+        ACTIONS_DIR: ${{ inputs.actions-dir }}
+        FIRST_PARTY_OWNER: ${{ inputs.first-party-owner }}
+      run: bash "$GITHUB_ACTION_PATH/sha-pinned.sh"
