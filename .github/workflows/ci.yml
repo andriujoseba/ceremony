@@ -88,6 +88,9 @@ jobs:
       - uses: ./actions/changelog-assembled
       - uses: ./actions/drill-recorded
       - uses: ./actions/runner-isolated
+      - uses: ./actions/sha-pinned
+        with:
+          actions-dir: actions
       # The record's round trip (issue #373), keyed on a bare version exactly
       # as drill-recorded is, and deliberately NOT inside it: that action is
       # vendored into box, rig and cast, and those consumers have no

@@ -160,6 +160,14 @@ EOF
       derives "test/$guard.test.sh"
   done
 
+  # #399 adds a guard and its contract test as two independent surfaces.
+  # Keep whole-set assertions so either a missing row or a wrong extra scope
+  # is red, and keep the paths separate so one row cannot mask the other.
+  check "derive: actions/sha-pinned is scope:guards" 0 "[scope:guards]" \
+    derives 'actions/sha-pinned/sha-pinned.sh'
+  check "derive: sha-pinned's test is scope:guards" 0 "[scope:guards]" \
+    derives 'test/sha-pinned.test.sh'
+
   # D4: lib/ is genuinely mixed, so the shared files wear both labels rather
   # than lib/** being re-carved into a row per file
   check "derive: lib/ruling.sh is release-flow AND labels" 0 \
