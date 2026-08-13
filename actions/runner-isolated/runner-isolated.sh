@@ -143,6 +143,16 @@ set -euo pipefail
 #                                            #   a `- …` list — the same
 #                                            #   value, written the other
 #                                            #   way (#395 round 7)
+#     runs-on:                               # …and it may be a block
+#       group: linux                         #   MAPPING, whose `labels:`
+#       labels: [self-hosted, ci-runner]     #   key is the runner spec's
+#                                            #   label set, in both of its
+#                                            #   own spellings; the other
+#                                            #   keys contribute nothing
+#                                            #   and close nothing, which
+#                                            #   is what lets `group:` sit
+#                                            #   above without hiding it
+#                                            #   (#402)
 #     env:                                   # …and it may be an ALIAS,
 #       R: &r '["self-hosted","ci-runner"]'  #   which reaches the callee
 #     with:                                  #   as its ANCHOR'S value and
@@ -212,25 +222,25 @@ set -euo pipefail
 #     that line goes. An unresolved alias is left as written and reads
 #     as no label at all, which is the one direction that can fail open,
 #     so it is named here rather than left to silence (#395 round 7).
-#   - …and one gap where the string IS on a line it reads: `runs-on:` in
-#     its BLOCK-MAPPING form — `group:` and `labels:` keys beneath the
-#     key rather than a value beside it — selects no fragment, so
-#     `runs-on:` + `labels: [self-hosted, …]` underneath goes unseen. The
-#     inline spelling of the same mapping is read, and so is a `with:`
-#     input written that way, the input arm reading the mapping's own
-#     lines. It is out of #395 by decision 9, and the next-line arm
-#     leaves it ALONE ON PURPOSE rather than reading its first line:
-#     taking `labels:` there would close one spelling of this gap and
-#     leave the `group:`-first one open, which makes this bullet false in
-#     a new way rather than true (#395 round 5, claude-bot's nit;
-#     discussion #401; the boundary pinned both ways in round 8).
+#   - …and one gap where the string IS on a line it reads, now half of
+#     what it was: a `runs-on:` BLOCK MAPPING's `group:` key selects no
+#     fragment, so `runs-on:` with `group: self-hosted` and no `labels:`
+#     key goes unseen. The `labels:` key of that mapping IS read, in both
+#     of its spellings, as are the inline spelling of the same mapping
+#     and a `with:` input written either way. What stays out is the group
+#     NAME, and the bullet above is why: a group names its hardware
+#     elsewhere, so its name is not a label and cannot be vouched for as
+#     one. This is that bullet on the one line where the string is
+#     visible — kept as its own because silence there is what a reader
+#     would take for coverage (#395 decision 9, kept by #402 decision 2).
 #
 #     WHAT IS READ ON THE LINE AFTER A KEY, stated plainly because this
 #     list said the opposite twice: a value that opens with `[` or `{` is
 #     read (round 7), and so is a plain or quoted SCALAR there — a bare
 #     `self-hosted` under `runs-on:`, a `'["self-hosted","ci-runner"]'`
-#     under a `with:` input (round 8, claude-bot blocking). Only the
-#     block mapping above is not.
+#     under a `with:` input (round 8, claude-bot blocking) — and so is a
+#     block MAPPING's `labels:` key, one level in (#402). Nothing written
+#     under a bare key is unread now but that mapping's other keys.
 #
 #     …AND ONE LINE IS AS FAR AS A PLAIN SCALAR IS FOLLOWED. A plain
 #     scalar FOLDING onto further lines — `runner:` with `some words`

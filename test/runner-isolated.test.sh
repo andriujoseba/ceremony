@@ -1360,12 +1360,13 @@ YAML
 check "a comment outside the block is a comment again" 0 "1 workflow file" \
   in_tree block-scalar-hash-outdent
 
-# The header's KNOWN LIMITS now says which spelling of the runner-group
-# mapping is read and which is not, and the half that IS read is a claim
-# this file should carry: `runs-on: {group: …, labels: […]}` inline is a
-# flow mapping like any other, so its label list is a value and a spec.
-# (The block-mapping spelling is the gap the same bullet discloses —
-# pre-existing, out of #395 by decision 9, and not fixtured here.)
+# The header's KNOWN LIMITS says which key of the runner-group mapping is
+# read and which is not, and the half that IS read is a claim this file
+# should carry: `runs-on: {group: …, labels: […]}` inline is a flow
+# mapping like any other, so its label list is a value and a spec. (The
+# block spelling of the same mapping is read too since #402, and the
+# parity of the two is asserted as one row further down; what the bullet
+# still discloses is the group NAME, which is no label.)
 wf inline-group-mapping a.yml <<'YAML'
 name: pr checks
 on: pull_request
