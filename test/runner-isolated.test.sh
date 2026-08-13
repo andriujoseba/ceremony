@@ -1727,7 +1727,7 @@ check "the failure says the allowlist is empty when it is" 1 \
 check "the failure shows the allowlist it was given" 1 "(pr-runner)" \
   in_tree with-input .github/workflows pr-runner
 
-# --- #395 round 8: a bare key's value written as a flow collection ---------
+# --- #395 round 7: a bare key's value written as a flow collection ---------
 
 # The window a bare `runs-on:` opens is over its VALUE, and that value may
 # be a flow collection on the next line as legitimately as a `- …` list.
@@ -1806,7 +1806,7 @@ YAML
 check "a flow list under a key that is not a runner spec is not read" 0 \
   "1 workflow file" in_tree next-line-flow-other
 
-# --- #395 round 8: an alias is its anchor's value --------------------------
+# --- #395 round 7: an alias is its anchor's value --------------------------
 
 # GitHub Actions accepts anchors and aliases, so this passes
 # `["self-hosted","ci-runner"]` to the callee exactly as writing it out
@@ -1914,7 +1914,7 @@ YAML
 check "an alias with no anchor in this file is left as written" 0 \
   "1 workflow file" in_tree alias-undefined
 
-# --- #395 round 8: a flow indicator is only an indicator in flow context ---
+# --- #395 round 7: a flow indicator is only an indicator in flow context ---
 
 # `- a,#self-hosted` is the single plain scalar `a,#self-hosted` to YAML —
 # a `,` may sit in a block-context plain scalar where it may not in a flow

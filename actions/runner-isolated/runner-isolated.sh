@@ -142,12 +142,12 @@ set -euo pipefail
 #                                            #   the next line instead of
 #                                            #   a `- …` list — the same
 #                                            #   value, written the other
-#                                            #   way (#395 round 8)
+#                                            #   way (#395 round 7)
 #     env:                                   # …and it may be an ALIAS,
 #       R: &r '["self-hosted","ci-runner"]'  #   which reaches the callee
 #     with:                                  #   as its ANCHOR'S value and
 #       runner: *r                           #   is read as one (#395
-#                                            #   round 8)
+#                                            #   round 7)
 #     jobs: {build: {runs-on: [self-hosted], # A key BESIDE a spec never
 #       environment: pr-runner}}             #   joins it, however many
 #                                            #   brackets are between —
@@ -211,9 +211,9 @@ set -euo pipefail
 #     on the anchor's line and closing below — is recorded as far as
 #     that line goes. An unresolved alias is left as written and reads
 #     as no label at all, which is the one direction that can fail open,
-#     so it is named here rather than left to silence (#395 round 8).
+#     so it is named here rather than left to silence (#395 round 7).
 #   - …and one gap where the string IS on a line it reads, one being all
-#     that is left of the two round 8 found: `runs-on:` in its
+#     that is left of the two round 7 found: `runs-on:` in its
 #     BLOCK-MAPPING form — `group:` and `labels:` keys beneath the key
 #     rather than a value beside it — selects no fragment, so `runs-on:`
 #     + `labels: [self-hosted, …]` underneath goes unseen. The inline
@@ -221,7 +221,7 @@ set -euo pipefail
 #     unread before #395 as much as after it, and out of #395 by
 #     decision 9 (#395 round 5, claude-bot's nit; discussion #401). The
 #     other one — a FLOW COLLECTION opening on the line after its key —
-#     is read as of round 8 and no longer belongs on this list.
+#     is read as of round 7 and no longer belongs on this list.
 #
 # COMMENTS ARE NOT CONTENT, and the rule is one sentence with one
 # exception. A workflow that merely mentions self-hosted in prose is not
@@ -256,7 +256,7 @@ set -euo pipefail
 # passed the file. Both windows therefore carry the open bracket kinds,
 # and both keep the whitespace and quote-close arms unconditional; a
 # closing `]` or `}` counts as an indicator even where it returns the
-# depth to zero, being the collection's own (#395 round 8, claude-bot's
+# depth to zero, being the collection's own (#395 round 7, claude-bot's
 # nit).
 #
 # The exception is the BLOCK SCALAR, whose lines are literal text the
@@ -309,7 +309,7 @@ fi
 # An ANCHOR goes the same way, for the same reason: `runs-on: &r
 # [self-hosted, ci-runner]` names two labels and no runner carries `&r`,
 # so a message quoting it names something the consumer cannot vouch for
-# even in principle (#395 round 8).
+# even in principle (#395 round 7).
 #
 # It takes a VALUE and not a line, so it does not remove comments: the
 # caller that reads a line removes that line's own comment (no_comment
@@ -393,7 +393,7 @@ no_comment() {
     # value with a note after it. Cutting there dropped the tail and
     # passed the file: this window's own fail-open, the same class as the
     # one round 6 closed, and reported as a nit rather than found by the
-    # suite (#395 round 8, claude-bot's nit). A closing `]` or `}` stays
+    # suite (#395 round 7, claude-bot's nit). A closing `]` or `}` stays
     # an indicator even as it returns the depth to zero — it is the
     # collection's own — so `- [a]#b` still comments.
     if [ "$ch" = '#' ] && [ -n "$prev" ]; then
@@ -477,7 +477,7 @@ no_comment() {
 # out would. The `with:` window saw the token `*runner-input`, whose text
 # names no runner, while the anchored value sat outside every window —
 # exit 0 with an empty allowlist, a fail-open on PR-authored code and
-# against the criterion decision 5 exists for (#395 round 8, codex-bot
+# against the criterion decision 5 exists for (#395 round 7, codex-bot
 # blocking).
 #
 # So anchors are recorded as the file is read and aliases are resolved
@@ -745,7 +745,7 @@ flow_feed() {
     # YAML, and cutting at that `,#` dropped the tail and passed the file.
     # The same defect no_comment carries above, in the window this rule is
     # stated in: fixing one and not the other would re-open the
-    # stated-once-implemented-twice split of round 6 (#395 round 8).
+    # stated-once-implemented-twice split of round 6 (#395 round 7).
     if [ "$ch" = '#' ] && [ -n "$prev" ]; then
       if [ "$qend" -eq 1 ] || [ "$was_ind" -eq 1 ]; then
         break
@@ -945,7 +945,7 @@ for file in "${files[@]}"; do
     # named, and the definition routinely sits in a block — `env:` — that
     # no window of this guard reads. Skipped inside an open block scalar,
     # whose `&` is literal text the callee receives rather than an anchor
-    # (#395 round 8).
+    # (#395 round 7).
     case "$stripped" in
       *'&'*)
         if [ "$in_blk" -eq 0 ] || [ "$indent" -le "$blk_indent" ]; then
@@ -1018,7 +1018,7 @@ for file in "${files[@]}"; do
           # other way, and GitHub reads it the same. The window closed
           # recording nothing and the line then matched no fragment arm,
           # so it was read by NOTHING — including the `with:`-passed
-          # spelling this change exists to catch (#395 round 8,
+          # spelling this change exists to catch (#395 round 7,
           # claude-bot blocking). Only as the window's FIRST line and
           # only deeper than its key: after an item has been read the
           # value is the sequence, and at or outside the key's own indent
@@ -1184,7 +1184,7 @@ for file in "${files[@]}"; do
                 # slicing `{safe: [ok], hot: "self-hosted"}` at its first
                 # `:` threw away the mapping and everything the arm below
                 # needs to split, so `hot:` was read by nothing (#395
-                # round 8, claude-bot blocking).
+                # round 7, claude-bot blocking).
                 '['* | '{'*) frag="$stripped" ;;
                 *:*)
                   rest="${stripped#*:}"
