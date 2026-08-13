@@ -12,6 +12,63 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.2 — 2026-08-13
+
+### Added
+
+- Add a guard that rejects unpinned third-party actions and reusable workflows (#399).
+- `runner-isolated` takes `pr-code-runner-labels`: the runner labels a
+  consumer asserts PR-authored code may execute on. Empty by default, so a
+  caller passing nothing keeps the verdict it had on every file that
+  executes PR code; the axis correction above is what moves the rest
+  (#395).
+
+### Changed
+
+- Pin checkout references to v4.4.0, including the refs-guard.yml upgrade from v4.2.2 (#399).
+- `docs-sync` names the fault it saw: a 404 asks about the pin, a 5xx says
+  the pin is fine and the failure is transient, a connection failure claims
+  nothing about the ref, and an archive that will not unpack says so (#393).
+- Refuse a taken explicit drill fork ref before creating a scratch repository, and print a runnable retry using the first free paired attempt (#387).
+
+### Fixed
+
+- `runner-isolated` reads `runs-on:` in its block-mapping form: a
+  `labels:` key one level in is the runner spec's label set, in both of
+  its spellings — a value beside the key, or a sequence beneath it
+  (#402).
+- A `pull_request` file naming a self-hosted tier that way passed with an
+  empty allowlist and now fails. Vouch for the tier in
+  `pr-code-runner-labels`, or split the workflow (#402).
+- `runner-isolated` leaves a `runs-on:` mapping's other keys inert, so a
+  `group:` above or below the `labels:` neither contributes a label nor
+  closes the window. A group named `self-hosted` with no `labels:` key
+  still passes: a group name is not a label (#402, #395).
+- `runner-isolated` asks whether a file executes PR-authored code, not
+  whether it is PR-triggered: a `pull_request_target` file that checks out a
+  PR ref now fails, and one that checks out none passes however it is
+  routed (#395).
+
+- `runner-isolated` reads a self-hosted label passed through a `with:` input,
+  the shape a reusable-workflow caller uses, so a label named there is judged
+  exactly as one named in `runs-on:` (#395).
+
+- A label is read in whatever spelling it is written — quoted, flow, block
+  scalar, a flow collection opening on the line after its key, or an alias to
+  an anchor the same file defines — in a `with:` input and in `runs-on:`
+  alike (#395).
+
+- A value written on the line after its key is read when it is a scalar as
+  well: a wrapped `'["self-hosted","ci-runner"]'` names its labels. A
+  `*name` inside a quoted scalar stays that scalar's text (#395).
+
+- A label opening with a dash is read whole, so `-self-hosted` and a quoted
+  `"- pr-runner"` are vouched for by those exact strings; only a `- ` YAML
+  uses as a sequence indicator is punctuation (#395).
+- `docs-sync` retries the doctrine tarball (four attempts over ~15 s) and
+  downloads it to a file before extracting, so a transient 503 from GitHub's
+  archive endpoint no longer reds a consumer's required check (#393).
+
 ## 0.7.1 — 2026-08-12
 
 ### Added
