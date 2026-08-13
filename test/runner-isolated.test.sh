@@ -1049,6 +1049,84 @@ YAML
 check "an unterminated collection cannot eat the file's own ref:" 1 \
   "checks out a PR ref at line 9" in_tree unterminated-eats-ref
 
+# Shape d, found while re-reading this round's own fix rather than
+# reported: a BLOCK SCALAR input value. `runner: |` hands the callee the
+# same string `runner: '…'` does, and the guard read none of it — a
+# fail-open on decision 5's own criterion, needing no vouch at all. The
+# block is one spec however many lines it spans.
+wf block-scalar-input a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with:
+      runner: |
+        ["self-hosted","ci-runner"]
+YAML
+check "a block-scalar input value is read like a quoted one" 1 \
+  "labels: self-hosted, ci-runner —" in_tree block-scalar-input
+check "…and vouching for the tier it names is honoured" 0 "1 workflow file" \
+  in_tree block-scalar-input .github/workflows ci-runner
+
+# The folded form, spanning lines: one spec, so one vouched label covers
+# the whole set exactly as it does for a flow sequence.
+wf folded-scalar-input a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with:
+      runner: >-
+        ["self-hosted",
+        "pr-runner"]
+YAML
+check "a folded scalar spanning lines is one spec, not one per line" 0 \
+  "offending specs reported: 1" specs_reported folded-scalar-input
+check "…and its whole set is vouched by one of its labels" 0 \
+  "1 workflow file" in_tree folded-scalar-input .github/workflows pr-runner
+
+# The same set with the vouched label FIRST. One order cannot tell "the
+# block's lines are accumulated" from "the last line wins": with the
+# vouched label last, a last-line-wins bug passes the row above and the
+# suite stays green — the gap the mutation found, and the same one the
+# block-sequence rows were given two orders for.
+wf folded-scalar-reversed a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with:
+      runner: >-
+        ["pr-runner",
+        "self-hosted"]
+YAML
+check "the block is accumulated, whichever line carries the vouched label" 0 \
+  "1 workflow file" in_tree folded-scalar-reversed .github/workflows pr-runner
+check "…and that order still names the whole set when nothing is vouched" 1 \
+  "labels: pr-runner, self-hosted —" in_tree folded-scalar-reversed
+
+# …and the window CLOSES at the key's own indentation: the sibling input
+# below the block is its own spec, so a label named inside the block's
+# text cannot vouch for it. Without the close, `hot:` would be block text
+# and the file would pass on `pr-runner` alone.
+wf block-scalar-sibling a.yml <<'YAML'
+name: pr-checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/r.yml
+    with:
+      note: |
+        this tier is pr-runner and this text is not a runner spec
+      hot: '["self-hosted","ci-runner"]'
+YAML
+check "the block window closes at the key's own indentation" 1 \
+  "labels: self-hosted, ci-runner —" in_tree block-scalar-sibling \
+  .github/workflows pr-runner
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml
