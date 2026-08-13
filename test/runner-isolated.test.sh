@@ -1378,6 +1378,145 @@ YAML
 check "the inline group mapping's label list is read" 1 \
   "labels: self-hosted, ci-runner —" in_tree inline-group-mapping
 
+# --- #395 round 6: WHERE a comment may begin ------------------------------
+#
+# Round 5 asked whether the character before the `#` was whitespace. YAML
+# asks whether the `#` continues a PLAIN SCALAR, and it does so only after
+# another character of one — so a `#` right after a flow indicator, or
+# after a quoted scalar's own closing quote, opens a comment too. Each
+# file below parses under PyYAML with the runner value intact, which is
+# what makes them regressions rather than curiosities: a file GitHub
+# rejects is no threat, and the first drafts of the bracket and quote
+# rows did not parse (#395 round 6, codex-bot blocking).
+wf comment-after-brace a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {# } closes nothing in YAML
+      runner: '["self-hosted","ci-runner"]'}
+YAML
+check "a # right after { opens a comment, and its } closes nothing" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-after-brace
+# Its vouched mirror, so the row cannot rot into "a `{#` file always fails".
+wf comment-after-brace-vouched a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {# } closes nothing in YAML
+      runner: '["self-hosted","pr-runner"]'}
+YAML
+check "…and the same shape vouched for its own tier passes" 0 \
+  "1 workflow file" in_tree comment-after-brace-vouched .github/workflows pr-runner
+
+# The comma spelling codex-bot named beside the brace one.
+wf comment-after-comma a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {harmless: value,# } closes nothing
+      runner: '["self-hosted","ci-runner"]'}
+YAML
+check "a # right after a , opens a comment" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-after-comma
+
+# …and the two positions the same rule reaches, found while measuring the
+# boundary rather than reported: a closing bracket, and a quoted scalar's
+# own closing quote. Both are the identical bypass one character over.
+wf comment-after-bracket a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {safe: [ok]#}
+      , hot: '["self-hosted","ci-runner"]' }
+YAML
+check "a # right after ] opens a comment" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-after-bracket
+wf comment-after-quote a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {safe: 'ok'#}
+      , hot: '["self-hosted","ci-runner"]' }
+YAML
+check "a # right after a quoted scalar's close opens a comment" 1 \
+  "labels: self-hosted, ci-runner —" in_tree comment-after-quote
+
+# The exclusion, and the direction it protects: `{a:#b}` is ONE plain
+# scalar to YAML, not a key and a comment, so a `#` after a `:` is the
+# value's own text. Widening the rule to `:` would drop a value the callee
+# really receives — this round's fix becoming this round's fail-open.
+wf hash-after-colon a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {runner:#self-hosted, other: v}
+YAML
+check "a # right after a : is still the scalar's own text" 1 \
+  "labels: #self-hosted —" in_tree hash-after-colon
+
+# claude-bot's nit 2, and it is a fail-OPEN of round 5's own making: the
+# block-sequence window trimmed at the first whitespace-`#` whatever the
+# quotes, so the two spellings of one label set disagreed. The inline form
+# kept `pr #runner` whole; the sequence form cut it to `pr` and refused a
+# consumer who had vouched for the label the file names.
+wf seq-quoted-hash a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - self-hosted
+      - "pr #runner"
+    steps:
+      - run: make test
+YAML
+check "a quoted # in a sequence item is part of the label" 1 \
+  "labels: self-hosted, pr #runner —" in_tree seq-quoted-hash
+check "…so vouching for that label is honoured here too" 0 "1 workflow file" \
+  in_tree seq-quoted-hash .github/workflows "pr #runner"
+# The converse claude-bot measured, and the one that loses a LABEL rather
+# than a vouch: the trim cut the item at the quoted ` #` and took the
+# self-hosted after it away with the rest — exit 0, no vouch needed.
+wf seq-quoted-hash-eaten a.yml <<'YAML'
+name: caller
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner:
+        - ['ci # tier', self-hosted]
+YAML
+check "a quoted # does not eat the self-hosted after it" 1 \
+  "labels: ci # tier, self-hosted —" in_tree seq-quoted-hash-eaten
+# …and the tripwire that stops the quote half widening into "any
+# apostrophe opens a scalar": a plain scalar's apostrophe opens nothing,
+# so this item's note is still a note and the file still passes.
+wf seq-apostrophe-note a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      - ubuntu-don't # self-hosted here
+    steps:
+      - run: make test
+YAML
+check "an apostrophe in a plain item does not quote its note" 0 \
+  "1 workflow file" in_tree seq-apostrophe-note
+
 # --- #395: pr-code-runner-labels, the one assertion the guard accepts -------
 
 # in_tree passes the allowlist as the second argument, the way action.yml

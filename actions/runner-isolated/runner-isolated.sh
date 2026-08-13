@@ -330,6 +330,20 @@ no_comment() {
         ;;
       '[' | '{' | ',' | ':') fresh=1 ;;
       ' ' | '	') ;;
+      # A LEADING `- ` is the sequence item's own indicator and not a
+      # character of its value, so a scalar may start after it — which is
+      # the one position flow_feed has no equivalent of, a fragment never
+      # beginning with an item dash. Only the leading one: the `-` inside
+      # `ubuntu-don't` is plain-scalar text, and treating it as an
+      # indicator would let that apostrophe open a quote.
+      '-')
+        fresh=0
+        if [ "$i" -eq 1 ]; then
+          case "${text:i:1}" in
+            ' ' | '	' | '') fresh=1 ;;
+          esac
+        fi
+        ;;
       *) fresh=0 ;;
     esac
   done
