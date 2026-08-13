@@ -122,11 +122,18 @@ the machinery at all:
    own closing bracket, so a mapping or list written across several
    lines is scanned like any other, and a quoted scalar is opaque: a
    bracket or comma inside quotes is that value's text, not its end. It
-   is read wherever it begins, too: a flow list or mapping written on
-   the line **after** its key is that key's value as much as a `- …`
-   list is, and an **alias** is its anchor's value — a
+   is read wherever it begins, too: a value written on the line
+   **after** its key — a flow list or mapping, or a plain or quoted
+   scalar such as a wrapped `'["self-hosted","ci-runner"]'` — is that
+   key's value as much as a `- …` list is. The one shape not read there
+   is a block **mapping** under `runs-on:` (`group:` and `labels:` keys
+   beneath the key), which is unread before **unreleased** as much as
+   after it (#395). An **alias** is its anchor's value — a
    `runner: *runner-input` passes the labels `&runner-input` names and
-   is judged on them. A
+   is judged on them, and the anchor is found wherever the line writes
+   one, inside a flow collection included — while a `*name` inside a
+   **quoted** scalar is that scalar's own text and not an alias at all.
+   A
    comment is the other way round — it is never part of a value, ends
    with its own line and closes nothing, so a `}` written inside one
    leaves the collection open and the labels below it are still read,

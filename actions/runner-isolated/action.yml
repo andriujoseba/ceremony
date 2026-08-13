@@ -19,10 +19,13 @@ description: >-
   end of its first line, so one written across several lines is scanned
   like any other; a quoted scalar is opaque, so a bracket or comma inside
   quotes is that value's text and not its end, wherever its lines fall. A
-  key's value is read wherever it begins: a flow collection on the line
-  after the key is that key's value as much as a `- …` list is, and an
-  alias is its anchor's value, so `runner: *runner-input` is judged on
-  the labels the anchor names. A
+  key's value is read wherever it begins: a flow collection, or a plain
+  or quoted scalar, on the line after the key is that key's value as much
+  as a `- …` list is — a block mapping under `runs-on:` being the one
+  shape not read there — and an alias is its anchor's value, so
+  `runner: *runner-input` is judged on the labels the anchor names,
+  wherever the line writes the anchor; a `*name` inside a quoted scalar is
+  that scalar's own text. A
   comment is the other way round: never part of a value, ending with its
   own line and closing nothing, so a `}` inside one leaves the collection
   open — and it begins wherever YAML lets one begin, after a space, after
@@ -43,7 +46,8 @@ description: >-
   not detected, indirection is not resolved (runner groups, matrix or
   expression values for `runs-on`), an alias is resolved only from an
   anchor the same file defines above it and an anchor is recorded from
-  the line it heads, and a `with:` input's value is read as
+  the line it heads, `runs-on:` in its block-mapping form selects no
+  fragment, and a `with:` input's value is read as
   labels whatever the key is called, so prose a PR-code file passes to a
   reusable workflow is reported as a label set (ruled, not pending:
   ceremony discussion #403). A missing workflows

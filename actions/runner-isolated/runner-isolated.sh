@@ -212,16 +212,25 @@ set -euo pipefail
 #     that line goes. An unresolved alias is left as written and reads
 #     as no label at all, which is the one direction that can fail open,
 #     so it is named here rather than left to silence (#395 round 7).
-#   - …and one gap where the string IS on a line it reads, one being all
-#     that is left of the two round 7 found: `runs-on:` in its
-#     BLOCK-MAPPING form — `group:` and `labels:` keys beneath the key
-#     rather than a value beside it — selects no fragment, so `runs-on:`
-#     + `labels: [self-hosted, …]` underneath goes unseen. The inline
-#     spelling of the same mapping is read. Documented GitHub syntax,
-#     unread before #395 as much as after it, and out of #395 by
-#     decision 9 (#395 round 5, claude-bot's nit; discussion #401). The
-#     other one — a FLOW COLLECTION opening on the line after its key —
-#     is read as of round 7 and no longer belongs on this list.
+#   - …and one gap where the string IS on a line it reads: `runs-on:` in
+#     its BLOCK-MAPPING form — `group:` and `labels:` keys beneath the
+#     key rather than a value beside it — selects no fragment, so
+#     `runs-on:` + `labels: [self-hosted, …]` underneath goes unseen. The
+#     inline spelling of the same mapping is read, and so is a `with:`
+#     input written that way, the input arm reading the mapping's own
+#     lines. It is out of #395 by decision 9, and the next-line arm
+#     leaves it ALONE ON PURPOSE rather than reading its first line:
+#     taking `labels:` there would close one spelling of this gap and
+#     leave the `group:`-first one open, which makes this bullet false in
+#     a new way rather than true (#395 round 5, claude-bot's nit;
+#     discussion #401; the boundary pinned both ways in round 8).
+#
+#     WHAT IS READ ON THE LINE AFTER A KEY, stated plainly because this
+#     list said the opposite twice: a value that opens with `[` or `{` is
+#     read (round 7), and so is a plain or quoted SCALAR there — a bare
+#     `self-hosted` under `runs-on:`, a `'["self-hosted","ci-runner"]'`
+#     under a `with:` input (round 8, claude-bot blocking). Only the
+#     block mapping above is not.
 #
 # COMMENTS ARE NOT CONTENT, and the rule is one sentence with one
 # exception. A workflow that merely mentions self-hosted in prose is not
