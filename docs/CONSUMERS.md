@@ -104,14 +104,61 @@ the machinery at all:
    ([actions/](../actions/)). Adopting the agent team flow adds the
    `docs-sync` step ([below](#adopting-the-agent-team-flow)).
 
-   `runner-isolated` asserts that no `pull_request`-triggered workflow
-   names a self-hosted runner — a PR workflow runs the branch's code, and
-   unreviewed fork code must never execute on your own hardware
-   ([#58](https://github.com/heavy-duty/ceremony/issues/58)). It fires on
-   the PR that first mixes a PR trigger and a self-hosted `runs-on` in
-   one file; the unblock is splitting the workflow. A repo with **no**
-   self-hosted runner still wants it: the guard's value is the day
-   somebody adds one.
+   `runner-isolated` asserts that no workflow file which **executes
+   PR-authored code** names a self-hosted runner you have not vouched
+   for — such a file runs the branch's code, and unreviewed fork code
+   must never execute on your own hardware
+   ([#58](https://github.com/heavy-duty/ceremony/issues/58)). A file
+   executes PR-authored code when it is `pull_request`-triggered,
+   always, or when it is `pull_request_target`-triggered **and** checks
+   out a PR ref — base-branch privileges running PR-authored code, the
+   shape the guard was blind to until **unreleased** (#395). A
+   `pull_request_target` file that checks out no PR ref executes none of
+   it and passes however it is routed. Self-hosted labels are read from
+   `runs-on:` and from `with:` input values alike — quoted, flow or
+   block-scalar (`runner: |`) — each value judged on its own: two inputs
+   passed on one line are two runners, and vouching for one of them does
+   not vouch for the other, at any nesting depth. A value is read to its
+   own closing bracket, so a mapping or list written across several
+   lines is scanned like any other, and a quoted scalar is opaque: a
+   bracket or comma inside quotes is that value's text, not its end. It
+   is read wherever it begins, too: a value written on the line
+   **after** its key — a flow list or mapping, or a plain or quoted
+   scalar such as a wrapped `'["self-hosted","ci-runner"]'` — is that
+   key's value as much as a `- …` list is. The one shape not read there
+   is a block **mapping** under `runs-on:` (`group:` and `labels:` keys
+   beneath the key), unread both before and after
+   **unreleased** (#395). A plain scalar that **folds** onto further
+   lines is read on its first line only, which it always was: it is the
+   one value that spans lines with no bracket, quote or block indicator
+   to follow, and it can only name a label containing spaces.
+   An **alias** is its anchor's value — a
+   `runner: *runner-input` passes the labels `&runner-input` names and
+   is judged on them, and the anchor is found wherever the line writes
+   one, inside a flow collection included — while a `*name` inside a
+   **quoted** scalar is that scalar's own text and not an alias at all.
+   A
+   comment is the other way round — it is never part of a value, ends
+   with its own line and closes nothing, so a `}` written inside one
+   leaves the collection open and the labels below it are still read,
+   and it may begin anywhere YAML lets one begin: after a space, after a
+   `{`, `[`, `,`, `]` or `}` **in flow context**, or after a quoted
+   scalar's closing quote. A `#` is part of a value only where it
+   continues a plain scalar (`ci#runner`, and `a,#b` in block context,
+   where a `,` may sit in one) or sits inside a quoted one. Every
+   input's value is
+   read this way whatever the key is called, so prose passed to a
+   reusable workflow by a PR-code file is reported as a label set —
+   documented rather than narrowed, which
+   [discussion #403](https://github.com/heavy-duty/ceremony/discussions/403#discussioncomment-17996195)
+   ruled on 2026-08-13: the callee names its own inputs and this guard
+   never opens that file, so a key allowlist would be a false negative
+   sized by somebody else's naming. It
+   fires on the PR that first puts PR-authored code on an unvouched
+   self-hosted label; the two unblocks are splitting the workflow and
+   [vouching for the tier](#vouching-for-a-runner-that-may-execute-pr-code).
+   A repo with **no** self-hosted runner still wants it: the guard's
+   value is the day somebody adds one.
 
    This guide documents `main`. A marker is the literal token
    `**unreleased**` immediately followed by its issue citation (for example,
@@ -267,15 +314,79 @@ Keep these runners repo-scoped unless the organization can restrict a runner
 group to selected repositories. On GitHub Free, an organization runner in the
 Default group is available to every repository, including public repositories
 where a fork PR supplies the workflow file and can name the runner label. The
-`actions/runner-isolated` guard does not follow reusable-workflow calls or
-resolve this `runner` input's indirection, so consumers must enforce this
-registration and isolation boundary themselves.
+`actions/runner-isolated` guard reads this `runner` input's **value** where
+a caller spells it — **unreleased** (#395) — but it still
+does not follow the reusable-workflow call into the callee's own `runs-on:`,
+nor resolve a runner group, matrix or expression, so consumers must enforce
+this registration and isolation boundary themselves.
 
 incubator's worked example has two guests on one `ci-server` host.
 `deploy-box` is the sole guest with the Coolify/tailnet grant.
 `ci-box` has no grants and carries the `ci-runner` label. Ceremony jobs go to
 `ci-runner`, keeping them off deploy-path hardware and out of the deploy
 runner's single-job queue.
+
+### Vouching for a runner that may execute PR code
+
+`actions/runner-isolated` takes one optional input,
+`pr-code-runner-labels` — a comma-separated list of runner labels on which
+you assert PR-authored code may execute — **unreleased** (#395). It is empty by
+default, and an empty allowlist vouches for nothing: a consumer that passes
+nothing keeps the verdict it had on every file that executes PR-authored
+code.
+
+That is the input's compatibility claim, and it is deliberately narrower than
+"nothing changes". The same release corrects the axis, and the correction
+moves one verdict on its own: a file triggered by `pull_request_target` that
+names a self-hosted runner but checks out **no** PR ref executes no PR code,
+so it stops failing — it needs no allowlist entry and never did. If a pin
+bump makes this guard go quiet on a file you expected it to flag, that is the
+shape to check first: adding a PR-ref checkout to such a file brings the
+failure straight back.
+
+```yaml
+      - uses: heavy-duty/ceremony/actions/runner-isolated@<pinned-tag>
+        with:
+          pr-code-runner-labels: pr-runner
+```
+
+**This input is an assertion, not a proof.** Whether a file checks out a PR
+ref can be read off the file, so the guard derives it and never asks. Whether
+a runner tier is isolated cannot be read off any file, so it is the one thing
+left to you — and every assertion is a place the guard can be told something
+false. The bar the label carries, all three clauses:
+
+- it **publishes no artifact any trusted job consumes** — no image, package
+  or cache that a later privileged job pulls;
+- it **holds no credential the job should not have** — no registry login, no
+  deploy token, no tailnet membership;
+- it **reaches nothing the PR author should not reach** — network position
+  included, not just secrets.
+
+A tier that fails any clause is not vouched for by writing it here; it is
+merely no longer guarded. `runs-on:` label sets are conjunctions, so naming
+one label of a set vouches for the whole set — and naming `self-hosted`
+itself vouches for **every** self-hosted tier you own, which is almost never
+what you mean. A set is one **value**: where a job or a caller names two
+runners — two `with:` inputs on one line, say — vouching for one leaves the
+other guarded, and a set spread over `- ` list items, or over the lines of a
+`{…}`/`[…]` collection, is read as the one set it is.
+
+**Name the untrusted tier, never the trusted one.** incubator is the worked
+example, and the direction of its split is the whole point:
+
+| label | guest | publishes | in `pr-code-runner-labels`? |
+|---|---|---|---|
+| `ci-runner` | `ci-box` | **yes** — release images to `ghcr.io` | **never** |
+| `pr-runner` | `pr-box` | nothing; no registry credential, not a tailnet member | yes |
+
+`ci-runner` is the tier incubator's release seat uses, and it holds the GHCR
+push. It is *more* trusted than a hosted runner, which is exactly why
+PR-authored code must never be told it may run there. `pr-runner` is the tier
+built to be spent: it publishes nothing, so the worst a malicious fork PR
+gets is a box that already assumes it is hostile. The failure mode this table
+exists to prevent is a reader opting in the runner their release job uses,
+because that is the one whose name they know.
 
 ## Release workflow
 

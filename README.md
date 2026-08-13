@@ -198,8 +198,9 @@ label machine named above and are not the operator's business here. Of the
 remaining seven, a consumer's own `ci.yml` carries **five** guard steps —
 `changelog-armed`, `changelog-monotonic`, `changelog-assembled`,
 `drill-recorded` and [`runner-isolated`](actions/runner-isolated/), the last
-asserting that no `pull_request`-triggered workflow names a self-hosted
-runner (#58) — plus [`refs-not-closing`](actions/refs-not-closing/) in its
+asserting that no workflow file which executes PR-authored code names a
+self-hosted runner the consumer has not vouched for (#58, #395) — plus
+[`refs-not-closing`](actions/refs-not-closing/) in its
 own [`refs-guard.yml`](.github/workflows/refs-guard.yml) caller, because
 body edits are load-bearing there (#200, #218), and
 [`docs-sync`](actions/docs-sync/) once the repo adopts the agent team flow.

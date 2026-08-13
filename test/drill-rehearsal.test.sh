@@ -586,9 +586,18 @@ mkdir -p "$TMP/caller-stage"
 # byte-for-byte what the drill installs. Round 1 caught the stub quietly
 # dropping the block's trailing `# or: package-json`, found by diffing the two
 # by hand — which is the work this case exists to stop repeating.
+#
+# The block is found by its OWN heading sentence, not by being the first
+# unindented ```yaml fence in the file: #395 added a fenced example earlier
+# in the doc and this case started diffing the release caller against a
+# guard's `with:` block. An oracle that moves when an unrelated paragraph
+# lands is not measuring what its comment says it measures.
 # ---------------------------------------------------------------------------
 caller_write "$TMP/stub" "$FORK" "$FORK_REF"
-awk '/^```yaml$/ { inblock = 1; next } /^```$/ { if (inblock) exit } inblock' \
+awk '/^The consumer.s \*\*entire\*\* `release\.yml`:$/ { armed = 1; next }
+     armed && /^```yaml$/ { inblock = 1; next }
+     /^```$/ { if (inblock) exit }
+     inblock' \
   "$ROOT/docs/CONSUMERS.md" |
   sed "s#^    uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>\$#    uses: $FORK/.github/workflows/release.yml@$FORK_REF#" \
     >"$TMP/caller.expected"

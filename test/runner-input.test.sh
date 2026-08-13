@@ -84,9 +84,17 @@ check "consumer doctrine requires repo-scoped runner registration" 0 \
 check "consumer doctrine explains the free-plan Default group exposure" 0 \
   "Default group is available to every repository" \
   grep -F "Default group is available to every repository" "$CONSUMERS"
+# The indirection gap narrowed in #395: the guard now reads a caller's `with:`
+# value, so the disclosure has two halves and both are tripwires. Asserting only
+# the half that remains would let a future change close or reopen the other half
+# in silence.
 # shellcheck disable=SC2016 # Markdown backticks are asserted literally
-guard_gap="\`actions/runner-isolated\` guard does not follow reusable-workflow calls"
-check "consumer doctrine discloses the runner-isolated indirection gap" 0 \
+guard_reads="guard reads this \`runner\` input's **value**"
+check "consumer doctrine says the guard reads the runner input's value" 0 \
+  "$guard_reads" grep -F "$guard_reads" "$CONSUMERS"
+# shellcheck disable=SC2016 # Markdown backticks are asserted literally
+guard_gap="does not follow the reusable-workflow call into the callee's own \`runs-on:\`"
+check "consumer doctrine discloses the indirection gap that remains" 0 \
   "$guard_gap" grep -F "$guard_gap" "$CONSUMERS"
 # shellcheck disable=SC2016 # Markdown backticks are asserted literally
 deploy_role='`deploy-box` is the sole guest with the Coolify/tailnet grant'

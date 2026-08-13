@@ -1,0 +1,69 @@
+name: labels-sweep
+# RUNNER ROUTING (#144, mechanism ceremony#383, available at 0.7.1+). The
+# reconcile job runs inside ceremony, so its `runs-on` is the `runner` input
+# below, consumed through `fromJSON`. THE JSON ENCODING IS THE CONTRACT: a
+# bare string cannot express a label SET, and `[self-hosted, ci-runner]` is
+# what a self-hosted consumer needs — an unquoted `ubuntu-latest` inside the
+# string is invalid JSON and dies loudly at `fromJSON` rather than falling
+# back to the default. Copy the quoting exactly, and keep it identical to
+# labels.yml's: the trigger job there dispatches THIS caller, and a sweep
+# landing on different hardware from its wake is a difference nobody
+# intended.
+#
+# `ci-runner` is `ci-box` on `ci-server`, the unprivileged tier — not a
+# tailnet member, so it cannot resolve or route to `coolify-box`. Never the
+# deploy plane's label, which lives in deploy.yml and nowhere else so one
+# grep proves CI cannot reach it (#141 acceptance criterion 3). Both guests
+# carry the implicit `self-hosted` label, so the tier label is the only
+# discriminator; the full reasoning is in labels.yml's header.
+#
+# The target runner must carry `gh` and `jq`: these jobs are bash scripts
+# driving the GitHub CLI, so a runner without them fails at the first step
+# with routing that still looks correct on `.jobs[].labels` (#144).
+#
+# The cron below is NOT part of that change and did not move (#144).
+on:
+  # The consumer owns this cadence (#203). Hourly is the recommended default
+  # when no other engine drives board state: the cron is then the sweep's only
+  # wake for four transition classes — a review verdict landing (no
+  # pull_request_review trigger on the labels caller), blocker:ci-red
+  # set/cleared, blocker:conflict when another PR merges under this one, and
+  # time-based stale / 48h claim-reclaim. The labels caller's events carry the
+  # rest in seconds, one trigger-job dispatch away. Hourly trades ≤1h of
+  # latency on those four while cutting nominal scheduled sweeps from four an
+  # hour to one at GitHub's 1-minute floor. Do not delete the cron: it is their
+  # discovery path. If another engine writes some of those transitions, only
+  # the classes with no other writer bound the cadence; relax it only as that
+  # list shrinks.
+  schedule: [{cron: "0 * * * *"}]
+  # A manual full-board sweep. A bare dispatch (input default "yes") also
+  # bootstraps the taxonomy on a fresh repo. The labels caller's trigger job
+  # wakes this workflow with bootstrap=no on every board event, so the
+  # declared input is part of the contract: a dispatch naming an undeclared
+  # input is refused, and the trigger job goes loudly red.
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Bootstrap the label taxonomy before sweeping
+        type: choice
+        options: ["yes", "no"]
+        default: "yes"
+permissions:
+  contents: read
+  checks: read          # mergeability/check-rollup read for PR state
+  statuses: read        # commit-status rollup read for PR state
+  actions: read         # workflow-run nodes inside the check rollup — private repos do not imply it (incubator#60)
+  issues: write
+  pull-requests: write
+jobs:
+  sweep:
+    uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@0.7.1
+    with:
+      # JSON, and `ci-runner` — see RUNNER ROUTING in the header.
+      runner: '["self-hosted","ci-runner"]'
+    # If this repo's PR-facing labels caller is named anything but `labels`,
+    # pass that name as a `pr_workflow_name: <name>` key beside `runner`
+    # above (one `with:` block, never a second). The sweep exports
+    # it as SELF_WORKFLOW so the label machinery's own check entries (scope,
+    # trigger) never count toward blocker:ci-red — a red trigger means "fix
+    # the caller", which no PR edit can do (#208 reads it).

@@ -1,0 +1,87 @@
+name: labels
+# The event-facing half of the two-caller split (ceremony#209, available at
+# 0.4.1+). The hourly cron and the manual bootstrap dispatch MOVED to
+# labels-sweep.yml beside this file — they are never copied, because both
+# callers firing into the one shared `labels-reconcile` concurrency group is
+# the double-sweep regression #75 already paid for.
+#
+# RUNNER ROUTING (#144, mechanism ceremony#383, available at 0.7.1+). The
+# jobs this caller owns execute inside ceremony, so their `runs-on` is not
+# spelled here — it is the `runner` input below, and ceremony reads it
+# through `fromJSON`. THE JSON ENCODING IS THE CONTRACT, not decoration: a
+# bare string cannot express a label SET, and `[self-hosted, ci-runner]` is
+# the form a self-hosted consumer needs. Copy the quoting exactly. An
+# unquoted `ubuntu-latest` inside the string is invalid JSON and dies loudly
+# at `fromJSON`; it never falls back to the default.
+#
+# The value is `ci-runner` and never the deploy plane's label. Both guests
+# carry the implicit `self-hosted` label, so the tier label is the ONLY
+# discriminator (#141): `ci-runner` is `ci-box` on `ci-server`, the
+# unprivileged tier, not a tailnet member at all. The other label belongs to
+# `deploy-box` — the only machine that can reach the Coolify deploy API —
+# and is spelled in deploy.yml and NOWHERE ELSE, deliberately, so one grep
+# proves CI cannot reach the privileged plane (#141 acceptance criterion 3);
+# that is why this note does not repeat it either. Routing ceremony's
+# bookkeeping there would put label jobs on the deploy plane and queue them
+# ahead of deploys, one runner process running one job at a time.
+#
+# THE pull_request_target QUESTION WAS CHECKED, NOT ASSUMED, at the pinned
+# tag. ceremony#383's doctrine is: route these to a runner isolated from
+# anything the write-scoped GITHUB_TOKEN should not reach, never to a host
+# on the deploy path. Both halves hold. (a) ceremony's labels.yml checks out
+# no consumer PR code — its two checkouts fetch the ceremony implementation
+# only, in a consumer at the literal `CEREMONY_SELF_REF` pin — so no
+# PR-authored code executes on our hardware under that token. (b) `ci-box`
+# has no tailnet membership and cannot resolve or route to `coolify-box`, so
+# there is nothing on the deploy path for the token to reach. ceremony's own
+# `runner-isolated` guard follows neither `uses:` across repos nor this
+# input's indirection (its header names both limits), so this file IS the
+# boundary — re-check both halves before changing the value.
+#
+# WHAT THE TARGET RUNNER MUST CARRY: `gh` and `jq`. Every job behind these
+# three callers is a bash script driving the GitHub CLI — labels-scope,
+# labels-reconcile, issueflow-reconcile and both release doors — so a runner
+# without them fails at the first step, exit 127, with routing that looks
+# perfectly correct on the run's `.jobs[].labels`. A hosted runner ships
+# both; a self-hosted one carries only what it was provisioned with, and
+# `ci-box` did not have them when this file was written (#144). Nothing in
+# this repo can assert that: the check would have to run on the box it is
+# checking. Verify it on the box after any rebuild, the way `main-guards`
+# passing proves nothing about it — those guards are pure bash over the tree.
+on:
+  pull_request_target:
+    # Fork PRs; these carry the head/draft/review facts state:* derives from.
+    # labeled/unlabeled are the handoff wake (state:needs-human confirmed here);
+    # synchronize re-derives on every push. review_requested/review_request_removed
+    # (shipped in 0.3.0, ceremony#137) wake the sweep that clears
+    # blocker:unrequested when the panel is asked.
+    types: [opened, reopened, ready_for_review, converted_to_draft, synchronize, labeled, unlabeled, review_requested, review_request_removed]
+  # Available at 0.2.0 and later (the first tag carrying ceremony#32); a
+  # consumer pinned to 0.1.0 omits this block.
+  issues:
+    # Narrowed (#199) to the actions carrying a queue-state change the hourly
+    # cron cannot wait one cadence for: opened → the mint→needs-triage check,
+    # closed → the blocker-closes→ready self-heal, edited → a body rewrite of the
+    # `Blocked by #N` declaration the sweep parses, reopened → a closed issue
+    # re-entering the queue. Dropped: labeled/unlabeled/assigned/unassigned —
+    # validation + the 48h claim clock, caught within one cadence, and
+    # labeled/unlabeled were the issues-churn source. The handoff wake is
+    # pull_request_target:labeled, not issues, so this leaves it intact.
+    types: [opened, closed, edited, reopened]
+permissions:
+  contents: read
+  checks: read          # mergeability/check-rollup read for PR state
+  statuses: read        # commit-status rollup read for PR state
+  actions: write        # the trigger job's `gh workflow run` dispatch of the sweep caller (#209)
+  issues: write
+  pull-requests: write
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@0.7.1
+    with:
+      # JSON, and `ci-runner` — see RUNNER ROUTING in the header.
+      runner: '["self-hosted","ci-runner"]'
+      # If the sweep caller below is named anything but labels-sweep.yml,
+      # say so with a `sweep_workflow: <filename>` key beside `runner`
+      # (one `with:` block, never a second). Ceremony's own dogfood does
+      # (self-labels-sweep.yml).
