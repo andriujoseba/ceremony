@@ -259,24 +259,88 @@ labels_in() {
 }
 
 # no_comment <line> — a physical line without its trailing YAML comment,
-# for the two windows that read a value a LINE at a time: a block
-# sequence's `- …` items. There the comment is the line's own tail, and
-# it is not part of the value or of the runner probe — a `- ubuntu-latest
-# # never self-hosted` item filed a spec for the word in its note (#395
-# round 5, codex-bot's converse in the block-sequence arm). The flow
-# scanner applies the same rule character by character, where it can also
-# see a quote; a whole comment LINE is skipped before either.
+# for the window that reads a value a LINE at a time: a block sequence's
+# `- …` items. There the comment is the line's own tail, and it is not
+# part of the value or of the runner probe — a `- ubuntu-latest # never
+# self-hosted` item filed a spec for the word in its note (#395 round 5,
+# codex-bot's converse in the block-sequence arm). A whole comment LINE is
+# skipped before this is ever reached.
+#
+# IT IS flow_feed'S RULE, ON A LINE INSTEAD OF A COLLECTION, and it has to
+# be: a rule stated once and implemented twice is two rules, and the two
+# disagreed. Round 5 trimmed here at the first whitespace-`#`, quotes and
+# all, so `- "pr #runner"` lost the label its inline spelling keeps and
+# `- ['ci # tier', self-hosted]` under a `with:` key lost its self-hosted
+# altogether — a fail-open round 5 introduced, and the sentence in the
+# header claiming this rule sees a quote was true of the flow scanner
+# only (#395 round 6, claude-bot's nit 2). So: a quote OPENS only where a
+# scalar can start, escaping is honoured inside it, and a `#` ends the
+# text only outside a quote and only where it does not continue a plain
+# scalar — after whitespace, after a flow indicator, after a quoted
+# scalar's close, or at the start.
 #
 # A block SCALAR is deliberately not passed through this: `#` inside one
 # is literal text that reaches the callee, so a `self-hosted` there is a
 # label the file really passes, and dropping it would be the fail-open
 # shape d exists to close.
 no_comment() {
-  local text="$1"
-  case "$text" in
-    *[[:space:]]'#'*) printf '%s' "${text%%[[:space:]]#*}" ;;
-    *) printf '%s' "$text" ;;
-  esac
+  local text="$1" i=0 cut=-1 ch prev quote="" fresh=1 qend=0 was_qend=0
+  while [ "$i" -lt "${#text}" ]; do
+    ch="${text:i:1}"
+    prev=""
+    if [ "$i" -gt 0 ]; then
+      prev="${text:i-1:1}"
+    fi
+    was_qend="$qend"
+    qend=0
+    i=$((i + 1))
+    if [ -n "$quote" ]; then
+      if [ "$quote" = '"' ] && [ "$ch" = "\\" ] && [ "$i" -lt "${#text}" ]; then
+        i=$((i + 1))
+        continue
+      fi
+      if [ "$ch" = "$quote" ]; then
+        if [ "$quote" = "'" ] && [ "${text:i:1}" = "'" ]; then
+          i=$((i + 1))
+          continue
+        fi
+        quote=""
+        qend=1
+      fi
+      continue
+    fi
+    if [ "$ch" = '#' ] && [ -n "$prev" ]; then
+      if [ "$was_qend" -eq 1 ]; then
+        cut=$((i - 1))
+        break
+      fi
+      case "$prev" in
+        ' ' | '	' | '{' | '[' | ',' | ']' | '}')
+          cut=$((i - 1))
+          break
+          ;;
+      esac
+    fi
+    case "$ch" in
+      '"' | "'")
+        if [ "$fresh" -eq 1 ]; then
+          quote="$ch"
+        fi
+        fresh=0
+        ;;
+      '[' | '{' | ',' | ':') fresh=1 ;;
+      ' ' | '	') ;;
+      *) fresh=0 ;;
+    esac
+  done
+  if [ "$cut" -lt 0 ]; then
+    printf '%s' "$text"
+    return
+  fi
+  text="${text:0:cut}"
+  # The comment's own separating whitespace goes with it, as the tail-trim
+  # this replaced dropped it: a value's trailing space is nobody's label.
+  printf '%s' "${text%"${text##*[![:space:]]}"}"
 }
 
 # THE FRAGMENT IS A FLOW COLLECTION, NOT A SLICE OF A LINE — frag_start,
@@ -327,6 +391,7 @@ flow_open=0
 flow_kinds=""
 flow_fresh=1
 flow_quote=""
+flow_qend=0
 flow_cur=""
 flow_hit=""
 
@@ -348,13 +413,18 @@ flow_flush() {
 
 # flow_feed <chunk> — one line's worth of an open collection.
 flow_feed() {
-  local text="$1" i=0 ch prev esc
+  local text="$1" i=0 ch prev esc qend
   while [ "$i" -lt "${#text}" ]; do
     ch="${text:i:1}"
     prev=""
     if [ "$i" -gt 0 ]; then
       prev="${text:i-1:1}"
     fi
+    # Did the PREVIOUS character close a quoted scalar? A `#` after one is a
+    # comment (`{a: 'ok'#}`), while a `'` that never opened a scalar is an
+    # apostrophe inside a plain one and its `#` is plain text.
+    qend="$flow_qend"
+    flow_qend=0
     i=$((i + 1))
     if [ -n "$flow_quote" ]; then
       # Inside a double-quoted scalar `\` escapes the next character,
@@ -375,28 +445,49 @@ flow_feed() {
           continue
         fi
         flow_quote=""
+        flow_qend=1
       fi
       flow_cur="$flow_cur$ch"
       continue
     fi
     # A COMMENT IS NOT CONTENT, AND IT CLOSES NOTHING. Outside a quoted
-    # scalar a `#` preceded by whitespace begins a YAML comment that runs
-    # to the end of its line, so the rest of this chunk is text belonging
-    # to nobody: stop reading it and leave every open collection OPEN,
-    # which is the whole difference from the line ending. Feeding it as
-    # content let a `}` or `]` inside a comment pop flow_kinds and close
-    # the fragment — the values below vanished, self-hosted and all, with
-    # no vouch needed — while a `# … self-hosted …` note beside a hosted
-    # runner filed a spec that named the comment's tier and refused a
-    # correct file (#395 round 5, codex-bot and claude-bot blocking).
-    # The whitespace is YAML's own rule and not caution: `ci#runner` is a
-    # label, not a label and a comment. A comment opening a continuation
-    # line is covered by it too, that line being fed with the folded
-    # newline in front of it; a whole comment LINE never arrives here at
-    # all, being skipped where every half of the rule skips one.
-    if [ "$ch" = '#' ]; then
+    # scalar a `#` begins a YAML comment that runs to the end of its line,
+    # so the rest of this chunk is text belonging to nobody: stop reading
+    # it and leave every open collection OPEN, which is the whole
+    # difference from the line ending. Feeding it as content let a `}` or
+    # `]` inside a comment pop flow_kinds and close the fragment — the
+    # values below vanished, self-hosted and all, with no vouch needed —
+    # while a `# … self-hosted …` note beside a hosted runner filed a spec
+    # that named the comment's tier and refused a correct file (#395 round
+    # 5, codex-bot and claude-bot blocking).
+    #
+    # WHERE a `#` is content is a property of SCALARS, not a list of
+    # characters: an unquoted `#` is content only where it CONTINUES A
+    # PLAIN SCALAR, which is why `ci#runner` is one label and not a label
+    # and a comment. Everywhere else it opens a comment — after separation
+    # whitespace, after a flow indicator (`{`, `[`, `,`, `]`, `}`), which
+    # a plain scalar cannot contain in flow context, after a quoted
+    # scalar's own closing quote, or at a fragment's start. Round 5 had
+    # the whitespace half alone, so `with: {# } closes nothing` and its
+    # comma, bracket and quote spellings each fed a comment's `}` to the
+    # scanner and closed the fragment before the runner value below it —
+    # exit 0 with an empty allowlist, the bypass in full (#395 round 6,
+    # codex-bot blocking).
+    #
+    # `:` is NOT in that set, deliberately: `{a:#b}` is the single plain
+    # scalar `a:#b` to YAML, so reading a comment there would drop a value
+    # the callee really receives — this rule's own fail-open, one step
+    # further out than the one it fixes. Nor is the START of a chunk: a
+    # whole comment LINE is skipped before it can arrive here, a
+    # continuation line arrives with its folded newline in front of it,
+    # and the one text that does reach here beginning with a `#` is the
+    # loose arm's slice of a plain scalar that CONTAINS one.
+    if [ "$ch" = '#' ] && [ -n "$prev" ]; then
+      if [ "$qend" -eq 1 ]; then
+        break
+      fi
       case "$prev" in
-        ' ' | '	') break ;;
+        ' ' | '	' | '{' | '[' | ',' | ']' | '}') break ;;
       esac
     fi
     case "$ch" in
@@ -463,6 +554,7 @@ frag_start() {
   flow_cur=""
   flow_hit=""
   flow_quote=""
+  flow_qend=0
   flow_kinds=""
   flow_fresh=1
   flow_open=1
@@ -520,6 +612,7 @@ for file in "${files[@]}"; do
   flow_kinds=""
   flow_fresh=1
   flow_quote=""
+  flow_qend=0
   flow_cur=""
   flow_hit=""
 
