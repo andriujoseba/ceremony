@@ -1976,6 +1976,252 @@ YAML
 check "…and in the block-sequence window too" 0 "1 workflow file" \
   in_tree close-bracket-hash-item
 
+# --- #395 round 8: an anchor, an alias and a next-line value are POSITIONS ---
+
+# Round 7 recorded an anchor at "the head of a value" and implemented the
+# head of the value the LINE's own key introduces. A flow collection is a
+# place values live too, so the anchor inside one was never recorded, the
+# alias below it stayed unresolved, and the file passed with an empty
+# allowlist — the fail-open direction, on the shape a caller writes when
+# it names its runner once and uses it twice (codex-bot, blocking).
+wf anchor-in-flow a.yml <<'YAML'
+name: inline-anchor
+on: pull_request
+env: { RUNNER_INPUT: &runner-input '["self-hosted","ci-runner"]' }
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: *runner-input
+YAML
+check "an anchor at a value head INSIDE a flow mapping is recorded" 1 \
+  "labels: self-hosted, ci-runner —" in_tree anchor-in-flow
+check "…and vouching for that tier passes the same file" 0 \
+  "1 workflow file" in_tree anchor-in-flow .github/workflows ci-runner
+
+# An anchor's value is its OWN NODE and not the rest of the line. Taking
+# the tail would resolve `*a` to `["self-hosted","ci"], B: pr-runner` and
+# hand a SIBLING's scalar to the vouch test — round 2's mis-vouch,
+# re-entered through the alias table — so vouching for the sibling's tier
+# must still fail on the aliased one.
+wf anchor-node-bound a.yml <<'YAML'
+name: pr checks
+on: pull_request
+env: { A: &a '["self-hosted","ci"]', B: &b pr-runner }
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: { safe: *b, hot: *a }
+YAML
+check "an anchor's value stops at its own node" 1 \
+  "labels: self-hosted, ci —" in_tree anchor-node-bound
+check "…so the sibling's tier does not vouch for the anchored one" 1 \
+  "labels: self-hosted, ci —" in_tree anchor-node-bound \
+  .github/workflows pr-runner
+check "…and the tier the anchor really names does" 0 "1 workflow file" \
+  in_tree anchor-node-bound .github/workflows ci
+
+# …and the stack that holds them: an anchor nested one collection deeper
+# closes before the one holding it, so the two do not read each other's
+# text.
+wf anchor-nested a.yml <<'YAML'
+name: pr checks
+on: pull_request
+env: { OUTER: &outer [ubuntu-latest, &inner '["self-hosted","ci-runner"]'] }
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: *inner
+YAML
+check "a nested anchor is its own value, not the collection holding it" 1 \
+  "labels: self-hosted, ci-runner —" in_tree anchor-nested
+
+# The converse the widening must not buy: an `&` that is not at a value
+# head defines nothing. Whitespace PRESERVES the position rather than
+# creating one, so a shell fragment cannot answer to an alias — the rule
+# `run: a && b` has always relied on, now stated where a `&name` follows
+# real text.
+wf anchor-mid-scalar a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh api foo &later '["self-hosted","ci-runner"]'
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: *later
+YAML
+check "an & after real text is not an anchor definition" 0 \
+  "1 workflow file" in_tree anchor-mid-scalar
+
+# A `*name` INSIDE A QUOTED SCALAR is text the callee receives verbatim,
+# not an alias. Expanding it filed a spec naming a runner the file does
+# not name — exit 1 on a correct workflow, and a guard's false positive
+# reds a consumer's main with nothing to vouch for (codex-bot, blocking).
+wf alias-in-quotes a.yml <<'YAML'
+name: pr checks
+on: pull_request
+env:
+  RUNNER_INPUT: &runner-input '["self-hosted","ci-runner"]'
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: { note: "literal *runner-input" }
+YAML
+check "a *name inside a quoted scalar is text, not an alias" 0 \
+  "1 workflow file" in_tree alias-in-quotes
+
+# …and the converse that keeps the fix from being a mute: the same file
+# with the same anchor, the alias written where YAML means one.
+wf alias-out-of-quotes a.yml <<'YAML'
+name: pr checks
+on: pull_request
+env:
+  RUNNER_INPUT: &runner-input '["self-hosted","ci-runner"]'
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: { runner: *runner-input }
+YAML
+check "…and outside them it is still resolved" 1 \
+  "labels: self-hosted, ci-runner —" in_tree alias-out-of-quotes
+
+# The quote a scalar opens is opaque ACROSS ITS PHYSICAL LINES here too,
+# because this runs on the continuation lines of an open collection: the
+# resolver takes the quote state the scanner is already in rather than
+# assuming a fresh line. Round 4's rule, in the last function that lacked
+# it.
+wf alias-in-wrapped-quotes a.yml <<'YAML'
+name: pr checks
+on: pull_request
+env:
+  RUNNER_INPUT: &runner-input '["self-hosted","ci-runner"]'
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with: {
+      note: 'a note that wraps the line
+        and mentions *runner-input in passing'
+    }
+YAML
+check "a quoted scalar wrapping a line keeps its *name as text" 0 \
+  "1 workflow file" in_tree alias-in-wrapped-quotes
+
+# THE NEXT-LINE VALUE MAY BE A SCALAR. Round 7 read the flow-collection
+# spelling and named `[` and `{`; a plain or quoted scalar on the line
+# below its key reached no arm at all — the sequence window closed
+# recording nothing and no fragment matched. `actionlint` accepts both of
+# these files and PyYAML resolves the value, so they are runner specs
+# GitHub schedules (claude-bot, blocking).
+wf next-line-scalar a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      self-hosted
+    steps:
+      - run: make test
+YAML
+check "a bare scalar on the line after runs-on: is read" 1 \
+  "labels: self-hosted —" in_tree next-line-scalar
+check "…and vouching for it passes the same file" 0 "1 workflow file" \
+  in_tree next-line-scalar .github/workflows self-hosted
+
+# …and on the surface #395 exists for: a caller wrapping its JSON input
+# to the next line, which is the realistic way a long one gets written.
+wf next-line-quoted a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner:
+        '["self-hosted","ci-runner"]'
+YAML
+check "a quoted JSON input on the next line is read" 1 \
+  "labels: self-hosted, ci-runner —" in_tree next-line-quoted
+check "…and vouching for its tier passes it" 0 "1 workflow file" \
+  in_tree next-line-quoted .github/workflows ci-runner
+
+# THE ONE SHAPE THE WIDENING DELIBERATELY DOES NOT TAKE, pinned so it can
+# neither close nor widen in silence: a first line of the form `key:` or
+# `key: value` means the value is a block MAPPING, which is `runs-on:`'s
+# block-mapping form — out of #395 by decision 9 and disclosed in KNOWN
+# LIMITS. Reading its first line would close the `labels:`-first spelling
+# and leave the `group:`-first one open, making the disclosure false in a
+# new way rather than true.
+wf block-group-mapping a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  build:
+    runs-on:
+      group: linux
+      labels: [self-hosted, ci-runner]
+    steps:
+      - run: make test
+YAML
+check "runs-on:'s block-mapping form stays the disclosed gap" 0 \
+  "1 workflow file" in_tree block-group-mapping
+
+# …and under a `with:` key nothing narrows: the mapping's own lines keep
+# being read by the input arm, exactly as they were before the widening.
+wf with-block-mapping a.yml <<'YAML'
+name: pr checks
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner:
+        labels: [self-hosted, ci-runner]
+YAML
+check "a with: input's block mapping is still read by the input arm" 1 \
+  "labels: self-hosted, ci-runner —" in_tree with-block-mapping
+
+# A `,` SEPARATES LABELS ONLY WHERE THE VALUE HAS FLOW STRUCTURE. In
+# BLOCK context a plain scalar may contain one, so `pr-runner,#self-hosted`
+# is a single label: splitting it named two things the file does not name,
+# and — the half that reaches the verdict — let a vouch for `pr-runner`
+# pass a label YAML says does not exist (claude-bot's nit).
+wf plain-comma-label a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  build:
+    runs-on: pr-runner,#self-hosted
+    steps:
+      - run: echo build
+YAML
+check "a block plain scalar's comma is its own text, not a separator" 1 \
+  "labels: pr-runner,#self-hosted —" in_tree plain-comma-label
+check "…so a vouch for pr-runner does not vouch for that label" 1 \
+  "labels: pr-runner,#self-hosted —" in_tree plain-comma-label \
+  .github/workflows pr-runner
+
+# …and the converse, which is the trade decision 5 already ships: a
+# bracket anywhere in the value is flow structure INCLUDING inside a
+# quoted scalar, so a JSON list written as one YAML scalar keeps splitting
+# into the labels the callee will use.
+wf quoted-json-still-splits a.yml <<'YAML'
+name: ci
+on: pull_request
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      runner: '["self-hosted","pr-runner"]'
+YAML
+check "a quoted JSON list still splits into its labels" 0 \
+  "1 workflow file" in_tree quoted-json-still-splits \
+  .github/workflows pr-runner
+
 # --- #395 decision 6: incubator's callers, verbatim, as a regression -------
 
 # Four files copied byte for byte from heavy-duty/incubator@main —
