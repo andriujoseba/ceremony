@@ -95,11 +95,12 @@ comments, measured counts, and links to specific comments — belongs in that
 record. If a rule cannot be followed without chasing its cite, the rule is
 under-stated: fix the statement, not the citation. (#280)
 
-Normative text in those files does not cite issues from other repositories.
-Consumers read the vendored bytes outside this organization's context, and a
-cited repository may not be public. A repo-boundary deferral remains allowed:
-it names another component as the owner of a fact rather than citing one of
-that component's issues. (#280)
+Normative text in those files does not reference another repository's issues,
+pull requests, discussions, or files. Consumers read the vendored bytes
+outside this organization's context, and a referenced repository may not be
+public. A repo-boundary deferral remains allowed: it names another component
+as the owner of a fact rather than referencing a record in that component.
+(#280, #408)
 
 This is distinct from the code-comment convention above: a code comment is
 read by a maintainer inside the organization while standing in the file,

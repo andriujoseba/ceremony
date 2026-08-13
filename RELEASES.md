@@ -24,10 +24,9 @@ example task list quoted in a fence enrols nothing.
 
 Keep a short repo-local roadmap beside the epics. The roadmap shows the whole
 ladder and points to each working surface; it does not duplicate the live
-member lists or ordering. crew's roadmap discussion [heavy-duty/crew#338](https://github.com/heavy-duty/crew/discussions/338)
-maps the ladder whose `0.1.2` working surface moved from the crufty ledger
-[heavy-duty/crew#162](https://github.com/heavy-duty/crew/issues/162) to
-[heavy-duty/crew#346](https://github.com/heavy-duty/crew/issues/346).
+member lists or ordering. A working surface can move when an epic becomes a
+ledger; [The ledger pattern](#the-ledger-pattern) defines that transition
+(#248).
 
 ## Release candidates
 
@@ -72,9 +71,8 @@ separately specified change to its queue-category model.
 
 The gate orders windows, not their contents. Members enter a release only by
 decision during release-init. The double gate on
-[heavy-duty/crew#163](https://github.com/heavy-duty/crew/issues/163) and the
-out-of-chain track on [heavy-duty/crew#348](https://github.com/heavy-duty/crew/issues/348)
-are worked examples of exceptions declared where they apply.
+one member and an out-of-chain track are the two exception shapes, and each is
+declared where it applies. (#248)
 
 ## The membership record
 
@@ -173,11 +171,10 @@ steps:
 5. Ship through the repository's cut process, close the epic, and treat that
    close as the trigger for the next window.
 
-heavy-duty/crew#346 is the worked wave plan; its graph made both hard edges
-and shared-file contention visible before builders entered the queue. If init
-finds no work worth minting, the operator either folds the empty window into a
-later release or skips the version, recording that ruling on the epic before
-closing it unshipped.
+A wave plan's graph makes hard edges and shared-file contention visible before
+builders enter the queue. (#248) If init finds no work worth minting, the
+operator either folds the empty window into a later release or skips the
+version, recording that ruling on the epic before closing it unshipped.
 
 ## One primary window, declared parallel tracks
 
@@ -233,9 +230,9 @@ lookup does not carry (#329).
 The operator may declare a parallel track at init when its footprint is
 disjoint from the primary window: another repository, another artifact, or
 provably non-overlapping clusters. The declaration names the boundary and any
-bridge work that must rejoin the primary. [heavy-duty/crew#348](https://github.com/heavy-duty/crew/issues/348)
-is the worked example: its app and artifact form a parallel track while its
-small crew-side bridge remains in the primary window.
+bridge work that must rejoin the primary. A repository whose app and artifact
+are disjoint from the primary window forms a parallel track, while its bridge
+work stays in the primary window. (#248)
 
 ## Flip mechanics
 
@@ -257,9 +254,8 @@ finding the new member's row in it (#343).
 
 Release membership is a decision, never a sweep default. Triage performs each
 flip only after the operator blesses the wave; the issue-flow sweep may resolve
-ordinary issue dependencies, but it does not choose a release's contents.
-heavy-duty/crew#346 records the member-by-member flip that opened its first
-wave.
+ordinary issue dependencies, but it does not choose a release's contents
+(#248).
 
 ## The ledger pattern
 
@@ -269,8 +265,6 @@ epic until every live member declaration points at the replacement and the
 blocker parser verifies the new set. Closing early can release every member
 that still names the old issue.
 
-The [heavy-duty/crew#162](https://github.com/heavy-duty/crew/issues/162) to
-[heavy-duty/crew#346](https://github.com/heavy-duty/crew/issues/346)
-transition is the worked example: all member declarations were re-pointed and
-parse-verified before #162 closed; #162 remains the historical record while
-#346 is the release's working surface.
+Re-point and parse-verify every member declaration before closing the old
+epic; the old epic then remains the historical record while its replacement
+is the working surface. (#248)

@@ -18,9 +18,7 @@ The machine reads only your **verdict**; humans read your reasons.
   unblocks it.
 - **Name what you could not verify, in the verdict body.** Say which checks
   you could not run and why, and what you relied on instead: CI, reading, or
-  a narrower probe. An unstated environment gap reads as coverage — exactly
-  the blind spot Kimi's [crew report](https://github.com/heavy-duty/crew/blob/main/kimi-bot-andresmgsl/assessment.md)
-  identified for boxes without `node` or `shellcheck`.
+  a narrower probe. An unstated environment gap reads as coverage. (#145)
 - An approval you would not defend to the human is a defect. You are not
   being asked to be agreeable; you are being asked to be right.
 
@@ -52,10 +50,8 @@ In order of authority:
    - **Verify a pinned consumer at its pin, not ceremony's `main`.** Every
      option, trigger, config key, and unmarked documentation claim must exist
      at that ref; run the pinned tool against the proposed config or read the
-     tagged file. On [box#164](https://github.com/heavy-duty/box/pull/164),
-     `0.1.0`'s `load_config` rejected `triage-actors=...` with
-     `malformed label row` and `exit=1`. CI green on a conversion PR proves
-     nothing about the new config: the base branch's workflow is what ran.
+     tagged file. CI green on a conversion PR proves nothing about the new
+     config: the base branch's workflow is what ran. (#145)
    - **Third-party actions never hold a write-capable token by default.** In
      any job whose token is write-capable (`packages: write`,
      `contents: write`, `id-token: write`, or one carrying deploy secrets),
@@ -63,12 +59,11 @@ In order of authority:
      action may hold that token only if it comes from an **established
      publisher** — a real organization with maintenance history and more
      than one maintainer, not a memberless shell or a lone account shipping
-     an unauditable `dist/` blob — and is **pinned by full commit SHA**. An
-     action matching the incubator red-flag profile never holds a write
-     token, however well it works. Read-only jobs: ordinary dependency
-     judgement, SHA-pinning still required. This is bot-run infrastructure —
+     an unauditable `dist/` blob — and is **pinned by full commit SHA**.
+     Read-only jobs: ordinary dependency judgement, SHA-pinning still
+     required. This is bot-run infrastructure —
      no human watches runtime logs, so a compromised action's window is
-     unbounded (incubator#53/#54; #216).
+     unbounded (#216).
 3. **The code itself** — correctness first, then tests (does the test plan's
    floor exist? do the failure cases actually fail?), then conventions.
    Changelog line present for behavior changes; comments carry why, not
@@ -90,8 +85,8 @@ saw Y" outranks one that says "this looks like it might".
   the author in either case (#224). If you
   are requested off-panel, post the verdict anyway and say in its body that
   it is advisory; neither your silence nor your request-changes is a gate the
-  reconciler enforces. The nine-hour wait for kimi's off-panel verdict on
-  rig#112 showed why authorization and membership must not be conflated.
+  reconciler enforces. Authorization and membership must not be conflated
+  (#57).
 - **Being requested is a wake condition of its own.** It is how work in a
   repo you have never heard of reaches you; a repo list finds only work in
   repos somebody thought to list.
@@ -100,12 +95,10 @@ saw Y" outranks one that says "this looks like it might".
 
 - **Your queue is the API, not the search index.** Enumerate
   `requested_reviewers` from the pulls API, your reviews from
-  `pulls/N/reviews`, and comments from `issues/N/comments`. Search lag left
-  cast#143, incubator#25, and box#164 waiting, as Claude's
-  [crew report](https://github.com/heavy-duty/crew/blob/main/claude-bot-andresmgsl/assessment.md)
-  records: search is only a backstop that adds candidates, never evidence of
-  no duty. `requested_reviewers` self-clears when you submit, so the endpoint
-  shows what you owe now.
+  `pulls/N/reviews`, and comments from `issues/N/comments`. Search is only a
+  backstop that adds candidates, never evidence of no duty.
+  `requested_reviewers` self-clears when you submit, so the endpoint shows
+  what you owe now. (#145)
 - **Every write is one-shot, keyed to (you, PR, head SHA).** Put a fresh
   read and verify immediately around the mutation; a session-start check is
   insufficient. If verification says it landed, stop even when the CLI
@@ -117,10 +110,8 @@ saw Y" outranks one that says "this looks like it might".
   announces on [#32](https://github.com/heavy-duty/ceremony/pull/32), bought
   the rule; do not answer a double-post with a third comment.
 - **Review each head in a throwaway checkout; keep the main clone clean.**
-  Use a detached worktree per PR head and remove it after the verdict. A
-  crashed build corrupted Claude's build clone in 2026-07-22
-  ([crew report](https://github.com/heavy-duty/crew/blob/main/claude-bot-andresmgsl/knowledge.md));
-  running another tree in the clone you keep risks the whole box.
+  Use a detached worktree per PR head and remove it after the verdict.
+  Running another tree in the clone you keep risks the whole box. (#145)
 
 ## What you do not do
 
