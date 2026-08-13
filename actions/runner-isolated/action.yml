@@ -47,7 +47,10 @@ description: >-
   silence is never read as coverage: `workflow_call` reachability is not
   followed across files (only the label passed through `with:` is seen), a
   PR head fetched by hand inside a `run:` block is not a `ref:` key and is
-  not detected, indirection is not resolved (runner groups, matrix or
+  not detected, any trigger whose name merely contains `pull_request`
+  (`pull_request_review`, say) reads as `pull_request` and derives as
+  executing PR code, which is conservative and deliberate, indirection is
+  not resolved (runner groups, matrix or
   expression values for `runs-on`), an alias is resolved only from an
   anchor the same file defines above it and an anchor is recorded from
   the line it heads, the `group:` key of a `runs-on:` block mapping
