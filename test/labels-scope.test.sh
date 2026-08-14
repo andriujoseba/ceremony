@@ -47,6 +47,41 @@ check "derive: one label per line, config order, deduped" 0 "" \
 check "derive: no files derives nothing" 0 "" derive_labels "$cfg" ""
 check "derive: unmatched files derive nothing" 0 "" derive_labels "$cfg" 'src/other.c'
 
+# --- the pipe-capacity race: the file list is fed from a variable ------------
+#
+# `grep -qE` exits at the first matching path, so a piped file list leaves
+# printf writing the rest, EPIPE, and `pipefail` fails the pipeline although
+# grep MATCHED — inside this per-glob loop, a scope label silently not
+# applied (#364, #411).
+#
+# The case is built so both directions are visible at once: `lib/**` matches
+# the FIRST path, which is what makes the reader exit early with a MiB still
+# unwritten, while `docs/**` matches the LAST, where grep consumes the whole
+# list and no race is possible. Pre-#411 the derived set is the second label
+# alone — the first is the one the race eats.
+#
+# Two properties keep it from being vacuous: `set -euo pipefail`, which is
+# what labels-scope.sh arms when it is EXECUTED (sourcing takes the `set -u`
+# branch, so a fixture that did not arm it could not fail for the reason the
+# bug exists); and the size, since whether a pipe fills is a property of the
+# pipe's capacity and not of the data — a MiB clears any capacity a pipe can
+# be given (#411 D3).
+# shellcheck disable=SC2016 # expansion belongs to the nested bash
+check "derive: a MiB-long file list keeps the label whose glob matches its first path" 0 "" \
+  bash -c 'source "$1"
+    set -euo pipefail
+    want="$2" cfg="$3"
+    filler="src/vendor/generated/nothing-here-matches-a-glob/module.c
+"
+    while [ "${#filler}" -lt "$want" ]; do filler="$filler$filler"; done
+    files="lib/early.sh
+${filler}docs/late.md"
+    got="$(derive_labels "$cfg" "$files")"
+    [ "$got" = "$(printf "%s\n" scope:release-flow scope:docs)" ] || {
+      printf "input %s bytes; derived set was:\n%s\n" "${#files}" "$got"
+      exit 1
+    }' _ "$ROOT/actions/labels-scope/labels-scope.sh" "$((1024 * 1024))" "$cfg"
+
 # --- parse_labeler_config: every spelling the governed repos use -------------
 # Needs yq (preinstalled on ubuntu-latest). Locally, skip with a notice so
 # the suite stays runnable in minimal environments; in CI the skip is a

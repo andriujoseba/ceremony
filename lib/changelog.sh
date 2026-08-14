@@ -37,13 +37,21 @@ changelog_section_problem() {
   [ "$ver" = "Unreleased" ] && return 0
 
   notes="$(changelog_section "$file" "$ver")"
-  if ! printf '%s\n' "$notes" | awk '/^[[:space:]]*[-*][[:space:]]/ { found = 1; exit } END { exit !found }'; then
+  # Herestring, never a pipe: this awk `exit`s at the first entry, so a pipe
+  # would leave printf writing a section body nobody is reading, EPIPE, and
+  # `pipefail` would fail the pipeline although awk matched — reporting "no
+  # entries" against a section that has them (#364, #411).
+  if ! awk '/^[[:space:]]*[-*][[:space:]]/ { found = 1; exit } END { exit !found }' <<<"$notes"; then
     printf "section '%s' has no entries — a heading is not an entry\n" "$ver"
     return 1
   fi
 
+  # Herestring for the same reason, and here the race is worse: this awk
+  # `exit`s only when it HAS found an empty heading, so a pipe makes the
+  # substitution die under `set -e` at exactly the moment there was a true
+  # violation to report — a crash instead of the diagnosis (#411).
   problem="$(
-    printf '%s\n' "$notes" | awk '
+    awk '
       /^### / {
         if (heading != "" && !entry) {
           reported = 1
@@ -58,7 +66,7 @@ changelog_section_problem() {
       END {
         if (!reported && heading != "" && !entry) print heading
       }
-    '
+    ' <<<"$notes"
   )"
   if [ -n "$problem" ]; then
     printf "section '%s' has an empty heading: '%s'\n" "$ver" "$problem"
@@ -133,7 +141,11 @@ changelog_fragment_problem() {
   local file="$1" base problem kind detail rest
   base="${file##*/}"
 
-  if ! printf '%s\n' "$base" | grep -qE '^([a-z][a-z0-9-]*-)?[0-9]+\.md$'; then
+  # Herestring although $base is one filename and cannot fill a pipe today:
+  # "bounded" is a property of this caller that a later reader of this line
+  # cannot check, and one idiom throughout is what makes the family's rule
+  # readable off the source rather than off a table of exceptions (#411 D2).
+  if ! grep -qE '^([a-z][a-z0-9-]*-)?[0-9]+\.md$' <<<"$base"; then
     printf "fragment '%s' is not named for its issue — want <issue>.md or <repo>-<issue>.md\n" "$file"
     return 1
   fi
@@ -347,7 +359,15 @@ changelog_shape_problem() {
   [ -n "$published" ] || return 0
 
   published_body="$(changelog_section "$changelog" "$published")"
-  if printf '%s\n' "$published_body" | grep -q '^### '; then
+  # Herestring, never a pipe. `grep -q` exits at the section's first '### ',
+  # so a pipe leaves printf writing the rest of the body, EPIPE, and
+  # `pipefail` fails the pipeline although grep MATCHED — the `if` falls
+  # through to the `elif` and fabricates "grouped fragment, flat section"
+  # against a grouped one, which is what reached a consumer repo. The other
+  # direction is worse and silent: flat fragments plus a genuinely grouped
+  # section skip the body, $grouped_in is empty, and a real violation
+  # returns 0 (#364, #411).
+  if grep -q '^### ' <<<"$published_body"; then
     if [ -n "$ungrouped_in" ]; then
       printf "fragment '%s' is flat but newest published section '%s' in '%s' is grouped — a repo is one shape or the other\n" \
         "$ungrouped_in" "$published" "$changelog"
@@ -386,12 +406,19 @@ changelog_assemble() {
     return 1
   fi
 
-  grouped_in="$(printf '%s\n' "$fragments" | while IFS= read -r f; do
+  # Herestring like the five sibling loops below, and for the same reason:
+  # the `break` is an early exit, so a pipe leaves the writer holding a
+  # fragment list nobody drains. Its consequence today is smaller than the
+  # rest of #411's — errexit does not fire inside the command substitution
+  # bin/changelog-assemble calls this through, and the break prints before
+  # the writer dies — but that is the caller's context and one bash's
+  # behaviour, neither a property of this line (#411 D9).
+  grouped_in="$(while IFS= read -r f; do
     if grep -q '^### ' "$f"; then
       printf '%s\n' "$f"
       break
     fi
-  done)"
+  done <<<"$fragments")"
   if [ -z "$grouped_in" ]; then
     while IFS= read -r f; do
       chunk="$(awk 'body || !/^[[:space:]]*$/ { body = 1; print }' "$f")"
@@ -403,12 +430,17 @@ changelog_assemble() {
 
   while IFS= read -r f; do
     while IFS= read -r g; do
-      printf '%s' "$seen" | grep -qFx -- "$g" || seen="$seen$g$nl"
+      # Herestring for the family's one idiom (#411 D2), although $seen holds
+      # only canonical group names and cannot fill a pipe. `<<<` appends a
+      # newline where `printf '%s'` did not, so the feed carries one extra
+      # empty line; `-Fx` against a non-empty $g cannot match an empty line,
+      # so the answer is unchanged — asserted, not assumed, in the suite.
+      grep -qFx -- "$g" <<<"$seen" || seen="$seen$g$nl"
     done < <(awk '/^### / { name = substr($0, 5); sub(/[[:space:]]+$/, "", name); print name }' "$f")
   done <<<"$fragments"
 
   for g in Added Changed Fixed Removed Deprecated Security; do
-    printf '%s' "$seen" | grep -qFx -- "$g" && ordered="$ordered$g$nl"
+    grep -qFx -- "$g" <<<"$seen" && ordered="$ordered$g$nl"
   done
   while IFS= read -r g; do
     [ -n "$g" ] || continue
