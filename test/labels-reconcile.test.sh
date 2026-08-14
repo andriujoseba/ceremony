@@ -1337,6 +1337,72 @@ expect "each blind PR logs its reason as its own line beside the counted one" 2 
 expect "exactly the blind PRs match the counted shape whole-line — no more, no less" 2 \
   "$(grep -c '^labels: #[0-9]*: could not read mergeability/checks — left alone this pass$' <<<"$blind_main")"
 
+# -- the sampled reason survives a per-PR output block no pipe could hold ----
+#
+# `head -n1` exits at the first line, so `sed … | head -n1` leaves sed
+# writing into a pipe nobody drains: EPIPE, and `pipefail` — armed when this
+# script is EXECUTED — kills the substitution under `set -e`, losing the
+# sampled reason or the sweep. #411 D1 converts the site; this case pins the
+# answer at a size no pipe can hold, a MiB of per-PR output with the read
+# failure inside it, driven through `main` so the feed under test is the
+# shipped one.
+#
+# It is an EQUIVALENCE case, not a regression one, and the reason is worth
+# stating rather than dressing over: what crosses that pipe is not $output
+# but sed's MATCHED subset, and this sweep bounds that subset twice over —
+# one `read failed:` emitter per PR, and read_failure_reason caps each
+# reason at 300 characters. One short line fills no pipe, so the pre-change
+# expression answers this correctly too. Measured, not assumed: the same
+# `sed … | head -n1` reds at 141 only once the MATCHED stream itself passes
+# a MiB, which no input to this sweep can make it do.
+big_output_main_probe() {
+  (
+    GITHUB_EVENT_NAME=schedule
+    REPO=owner/repo
+    LABELS_CONF=.github/labels.conf
+    # gh's own diagnostics on the reviews read are NOT captured to a file the
+    # way the mergeability read's are, so they land raw in the per-PR output
+    # block — the one writer that can make $output large without touching
+    # the reason the sweep samples.
+    pad="note: a noisy read's diagnostics, matching neither the counted line nor the sampled one"$'\n'
+    while [ "${#pad}" -lt $((1024 * 1024)) ]; do pad="$pad$pad"; done
+    gh() {
+      if [ "$1" = label ] && [ "$2" = list ]; then
+        core_label_rows | cut -d'|' -f1
+      elif [ "$1" = pr ] && [ "$2" = list ]; then
+        printf '101\n'
+      elif [ "$1" = pr ] && [ "$2" = view ]; then
+        printf 'GraphQL: Resource not accessible by integration (repository.pullRequest.statusCheckRollup)\n' >&2
+        return 1
+      elif [ "$1" = api ] && [[ "$*" = *"/reviews"* ]]; then
+        printf '%s' "$pad" >&2
+        return 0
+      elif [ "$1" = api ]; then
+        jq -n --arg n "${*: -1}" \
+          '{draft:false,user:{login:"author"},head:{sha:"head"},labels:[],requested_reviewers:[],created_at:"2026-07-23T00:00:00Z"}'
+      elif [ "$1" = issue ] && [ "$2" = edit ]; then
+        printf 'MUTATION: %s\n' "$*"
+      fi
+    }
+    # The options labels-reconcile.sh arms when it is EXECUTED; sourcing it
+    # takes the `set -u` branch instead, and without `pipefail` a broken
+    # pipe is invisible — the fixture could not fail for the reason the bug
+    # exists (#411 D3).
+    set -euo pipefail
+    main
+  )
+}
+
+big_main="$(big_output_main_probe)"
+expect "the per-PR output block really did clear a MiB — the case is not vacuous by size" yes \
+  "$([ "${#big_main}" -gt $((1024 * 1024)) ] && echo yes || echo no)"
+expect "a MiB-long per-PR block still samples the reason the sweep observed" 1 \
+  "$(grep -c '^::warning::.*Resource not accessible by integration' <<<"$big_main")"
+expect "...exactly once, and the sweep survives to emit it" 1 \
+  "$(grep -c '^::warning::' <<<"$big_main")"
+expect "...and reconciles to the end" 1 \
+  "$(grep -c '^labels: reconciled\.$' <<<"$big_main")"
+
 # -- the grace's own wiring: the fixtures above prove the predicate, and only a
 #    sweep can prove the fetch that feeds it (#236 D2). The fixture-only version
 #    of this change would have passed with the global never assigned — the #91
