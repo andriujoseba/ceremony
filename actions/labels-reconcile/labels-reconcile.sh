@@ -1169,11 +1169,21 @@ main() {
       unreadable=$((unreadable + 1))
       # the first observed reason stands in for the sweep in the blind warning
       if [ -z "$sampled_reason" ]; then
-        # No second pipe: `head -n1` exits at the first line, so sed takes
-        # EPIPE on a large $output and `pipefail` kills the substitution
-        # under `set -e` — losing the sampled reason, or the sweep. sed's
-        # writer is a command and takes no herestring, so capture it whole
-        # and cut the first line in the shell instead (#364, #411 D1).
+        # No second pipe, and NOT because this site can race today (#411
+        # D10): what would cross a `| head -n1` here is not $output but
+        # sed's matched subset, and that subset is bounded twice — exactly
+        # one `read failed:` emitter exists per PR (:1138, whose branch
+        # `exit 0`s on the next line), and read_failure_reason collapses
+        # newlines and truncates at 300 characters. ~300 bytes fills no
+        # pipe of any capacity, so `head -n1` would never take EPIPE and
+        # `pipefail` would never kill the substitution.
+        # It is converted anyway, for D2's reason: "bounded" is a property
+        # of today's callers that no future reader of this line can check,
+        # and the collision hazard named at :1121 — an unlucky raw stderr
+        # line matching the counted prefix — is precisely the future in
+        # which this writer stops being bounded. sed's writer is a command
+        # and takes no herestring, so capture it whole and cut the first
+        # line in the shell (#364, #411 D1's instruction, D10's grading).
         read_failures="$(sed -n "s/^labels: #$n: read failed: //p" <<<"$output")"
         sampled_reason="${read_failures%%$'\n'*}"
       fi

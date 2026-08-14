@@ -1339,22 +1339,23 @@ expect "exactly the blind PRs match the counted shape whole-line — no more, no
 
 # -- the sampled reason survives a per-PR output block no pipe could hold ----
 #
-# `head -n1` exits at the first line, so `sed … | head -n1` leaves sed
-# writing into a pipe nobody drains: EPIPE, and `pipefail` — armed when this
-# script is EXECUTED — kills the substitution under `set -e`, losing the
-# sampled reason or the sweep. #411 D1 converts the site; this case pins the
-# answer at a size no pipe can hold, a MiB of per-PR output with the read
-# failure inside it, driven through `main` so the feed under test is the
-# shipped one.
+# An EQUIVALENCE case, not a regression one (#411 D10), and the grading is
+# stated first because the site's classification changed after the mint:
+# what would cross a `sed … | head -n1` here is not $output but sed's
+# MATCHED subset, and this sweep bounds that subset twice over — one
+# `read failed:` emitter per PR, and read_failure_reason caps each reason
+# at 300 characters. One short line fills no pipe of any capacity, so the
+# pre-change expression answers this correctly too and this case does not
+# red on it. Measured, not assumed: the same `sed … | head -n1` reds at 141
+# only once the MATCHED stream itself passes a MiB, which no input to this
+# sweep can make it do.
 #
-# It is an EQUIVALENCE case, not a regression one, and the reason is worth
-# stating rather than dressing over: what crosses that pipe is not $output
-# but sed's MATCHED subset, and this sweep bounds that subset twice over —
-# one `read failed:` emitter per PR, and read_failure_reason caps each
-# reason at 300 characters. One short line fills no pipe, so the pre-change
-# expression answers this correctly too. Measured, not assumed: the same
-# `sed … | head -n1` reds at 141 only once the MATCHED stream itself passes
-# a MiB, which no input to this sweep can make it do.
+# The site is converted anyway — D1's instruction, D2's reason — because
+# "bounded" is a property of today's callers that no future reader of the
+# line can check. What this case pins is the answer at a size no pipe can
+# hold: a MiB of per-PR output with the read failure inside it, driven
+# through `main` so the feed under test is the shipped one, under the shell
+# options execution arms.
 big_output_main_probe() {
   (
     GITHUB_EVENT_NAME=schedule
