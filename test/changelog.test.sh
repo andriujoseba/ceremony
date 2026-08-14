@@ -739,4 +739,166 @@ check "assemble: a flat set under a 'grouped' sentinel refuses to assemble" 1 \
   "declares grouped" \
   changelog_assemble "$AS"
 
+# --- the pipe-capacity race: no early-exiting reader is fed by a pipe -------
+#
+# A reader that exits early leaves its writer holding a pipe nobody drains.
+# The writer takes EPIPE, `pipefail` fails the pipeline although the reader
+# SUCCEEDED, and the caller takes a branch the data does not justify — which
+# is how `changelog-armed` fabricated a shape violation against a repository
+# that had none (#364, #411).
+#
+# Every case below drives a PUBLIC function, so the feed under test is
+# whatever that function uses internally — a pipe before #411, a variable
+# after. Two properties keep them from being vacuous, and both are load-
+# bearing:
+#
+#   - `armed`, because this harness runs under `set -u` alone while the
+#     actions run under `set -euo pipefail` (CONTRIBUTING, Code conventions).
+#     Without `pipefail` a broken pipe is invisible and every case here would
+#     pass on the very code it exists to red.
+#   - the SIZE, because whether a pipe fills is a property of the pipe's
+#     capacity, not of the data: 64 KiB by default, as little as one page
+#     under a soft limit. A fixture sized to the body that failed in
+#     production would pass on the runners this repository tests on, so each
+#     input clears a MiB — past any capacity a pipe can be given (#411 D3).
+armed() { ( set -euo pipefail; "$@" ); }
+
+MIB=$((1024 * 1024))
+bulk_entries() { # $1 = at least this many bytes of bullet entries, one per line
+  local out="- A filler entry, long enough that doubling reaches a MiB fast."$'\n'
+  while [ "${#out}" -lt "$1" ]; do out="$out$out"; done
+  printf '%s' "$out"
+}
+
+# A published section that is unambiguously grouped and unambiguously larger
+# than any pipe: '### Added' is its FIRST line, so the reader matches and
+# exits with the whole remainder unread.
+BIGCL="$TMP/big-changelog.md"
+{
+  printf '# Changelog\n\n## 1.0.0 — 2026-08-01\n\n### Added\n\n'
+  bulk_entries "$MIB"
+  printf '\n### Fixed\n\n- The last grouped entry (#411).\n'
+} >"$BIGCL"
+
+BIG_GROUPED="$TMP/big-grouped"
+mkdir -p "$BIG_GROUPED"
+cat >"$BIG_GROUPED/411.md" <<'EOF'
+### Fixed
+
+- A grouped fragment against a grouped section (#411).
+EOF
+
+BIG_FLAT="$TMP/big-flat"
+mkdir -p "$BIG_FLAT"
+printf -- '- A flat fragment against a grouped section (#411).\n' >"$BIG_FLAT/411.md"
+
+# incubator#188 in a fixture: grouped fragments, grouped section, nothing to
+# report. Pre-#411 this is the FABRICATED violation — the `if` body is
+# skipped although the section is grouped, and the `elif` fires.
+check "shape: a MiB-long grouped section reports nothing against grouped fragments" 0 "" \
+  armed changelog_shape_problem "$BIGCL" "$BIG_GROUPED"
+check_absent "...and never calls that grouped section flat" 0 \
+  "is flat — a repo is one shape or the other" \
+  armed changelog_shape_problem "$BIGCL" "$BIG_GROUPED"
+
+# The same defect's other direction, and the one no production log would
+# ever have shown: pre-#411 the skipped `if` body leaves a REAL violation
+# unreported and the function returns 0.
+check "shape: a flat fragment against a MiB-long grouped section is reported, not passed" 1 \
+  "is flat but newest published section '1.0.0'" \
+  armed changelog_shape_problem "$BIGCL" "$BIG_FLAT"
+
+# `:40`'s reader exits at the first bullet, so a MiB of entries behind it is
+# what the writer is still holding. Pre-#411: "has no entries" about a
+# section made almost entirely of entries.
+BIGSEC="$TMP/big-section.md"
+{
+  printf '# Changelog\n\n## 2.0.0 — 2026-08-01\n\n### Added\n\n'
+  bulk_entries "$MIB"
+} >"$BIGSEC"
+check "section: a MiB-long section full of entries is not reported as empty" 0 "" \
+  armed changelog_section_problem "$BIGSEC" 2.0.0
+
+# `:46`'s reader exits ONLY when it has found a real empty heading, so the
+# race fires at exactly the moment there is a true violation to report.
+# Pre-#411 the substitution dies under `set -e` and the guard crashes
+# without ever printing the diagnosis it had computed.
+BIGEMPTY="$TMP/big-empty-heading.md"
+{
+  printf '# Changelog\n\n## 3.0.0 — 2026-08-01\n\n### Added\n\n### Fixed\n\n'
+  bulk_entries "$MIB"
+} >"$BIGEMPTY"
+check "section: a MiB-long section's empty heading is diagnosed, not a set -e death" 1 \
+  "section '3.0.0' has an empty heading: '### Added'" \
+  armed changelog_section_problem "$BIGEMPTY" 3.0.0
+
+# `:136`'s reader is fed one filename and cannot race today; converted with
+# the rest so the family has one idiom (#411 D2). Asserted for equivalence,
+# not regression — both directions answer exactly as they did.
+NAMED="$TMP/fragment-names"
+mkdir -p "$NAMED"
+printf -- '- Named for a sibling repo (#411).\n' >"$NAMED/incubator-188.md"
+printf -- '- Named for nothing (#411).\n' >"$NAMED/notes.md"
+check "fragment: the filename rule still admits <repo>-<issue>.md" 0 "" \
+  armed changelog_fragment_problem "$NAMED/incubator-188.md"
+check "fragment: the filename rule still refuses a name that carries no issue" 1 \
+  "is not named for its issue" \
+  armed changelog_fragment_problem "$NAMED/notes.md"
+
+# `:406`/`:411`'s named risk (#411 D2): `<<<` appends a newline where
+# `printf '%s'` did not, so the group-seen feed carries one extra empty
+# line. `-Fx` against a non-empty group name cannot match an empty line, so
+# the assembled bytes must be identical — asserted, never assumed, over
+# every canonical group plus an unknown one and a fragment that repeats a
+# group already seen.
+EQ="$TMP/assemble-groups"
+mkdir -p "$EQ"
+cat >"$EQ/97.md" <<'EOF'
+### Security
+
+- Ninety-seven security (#97).
+
+### Added
+
+- Ninety-seven added (#97).
+EOF
+cat >"$EQ/96.md" <<'EOF'
+### Housekeeping
+
+- Ninety-six, a group the canonical order does not name (#96).
+
+### Changed
+
+- Ninety-six changed (#96).
+EOF
+cat >"$EQ/95.md" <<'EOF'
+### Deprecated
+
+- Ninety-five deprecated (#95).
+
+### Fixed
+
+- Ninety-five fixed (#95).
+
+### Added
+
+- Ninety-five added, behind ninety-seven's (#95).
+EOF
+cat >"$EQ/94.md" <<'EOF'
+### Removed
+
+- Ninety-four removed (#94).
+EOF
+check "assemble: canonical order, then unknown groups first-seen — unchanged by the feed" 0 "" \
+  assert_assemble "$EQ" \
+  "$(printf '%s\n' \
+    '### Added' '' '- Ninety-seven added (#97).' \
+    '- Ninety-five added, behind ninety-seven'"'"'s (#95).' '' \
+    '### Changed' '' '- Ninety-six changed (#96).' '' \
+    '### Fixed' '' '- Ninety-five fixed (#95).' '' \
+    '### Removed' '' '- Ninety-four removed (#94).' '' \
+    '### Deprecated' '' '- Ninety-five deprecated (#95).' '' \
+    '### Security' '' '- Ninety-seven security (#97).' '' \
+    '### Housekeeping' '' '- Ninety-six, a group the canonical order does not name (#96).')"
+
 summary
