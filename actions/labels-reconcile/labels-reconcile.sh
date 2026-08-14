@@ -1170,8 +1170,8 @@ main() {
       # the first observed reason stands in for the sweep in the blind warning
       if [ -z "$sampled_reason" ]; then
         # No second pipe, and NOT because this site can race today (#411
-        # D10): what would cross a `| head -n1` here is not $output but
-        # sed's matched subset, and that subset is bounded twice — exactly
+        # D10): what a second pipe into `head -n1` would carry here is not
+        # $output but sed's matched subset, bounded twice over — exactly
         # one `read failed:` emitter exists per PR (:1138, whose branch
         # `exit 0`s on the next line), and read_failure_reason collapses
         # newlines and truncates at 300 characters. ~300 bytes fills no
