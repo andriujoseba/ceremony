@@ -406,12 +406,19 @@ changelog_assemble() {
     return 1
   fi
 
-  grouped_in="$(printf '%s\n' "$fragments" | while IFS= read -r f; do
+  # Herestring like the five sibling loops below, and for the same reason:
+  # the `break` is an early exit, so a pipe leaves the writer holding a
+  # fragment list nobody drains. Its consequence today is smaller than the
+  # rest of #411's — errexit does not fire inside the command substitution
+  # bin/changelog-assemble calls this through, and the break prints before
+  # the writer dies — but that is the caller's context and one bash's
+  # behaviour, neither a property of this line (#411 D9).
+  grouped_in="$(while IFS= read -r f; do
     if grep -q '^### ' "$f"; then
       printf '%s\n' "$f"
       break
     fi
-  done)"
+  done <<<"$fragments")"
   if [ -z "$grouped_in" ]; then
     while IFS= read -r f; do
       chunk="$(awk 'body || !/^[[:space:]]*$/ { body = 1; print }' "$f")"
