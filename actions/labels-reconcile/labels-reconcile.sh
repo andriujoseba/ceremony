@@ -1089,7 +1089,7 @@ main() {
   [ -z "$REPO_LABELS" ] && log "WARNING: could not read the label set — applying labels unfiltered"
   missing_core_labels_warning "$(core_label_rows)" "$REPO_LABELS"
 
-  local n output status total=0 unreadable=0 sampled_reason=""
+  local n output status total=0 unreadable=0 sampled_reason="" read_failures
   while IFS= read -r n; do
     [ -n "$n" ] || continue
     total=$((total + 1))
@@ -1169,7 +1169,13 @@ main() {
       unreadable=$((unreadable + 1))
       # the first observed reason stands in for the sweep in the blind warning
       if [ -z "$sampled_reason" ]; then
-        sampled_reason="$(sed -n "s/^labels: #$n: read failed: //p" <<<"$output" | head -n1)"
+        # No second pipe: `head -n1` exits at the first line, so sed takes
+        # EPIPE on a large $output and `pipefail` kills the substitution
+        # under `set -e` — losing the sampled reason, or the sweep. sed's
+        # writer is a command and takes no herestring, so capture it whole
+        # and cut the first line in the shell instead (#364, #411 D1).
+        read_failures="$(sed -n "s/^labels: #$n: read failed: //p" <<<"$output")"
+        sampled_reason="${read_failures%%$'\n'*}"
       fi
     elif [ "$status" -ne 0 ]; then
       log "#$n: reconcile failed — continuing with the remaining PRs"

@@ -117,7 +117,12 @@ derive_labels() { # $1 = "label<TAB>glob" lines, $2 = changed files (one per
   while IFS=$'\t' read -r label glob; do
     [ -n "$label" ] || continue
     case "$matched" in *$'\n'"$label"$'\n'*) continue ;; esac
-    if printf '%s\n' "$files" | grep -qE -- "$(glob_to_regex "$glob")"; then
+    # Herestring, never a pipe: `grep -qE` exits at the first matching path,
+    # so a pipe leaves printf writing the rest of a PR's changed-file list,
+    # EPIPE, and `pipefail` — armed above when this script is executed —
+    # fails the pipeline although grep matched. Inside this per-glob loop
+    # that is a scope label silently not applied, or a dead run (#364, #411).
+    if grep -qE -- "$(glob_to_regex "$glob")" <<<"$files"; then
       matched="$matched$label"$'\n'
       printf '%s\n' "$label"
     fi
