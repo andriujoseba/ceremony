@@ -306,8 +306,10 @@ At the close of round 5, in this order:
    round-answered event — and bring `## Round log` current. Push the fixes.
 2. **Do not re-request the panel.** The ordinary rule re-requests by head
    after a push; here the cut spends every approval, so a verdict bought on
-   the predecessor is a verdict on a PR that will never merge. The panel is
-   requested once, on the successor.
+   the predecessor is a verdict on a PR that will never merge. Nothing you do
+   on the predecessor asks for one — neither the request itself nor the
+   declaration that elsewhere produces it. The panel is requested once, on the
+   successor.
 3. **Edit the predecessor's body, `Closes #N` → `Refs #N`.** This is the one
    act that moves the close, and it happens **before** the close so the ledger
    never stands closed while claiming to close an issue it does not. That edit
