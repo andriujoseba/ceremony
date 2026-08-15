@@ -131,6 +131,13 @@ saw Y" outranks one that says "this looks like it might".
 - Review the **whole PR at the current head** each round, not just the diff
   since your last comments — the fix for someone else's point can break
   yours.
+- **Read the PR body's `## Round log` for what changed and why**, rather
+  than reconstructing it from the thread: `### Current state` is the PR as
+  it now stands and what is outstanding, and each `### Rounds` row carries
+  that round's head, verdicts, reply link, and what it was asked for and
+  what it did. It **does not** replace the rule above — you review the whole
+  PR at the current head either way, and where the summary and the tree
+  disagree the tree is what you are voting on (#418).
 - The builder answers rounds whole and re-requests you; until re-requested,
   the ball is not yours (`state:addressing` is the builder working — pile-on
   reviews mid-address just churn the target).
