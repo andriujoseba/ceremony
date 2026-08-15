@@ -12,6 +12,24 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.3 — 2026-08-15
+
+### Changed
+
+- Made vendored review and release doctrine self-contained by replacing cross-repository references with local records. (#408).
+
+### Fixed
+
+- Every early-exiting reader in `lib/changelog.sh` and the two label
+  actions is fed from a variable instead of a pipe. A reader that exits
+  early left its writer taking `EPIPE`, so `pipefail` failed the pipeline
+  although the reader had succeeded (#364, #411).
+- `changelog-armed` no longer fabricates a changelog shape violation
+  against a repository whose published section is large, and no longer
+  passes a real one in silence (#411).
+- A scope label whose glob matches early in a large PR's changed-file
+  list is applied instead of silently dropped (#411).
+
 ## 0.7.2 — 2026-08-13
 
 ### Added
