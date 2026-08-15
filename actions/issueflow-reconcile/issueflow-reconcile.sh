@@ -652,7 +652,7 @@ blocker_graph_records() { # $1 open numbers; board JSON on stdin -> blocker<TAB>
 }
 
 board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdin
-  # Emits family<TAB>carrier<TAB>state. The graph is blocker -> dependent, so
+  # Emits carrier<TAB>family<TAB>state. The graph is blocker -> dependent, so
   # a zero-indegree node is the chain head whose movement can release the
   # shape. Reachability is bounded by the open issue set and every DFS carries
   # a visited set; a malformed cycle therefore terminates instead of hanging
@@ -1078,11 +1078,11 @@ reconcile_board_flags() { # $1 issue, $2 concluded queue state — board flags (
   if board_flags_in_scope "$2"; then
     state="$(flag_for_issue "$n" "${COLLISION_FLAGS:-}")"
     if [ -n "$state" ]; then
-    marker="$(state_marker collision "$state")"
-    if state_echo_needed "$n" collision "$marker"; then
-      rendered="$(tr ',' '\n' <<<"$state" \
-        | awk -F= '{ print "- `" $1 "` — also carried by #" $2 }')"
-      run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
+      marker="$(state_marker collision "$state")"
+      if state_echo_needed "$n" collision "$marker"; then
+        rendered="$(tr ',' '\n' <<<"$state" \
+          | awk -F= '{ print "- `" $1 "` — also carried by #" $2 }')"
+        run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 This issue and the issue named beside each key below are both open and
 unblocked, and their titles name the same deliverable:
 
@@ -1103,15 +1103,15 @@ to one deliverable that is really two, say so and no edge is owed.
 
 *Comment only: nothing on this path writes a label or changes a state. The
 marker carries the collision itself, so an unchanged one never re-posts.*" >/dev/null
-      log "#$n: collision flag — $state"
-    fi
+        log "#$n: collision flag — $state"
+      fi
     fi
 
     state="$(flag_for_issue "$n" "${WINDOW_FLAGS:-}")"
     if [ -n "$state" ]; then
-    marker="$(state_marker window-nonmember "$state")"
-    if state_echo_needed "$n" window-nonmember "$marker"; then
-      run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
+      marker="$(state_marker window-nonmember "$state")"
+      if state_echo_needed "$n" window-nonmember "$marker"; then
+        run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 A release window is standing ($state) and this issue is neither one of its
 members nor an \`epic\` or \`post-merge\` issue.
 
@@ -1136,8 +1136,8 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
       # flight or not, which is the one wording #293 D3b went out of its way
       # to correct. The log line is read by a human deciding whether the
       # sweep understood the board, so it says what the predicate says.
-      log "#$n: window flag — an unblocked non-member under $state"
-    fi
+        log "#$n: window flag — an unblocked non-member under $state"
+      fi
     fi
   fi
 
@@ -1708,21 +1708,21 @@ main() {
     | awk -v state="$window_rendered" 'NF { print $1 "\t" state }')" || {
     rc=$?
     log "could not compute the board flags: the window flags"
-      return "$rc"
-    }
+    return "$rc"
+  }
   blocker_graph="$(blocker_graph_records "$issue_numbers" <<<"$board_json" \
     | sort -t $'\t' -k1,1n -k2,2n)" || {
-      rc=$?
-      log "could not compute the board flags: the blocker graph"
-      return "$rc"
-    }
+    rc=$?
+    log "could not compute the board flags: the blocker graph"
+    return "$rc"
+  }
   shape_board_records="$(sort -t $'\t' -k1,1n <<<"$BOARD_RECORDS")"
   SHAPE_FLAGS="$(board_shape_flags "$GRAPH_DEEP_THRESHOLD" "$blocker_graph" \
     <<<"$shape_board_records")" || {
-      rc=$?
-      log "could not compute the board flags: the graph shapes"
-      return "$rc"
-    }
+    rc=$?
+    log "could not compute the board flags: the graph shapes"
+    return "$rc"
+  }
   if [ -z "$issue_numbers" ]; then
     log "no open issues."
   else

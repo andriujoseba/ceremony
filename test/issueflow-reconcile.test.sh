@@ -3068,6 +3068,8 @@ check "the one deep threshold constant is greppable" 0 "1" \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 check "the deep flag text names the threshold number" 0 "" \
   grep -qF 'deep-chain threshold is **4**' "$BOARD/edits"
+check "a fired graph tripwire writes no label or queue state" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
 
 # A cycle is deliberately tested beside a ready issue so only the cycle
 # signal fires. Mutual reachability puts the comment on every member, and the
