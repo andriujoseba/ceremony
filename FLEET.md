@@ -169,9 +169,18 @@ builder wakes; they are duties of their own.
   an unchanged red head goes quiet after one attempt, through the
   `report_suppressed` path — suppressed, still said. A check that has not
   finished is **not** a red head and wakes nothing here: nothing has failed
-  yet, so there is no investigation to launch. How a red head is detected
-  and kept quiet is the engine's mechanism, described in crew's
-  `shared/README.md`, not here.
+  yet, so there is no investigation to launch. A head carrying `rerun-owed`
+  is **skipped**: the builder has already recorded that the rerun is a right
+  it does not hold, so waking it there is the stall in miniature, and the
+  skip is what lets the build wake below reach a new claim — the claim on
+  that PR's issue is parked ([BUILDER.md](BUILDER.md), shape 6). Only this
+  row skips: the build wake's hold on a red head is unchanged, so the round
+  at that head still waits. The label is what a **servicing** actor wakes on,
+  and that wake belongs to no row here — it is crew's to build
+  ([crew#295](https://github.com/heavy-duty/crew/issues/295)), and until it
+  exists the operator services the label by hand, which is today's cost minus
+  the silence. How a red head is detected and kept quiet is the engine's
+  mechanism, described in crew's `shared/README.md`, not here.
 - **Build**: a `ready` **unclaimed** issue (an assignee means mid-claim, not
   pickable), or a completed review round on my PR — a changes-request with
   no panel review request still outstanding; whole rounds, never single
