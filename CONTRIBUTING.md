@@ -24,7 +24,8 @@ discussion ──▶ triage ──▶ issue ──▶ build ──▶ review ─
   through any other door gets `needs-triage` and is normalized or converted
   back into a discussion.
 - **Builders turn one issue into an ordered chain of PRs**, normally one — a
-  round cap cuts a sixth round into a successor PR. [BUILDER.md](BUILDER.md).
+  five-round cap sends a sixth round to a successor PR, and the predecessor
+  closes as the ledger. [BUILDER.md](BUILDER.md).
 - **Reviewers converge on a verdict.** [REVIEWER.md](REVIEWER.md).
 - **Humans decide twice**: in the discussion (what is worth doing, and any
   call triage escalates back) and at the merge (whether it ships). Everything
