@@ -64,9 +64,9 @@ not to guess.
      red whose rerun you could have started, are ordinary fix rounds and hold
      the claim (#423).
   Not parked: waiting on yourself, on CI (a red head is yours unless shape 6
-  takes it; a pending one resolves without you), or for a good moment. An issue you stopped working
-  on is abandoned — unassign and restore `ready`. Parked claims are held
-  beside the one active build (#15, #16, #73).
+  takes it; a pending one resolves without you), or for a good moment. An
+  issue you stopped working on is abandoned — unassign and restore `ready`.
+  Parked claims are held beside the one active build (#15, #16, #73).
 
 ## Claiming
 
