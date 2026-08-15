@@ -651,43 +651,66 @@ blocker_graph_records() { # $1 open numbers; board JSON on stdin -> blocker<TAB>
     | .number' <<<"$board_json")
 }
 
-board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdin
+blocker_graph_releasing_issues() { # $1 open numbers; board JSON on stdin -> numbers
+  # A blocked issue with local declarations but no open local predecessor is
+  # about to take the existing blockers-cleared path. The graph snapshot is
+  # therefore stale for `idle` even before that issue's own turn arrives;
+  # suppress the board-wide fact for this pass rather than announce that
+  # nothing is claimable while the same pass makes something claimable (#426).
+  local open_numbers="$1" board_json n body refs
+  board_json="$(cat)"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    body="$(jq -r --argjson n "$n" '.[]
+      | select((has("pull_request") | not) and .number == $n)
+      | .body // ""' <<<"$board_json")"
+    refs="$(blocked_references <<<"$body")"
+    [ -n "$refs" ] || continue
+    blocked_cross_references <<<"$body" | grep -q . && continue
+    grep -qxFf <(printf '%s\n' "$open_numbers") <<<"$refs" || printf '%s\n' "$n"
+  done < <(jq -r '.[] | select(has("pull_request") | not)
+    | select((.labels // []) | map(.name) | index("blocked"))
+    | .number' <<<"$board_json")
+}
+
+board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on stdin
   # Emits carrier<TAB>family<TAB>state. The graph is blocker -> dependent, so
   # a zero-indegree node is the chain head whose movement can release the
-  # shape. Reachability is bounded by the open issue set and every DFS carries
-  # a visited set; a malformed cycle therefore terminates instead of hanging
-  # the hourly sweep (#426 D1-D2).
-  local threshold="$1" edges="$2"
-  awk -F '\t' -v threshold="$threshold" -v edges="$edges" '
+  # shape. Reachability remembers every visited vertex for one query, and the
+  # deep walk stops at the configured threshold. Both costs are therefore
+  # polynomial even on a branching graph, while malformed cycles terminate
+  # instead of hanging the hourly sweep (#426 D1-D2).
+  local threshold="$1" edges="$2" releasing="$3"
+  awk -F '\t' -v threshold="$threshold" -v edges="$edges" -v releasing="$releasing" '
     function has_label(labels, label) {
       return ("," labels "," ~ "," label ",")
     }
     function reaches(cur, target,    e,nxt) {
-      if (visiting[cur]) return 0
-      visiting[cur] = 1
+      if (reach_seen[cur]) return 0
+      reach_seen[cur] = 1
       for (e = 1; e <= edge_count; e++) {
         if (edge_from[e] != cur) continue
         nxt = edge_to[e]
-        if (nxt == target || reaches(nxt, target)) {
-          delete visiting[cur]
-          return 1
-        }
+        if (nxt == target || reaches(nxt, target)) return 1
       }
-      delete visiting[cur]
       return 0
     }
-    function longest(cur, depth, path,    e,nxt) {
-      if (depth > best_depth || (depth == best_depth && path < best_path)) {
-        best_depth = depth
-        best_path = path
+    function threshold_path(cur, depth, path,    e,nxt) {
+      if (depth >= threshold) {
+        found_path = path
+        return 1
       }
       path_seen[cur] = 1
       for (e = 1; e <= edge_count; e++) {
         if (edge_from[e] != cur) continue
         nxt = edge_to[e]
-        if (!path_seen[nxt]) longest(nxt, depth + 1, path " > #" nxt)
+        if (!path_seen[nxt] && threshold_path(nxt, depth + 1, path " > #" nxt)) {
+          delete path_seen[cur]
+          return 1
+        }
       }
       delete path_seen[cur]
+      return 0
     }
     BEGIN {
       count = split(edges, lines, "\n")
@@ -710,10 +733,16 @@ board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdi
       if (has_label($2, "ready") || has_label($2, "claimed")) movable_count++
     }
     END {
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        delete reach_seen
+        if (reaches(n, n)) cyclic[n] = 1
+      }
+
       # Idle is a board fact, but lands on each chain head where action can
       # change it. A graph made only of cycles has no head, so its blocked
       # members are the only actionable carriers and receive the same fact.
-      if (blocked_count > 0 && movable_count == 0) {
+      if (blocked_count > 0 && movable_count == 0 && releasing == "") {
         head_count = 0
         blocked_list = ""
         for (i = 1; i <= node_count; i++) {
@@ -722,7 +751,8 @@ board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdi
           if (blocked[n] && !indegree[n]) { idle_target[n] = 1; head_count++ }
         }
         if (head_count == 0)
-          for (i = 1; i <= node_count; i++) if (blocked[node_order[i]]) idle_target[node_order[i]] = 1
+          for (i = 1; i <= node_count; i++)
+            if (blocked[node_order[i]] && cyclic[node_order[i]]) idle_target[node_order[i]] = 1
         edge_list = ""
         for (i = 1; i <= edge_count; i++)
           edge_list = edge_list (edge_list ? "," : "") "#" edge_from[i] ">#" edge_to[i]
@@ -733,17 +763,16 @@ board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdi
         }
       }
 
-      # A head can feed branches; report its longest simple chain. The visited
-      # set makes this safe even when another branch rejoins or cycles.
+      # Deep is a threshold tripwire, not a longest-path report. Stop at the
+      # first deterministic threshold-long path: the constant bound prevents
+      # a branching DAG from turning the hourly audit exponential.
       for (i = 1; i <= node_count; i++) {
         n = node_order[i]
         if (indegree[n]) continue
-        best_depth = 0
-        best_path = ""
+        found_path = ""
         delete path_seen
-        longest(n, 1, "#" n)
-        if (best_depth >= threshold)
-          print n "\tdeep\t" best_depth ":" best_path
+        if (threshold_path(n, 1, "#" n))
+          print n "\tdeep\t≥" threshold ":" found_path
       }
 
       # Mutual reachability is the strongly connected component definition.
@@ -751,14 +780,13 @@ board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdi
       # while adding or removing a member speaks on every remaining carrier.
       for (i = 1; i <= node_count; i++) {
         n = node_order[i]
-        delete visiting
-        if (!reaches(n, n)) continue
+        if (!cyclic[n]) continue
         component = ""
         for (j = 1; j <= node_count; j++) {
           m = node_order[j]
-          delete visiting
+          delete reach_seen
           forward = (m == n || reaches(n, m))
-          delete visiting
+          delete reach_seen
           backward = (m == n || reaches(m, n))
           if (forward && backward) component = component (component ? "," : "") "#" m
         }
@@ -1141,9 +1169,13 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
     fi
   fi
 
+  # Emit only when this issue still has the queue state from which the board
+  # snapshot derived its flag. The same six-label set is concluded by
+  # reconcile_issue; omitting epic or needs-triage would silence stable heads,
+  # while an initially unlabeled issue correctly waits for the next pass.
   snapshot_state="$(awk -F '\t' -v n="$n" '$1 == n {
     split($2, labels, ",")
-    for (i in labels) if (labels[i] ~ /^(ready|claimed|blocked|post-merge)$/) print labels[i]
+    for (i in labels) if (labels[i] ~ /^(needs-triage|epic|ready|claimed|blocked|post-merge)$/) print labels[i]
   }' <<<"${BOARD_RECORDS:-}")"
   [ "$snapshot_state" = "$2" ] || return 0
   for family in idle deep cycle; do
@@ -1591,7 +1623,7 @@ main() {
       done)"
 
   local n tail_line issue_numbers board_json release_numbers rn window_records
-  local rc release_body window_rendered="" blocker_graph shape_board_records
+  local rc release_body window_rendered="" blocker_graph graph_releasing shape_board_records
   # The pre-loop region NAMES THE STAGE IT DIED IN before the status
   # propagates (#364 D8). Both runs of the 2026-08-10T04:24Z class emitted
   # `jq: error: writing output failed: Broken pipe` and an exit code after 61
@@ -1716,8 +1748,14 @@ main() {
     log "could not compute the board flags: the blocker graph"
     return "$rc"
   }
+  graph_releasing="$(blocker_graph_releasing_issues "$issue_numbers" <<<"$board_json" \
+    | sort -nu)" || {
+    rc=$?
+    log "could not compute the board flags: the releasing graph members"
+    return "$rc"
+  }
   shape_board_records="$(sort -t $'\t' -k1,1n <<<"$BOARD_RECORDS")"
-  SHAPE_FLAGS="$(board_shape_flags "$GRAPH_DEEP_THRESHOLD" "$blocker_graph" \
+  SHAPE_FLAGS="$(board_shape_flags "$GRAPH_DEEP_THRESHOLD" "$blocker_graph" "$graph_releasing" \
     <<<"$shape_board_records")" || {
     rc=$?
     log "could not compute the board flags: the graph shapes"

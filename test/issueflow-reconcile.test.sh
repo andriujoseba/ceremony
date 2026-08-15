@@ -3058,7 +3058,7 @@ board_issue 504 blocked 'delta.sh — fourth in the chain' 'Blocked by #503.'
 board_assemble 501 502 503 504
 deep_out="$(board_run)"
 check "a four-long chain flags its head" 0 \
-  'issueflow: #501: deep graph flag — 4:#501 > #502 > #503 > #504' \
+  'issueflow: #501: deep graph flag — ≥4:#501 > #502 > #503 > #504' \
   printf '%s\n' "$deep_out"
 check "the deep chain flags its head only" 0 "1" \
   flag_count deep "$deep_out"
@@ -3070,6 +3070,27 @@ check "the deep flag text names the threshold number" 0 "" \
   grep -qF 'deep-chain threshold is **4**' "$BOARD/edits"
 check "a fired graph tripwire writes no label or queue state" 1 "" \
   grep -qF 'issue edit' "$BOARD/edits"
+
+# A complete acyclic graph is the adversarial form for simple-path
+# enumeration: eighteen vertices previously exceeded the bound below. The
+# threshold walk has no reason to inspect paths after its fourth vertex.
+branch_records=""
+branch_edges=""
+for ((i = 601; i <= 618; i++)); do
+  if [ "$i" -eq 601 ]; then label=ready; else label=blocked; fi
+  branch_records+="${i}"$'\t'"${label}"$'\t'"branch-${i}"$'\n'
+  for ((j = i + 1; j <= 618; j++)); do
+    branch_edges+="${i}"$'\t'"${j}"$'\n'
+  done
+done
+branch_out="$(timeout 2 env BRANCH_RECORDS="$branch_records" BRANCH_EDGES="$branch_edges" \
+  bash -c 'source "$1"; board_shape_flags 4 "$BRANCH_EDGES" "" <<<"$BRANCH_RECORDS"' \
+  _ "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh")"
+branch_rc=$?
+check "a branching DAG is bounded rather than enumerating every simple path" 0 "" \
+  test "$branch_rc" -eq 0
+check "the bounded branching walk still finds the deep threshold" 0 \
+  $'601\tdeep\t≥4:#601 > #602 > #603 > #604' printf '%s\n' "$branch_out"
 
 # A cycle is deliberately tested beside a ready issue so only the cycle
 # signal fires. Mutual reachability puts the comment on every member, and the
@@ -3105,6 +3126,53 @@ check "the idle board flags its head only" 0 "1" flag_count idle "$idle_out"
 check "the idle remedy names the priority route" 0 "" \
   grep -qF "following #425's priority route" "$BOARD/edits"
 
+# A local predecessor absent from the open board is closed. That issue is on
+# the existing blocked -> ready path, so it contributes no graph edge and the
+# whole pre-pass idle snapshot stays silent while the same pass releases it.
+board_issue 540 blocked 'oscar.sh — closed predecessor releases' 'Blocked by #539.'
+board_issue 541 blocked 'papa.sh — external dependency remains' 'Blocked by other/repo#99.'
+board_assemble 540 541
+closed_predecessor_out="$(board_run)"
+check "a closed predecessor follows the existing release path" 0 \
+  'issueflow: #540: blockers closed -> ready' printf '%s\n' "$closed_predecessor_out"
+check "a releasing predecessor suppresses the stale board-wide idle fact" 1 "" \
+  grep -qF ': idle graph flag' <<<"$closed_predecessor_out"
+
+# Stable epic and needs-triage heads are graph carriers even though they are
+# not claimable. An unlabeled head changes to needs-triage during the pass and
+# correctly waits until the next snapshot before speaking.
+for head_state in epic needs-triage ''; do
+  board_issue 550 "$head_state" 'quebec.sh — non-queue chain head'
+  board_issue 551 blocked 'romeo.sh — second stable-state node' 'Blocked by #550.'
+  board_issue 552 blocked 'sierra.sh — third stable-state node' 'Blocked by #551.'
+  board_issue 553 blocked 'tango.sh — fourth stable-state node' 'Blocked by #552.'
+  board_assemble 550 551 552 553
+  stable_state_out="$(board_run)"
+  if [ -n "$head_state" ]; then
+    check "a stable $head_state head carries the deep flag" 0 \
+      'issueflow: #550: deep graph flag — ≥4:#550 > #551 > #552 > #553' \
+      printf '%s\n' "$stable_state_out"
+  else
+    check "an unlabeled head waits after becoming needs-triage" 1 "" \
+      grep -qF ': deep graph flag' <<<"$stable_state_out"
+  fi
+done
+
+# With no zero-indegree node, only the source cycle is actionable. A tail fed
+# by that cycle must not receive the idle comment as if every blocked member
+# were a carrier.
+board_issue 560 blocked 'uniform.sh — first source-cycle member' 'Blocked by #562.'
+board_issue 561 blocked 'victor.sh — second source-cycle member' 'Blocked by #560.'
+board_issue 562 blocked 'whiskey.sh — third source-cycle member' 'Blocked by #561.'
+board_issue 563 blocked 'xray.sh — cycle tail' 'Blocked by #562.'
+board_issue 564 blocked 'yankee.sh — cycle tail end' 'Blocked by #563.'
+board_assemble 560 561 562 563 564
+cycle_tail_out="$(board_run)"
+check "a headless cycle with a tail flags only the cycle as idle carriers" 0 "3" \
+  flag_count idle "$cycle_tail_out"
+check "the cycle tail receives no idle carrier comment" 1 "" \
+  grep -qE 'issueflow: #(563|564): idle graph flag' <<<"$cycle_tail_out"
+
 # The explicit quiet case from the issue: two ready issues and a two-deep
 # chain. Distinct deliverables keep the older collision flag out too, so any
 # board-flag output is a regression rather than fixture noise.
@@ -3121,7 +3189,7 @@ check "the graph tripwires never edit a label or queue state" 1 "" \
 # Persisting state is silent, but extending the same chain changes the marker
 # state and speaks. This is the existing per-family board-marker contract,
 # proved on the new family rather than inferred from collision/window tests.
-jq -n --arg b "<!-- issueflow:$(state_marker graph-deep '4:#501 > #502 > #503 > #504') -->
+jq -n --arg b "<!-- issueflow:$(state_marker graph-deep '≥4:#501 > #502 > #503 > #504') -->
 said already" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
   >"$BOARD/repos_owner_repo_issues_501_comments.json"
 board_assemble_keep 501 502 503 504
@@ -3132,9 +3200,8 @@ board_issue 505 blocked 'november.sh — a newly extended tail' 'Blocked by #504
 printf '[]\n' >"$BOARD/repos_owner_repo_issues_505_comments.json"
 board_assemble_keep 501 502 503 504 505
 deep_changed_out="$(board_run)"
-check "a changed deep shape speaks" 0 \
-  'issueflow: #501: deep graph flag — 5:#501 > #502 > #503 > #504 > #505' \
-  printf '%s\n' "$deep_changed_out"
+check "an extension beyond the threshold remains the same deep tripwire" 1 "" \
+  grep -qF 'issueflow: #501: deep graph flag' <<<"$deep_changed_out"
 check "every graph tripwire comment carries its own marker family" 0 "" \
   grep -qF '<!-- issueflow:graph-deep-' "$BOARD/edits"
 
