@@ -791,6 +791,69 @@ dispatch carries `bootstrap=no`). When a ceremony pin bump adds a core
 label, bump the pin first and then re-dispatch; the scheduled sweep warns
 when the pinned taxonomy declares a core label the repository lacks.
 
+## Rerun servicing
+
+**unreleased** (#424) — one more caller, adopted at the same pin as the two
+above and independent of them.
+
+A fork PR's `pull_request` run lives in the **base** repository, and rerunning
+it needs `actions: write` there. No fleet identity holds that right — builders
+are fork authors and the review bots measure `triage: true` and nothing more —
+so a head that is red on a flaky runner used to wait for a human to press the
+button. `rerun-owed` names that state; `ci-rerun.yml` services it. The builder
+sets the label with its evidence comment (`🔁 rerun owed at head <sha>`), and
+this workflow starts the one rerun, removes the label, and comments the new
+attempt's URL.
+
+Four gates are measured at service time and none is inherited from the label:
+the label's actor is a fleet identity named in this repository's own
+`.github/labels.conf` (`panel=`, `panel[<login>]=` or `triage-actors=`), the
+PR's head still is the one the evidence names, the newest non-successful run at
+that head concluded `failure` — a cancelled or in-flight run is not a verdict
+(#139, #209) — and that run is on attempt 1. **A refusal leaves the label
+standing** and comments which gate refused and what a human would have to do;
+only a started attempt clears it.
+
+The job holds a privileged token, so what it does is bounded by construction:
+it checks out this repository's default branch and the pinned ceremony
+implementation, never the PR head, runs no PR-authored code, and makes API
+calls only. There is no schedule and no retry — it acts on one label event and
+stops.
+
+```yaml
+name: ci-rerun
+on:
+  # pull_request_target, not pull_request: a fork PR's pull_request run holds a
+  # read-only token and can neither rerun a run nor remove the label.
+  pull_request_target:
+    types: [labeled]
+permissions:
+  contents: read        # .github/labels.conf (the fleet roster) and the implementation — never the head
+  actions: write        # the rerun no fork PR author can start; the whole reason this exists
+  pull-requests: write  # remove rerun-owed, post the outcome
+jobs:
+  ci-rerun:
+    uses: heavy-duty/ceremony/.github/workflows/ci-rerun.yml@<pinned-tag>
+```
+
+To route it, add one line under a `with:` key:
+
+```yaml
+with: { runner: '"ubuntu-22.04"' }
+with: { runner: '["self-hosted","ci-runner"]' } # choose one
+```
+
+**Copy the `permissions` block or the workflow refuses every time.** Naming any
+permission sets every unnamed one to `none`, and each of these three is load-
+bearing: without `actions: write` the rerun call comes back `403` and the
+workflow goes red with the label still standing; without `pull-requests: write`
+it can neither clear the label nor say why; without `contents: read` the
+checkout of this repository's default branch fails, so the job never reaches
+the gate that reads `.github/labels.conf` at all. A consumer that adopts the
+label without this caller
+gets the state and no servicing — which is where the fleet was before #424, and
+the operator services it by hand.
+
 ## Doctrine mirror
 
 Machinery is consumed by reference — GitHub fetches the workflows and
