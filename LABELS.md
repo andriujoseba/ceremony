@@ -23,7 +23,10 @@ and the reconciler recomputes it from GitHub's own facts.
 | `state:needs-human` | `#8250DF` | the human — **this PR could be merged right now**: zero blockers, whole panel approved the current head |
 
 `bots-reviewing` vs `addressing` is deliberate: staleness in the first means
-*poke the reviewers*, in the second *the builder dropped the ball*. And
+*poke the reviewers*, in the second *the builder dropped the ball* — unless a
+`rerun-owed` flag stands on that head, and then it means *poke whoever
+services the rerun*, because the builder there owes nothing until the rerun is
+made and its quiet is the flag's, not the builder's (#423). And
 `state:needs-human` means exactly one thing — a human could merge this now —
 so it requires zero blockers and head-current approvals; anything less and
 the reconciler takes it back. The author sets it at handoff (the one
@@ -35,7 +38,7 @@ write within seconds.
 | Label | Color | Means |
 |---|---|---|
 | `blocker:conflict` | `#B60205` | does not merge — the builder owes a **rebase** |
-| `blocker:ci-red` | `#B60205` | a check failed — the builder owes a **fix**, which a rebase will not provide |
+| `blocker:ci-red` | `#B60205` | a check failed — the builder owes a **fix**, which a rebase will not provide. Not asserted at a head carrying `rerun-owed`, where the builder owes nothing (#423) |
 | `blocker:unrequested` | `#E99695` | this head has no verdict from somebody, and nobody was asked |
 | `blocker:drill-pending` | `#B60205` | a `release` PR whose version has no `drills/X.Y.Z.md` record — correct but unevidenced (maintainer-created label; the bot bootstrap 403s on it) |
 
@@ -96,6 +99,7 @@ and re-entry does not set `attention`.
 | `blocked` | `#6A737D` | (see above — same label serves PRs waiting on another PR/issue; legitimately quiet, the staleness sweep skips it). The reconciler refuses `state:needs-human` while `blocked` stands — the PR falls to `state:addressing` (#180) |
 | `offsite` | `#CFD3D7` | issue deliverable is a PR in another repository; set by the builder with the draft link and cleared by the builder at handoff |
 | `needs-ruling` | `#D4C5F9` | a human-owned decision is required; use BUILDER.md's ruling template and ladder. Set by triage or the builder; a state, not a signal — it clears on agreement, not on a reply |
+| `rerun-owed` | `#D4C5F9` | PR-only: the head is red on a rerun no agent may start, so a human owes one API call and the builder owes nothing. Set by the builder with its evidence; cleared by the reconciler |
 | `attention` | `#D93F0B` | issue-only demand parked for the assignee; hand-set, and never written by the machine |
 | `release` | `#0E8A16` | release flow, versioning, packaging work — and the ceremony PR itself |
 | `merge-next` | `#0E8A16` | head of the merge queue — merge this one next. Queue order is *intent*: never set by the reconciler, only cleared by it |
@@ -170,6 +174,74 @@ still flagged, queue-label conflicts and missing queue state are still
 repaired, and epic-completion and PR-side stale behavior are unchanged. The
 sweep tells the assignee once when every visible cross-referenced PR has
 closed; it only tells, and never clears the flag or changes the claim.
+
+`rerun-owed` is PR-only and says the head is red on a run **no agent may
+restart**: a fork PR's checks live in the base repository, restarting them is a
+base-repo write right, and no fleet identity holds one. It asserts that the
+next move is one API call by a human and that the builder owes nothing until
+that call is made. It is **not** a `blocker:*` — every blocker names work the
+*builder* owes, which is that family's whole meaning — so while it stands the
+reconciler does not assert `blocker:ci-red` at that head. The head is still
+red: `state:needs-human` means a human could merge this now, and no red head
+reads it (#423).
+
+The **builder sets it**, in the same comment that records the check, its
+failure class and the rerun that could not be started; a flag with no such
+comment is noise, exactly as a bare `needs-ruling` is. That comment **opens by
+naming the head it is evidence for** —
+
+```
+🔁 rerun owed at head <full-sha>
+```
+
+— because the head is the label's whole subject and the machine has to read it.
+The marker is read only on comments by the pull request's **author**, which on
+a fleet PR is the builder the previous sentence names: a reviewer quoting the
+line back is quoting it, not raising a second flag.
+The **machine clears it** and nobody's memory does, on the first sweep where
+the head's checks are no longer failing *or* the named head is no longer this
+PR's head. It is the one hand-set label this machine removes, because its
+subject is a head and a head moves.
+
+The moved-head test is **identity, never recency**: it asks whether the
+evidenced SHA is still the head, not whether the head commit is newer than the
+flag. A commit's date is a field its author writes, so dating the two against
+each other would discard a valid flag under clock skew and keep a stale one
+after a reset onto an older red commit — and neither is a fact about which
+commit the branch points at. A head nobody named, or one the sweep could not
+read, leaves the question unjudged and the label standing: a label wrongly kept
+asks a human to look at a PR that is fine, a label wrongly cleared tells a
+builder to fix a tree that is not broken.
+
+It is **not exempt from the 48-hour staleness clock**, and that is the
+decision rather than an omission: the sweep's exemption is `blocked` and
+`needs-ruling` only, so a head standing under this flag draws `stale` like any
+other. The rule that decides it, written here so the next label does not have
+to re-derive it: **a flag is exempt from the 48-hour clock when it carries an
+escalation clock of its own.** `needs-ruling` has the ladder and the 7-day
+nudge; `blocked` has the sweep that flips it the moment its named dependency
+lands. Their silence is not merely legitimate, it is already watched.
+`rerun-owed` has neither, and until the servicing wake ships (FLEET.md) the
+rerun is made by hand — so `stale` at 48h is the only thing in this system
+that says a flag has stood unserviced too long, and exempting it would buy
+silence on a stalled PR, which is the precise defect this label exists to end.
+What the resulting `stale` **asks for is a poke of whoever services the
+rerun** — never a fix from the builder, who owes nothing at a head carrying
+this flag. `stale` names no actor of its own; the actor is this row's to
+supply, and so it does (#423).
+
+It is a label although a park is otherwise declared by comment, because this
+park's reader is a **queue** and a queue cannot read prose — the same reason
+`needs-ruling` and `offsite` are labels, and its color puts it in the same
+human axis they share.
+
+The bound is narrow and stated in both directions. A red head is the builder's
+by default: a deterministic failure is a fix round and carries
+`blocker:ci-red` as it always has, and a rerun that *could* be started is one
+the builder starts. The one rerun allowed per head is untouched — a second red
+at the same head after a serviced rerun is no longer retryable-unknown, so the
+flag does not go back up there — and a red head that follows a push is a new
+question the builder owns until it is freshly evidenced.
 
 `attention` is issue-only and says a demand is parked on an issue for its
 assignee. Anyone who needs that assignee's hands — triage, the operator, or a

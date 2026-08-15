@@ -1915,5 +1915,241 @@ sed 's/^panel=.*/panel=/' .github/labels.conf >"$BROKEN_CONF"
 expect "...and a malformed panel= line in that same file is refused, not passed" \
   PARSE:1 "$(live_panel_probe "$BROKEN_CONF")"
 
+# ---------------------------------------------------------------------------
+# rerun-owed — the red head nobody in the fleet can rerun (#423). A fork PR's
+# `pull_request` run lives in the BASE repo, so restarting it needs
+# `actions: write` there, which no fleet identity holds; GitHub answers the
+# permission miss with 404 on both rerun endpoints. `blocker:ci-red` says the
+# builder owes a fix, and on that head every word of it is false.
+#
+# The label is hand-set with its evidence and machine-cleared, which is the
+# contract these fixtures hold in both directions: the suppression must be
+# exactly as wide as the label, and the label must not outlive its head.
+# ---------------------------------------------------------------------------
+# The panel blocks above leave a foreign roster loaded, and a round read
+# against it comes out MISSING — which reads as state:addressing and would have
+# made several of these assertions pass for the wrong reason. Restore the
+# fixture roster first, the way the #205 block does for the same reason.
+load_config "$FIXTURE_CONF"
+set_required_bots "$FIXTURE_AUTHOR"
+# The heads this block moves between. Real SHAs, not the symbolic `head1` the
+# rest of this file uses, because one of the cases below is an ABBREVIATED head
+# in the evidence — and `head` is a prefix of `head1`, so a symbolic name would
+# make that case pass for a reason no real PR has.
+RERUN_HEAD=04843457bd88c326156e4b7fc9e6fe9e98007c95   # the head the evidence names
+RERUN_HEAD_NEW=9f2c1d7e6a5b4c3d2e1f0a9b8c7d6e5f40312233  # a push that lands after it
+RERUN_HEAD_OLD=1b6d0f3a2c4e5d7f8091a2b3c4d5e6f708192a3b  # ...and a reset BACK to an older one
+
+rerun_reviews() { # $1 = head → a whole panel approving exactly that head
+  reviews "$(rev "$BOT1" APPROVED "$1" "" t1)" \
+    "$(rev "$BOT2" APPROVED "$1" "" t2)" \
+    "$(rev "$BOT3" APPROVED "$1" "" t3)"
+}
+
+DRAFT=false HEAD_SHA="$RERUN_HEAD" REQUESTED="" MERGEABLE=MERGEABLE NOW="$RNOW"
+REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD")"
+RERUN_OWED_HEAD="$RERUN_HEAD"
+# The head commit's date is a lie in every case below, and no case may notice.
+# A commit's committer date is a field its author writes: an earlier draft of
+# this decided "the head moved" by comparing it with the flag's own `labeled`
+# event, which discarded a valid label under clock skew and kept a stale one
+# after a reset onto an older commit. Ten years in the future here, and an
+# ancient date on the reset case, are what pin that the clock is gone.
+HEAD_COMMIT_AT="$(iso_at $((RNOW + 315360000)))"
+
+# -- the bound, first: an ordinary red head is unchanged in every respect ----
+# This is the case the issue says must NOT move. If the amended machine ever
+# lets a red head with no evidenced label off the builder's plate, it is wrong,
+# and this block is where that shows.
+LABELS="" CHECKS=FAILURE
+expect "with no label the class does not exist" ABSENT "$(rerun_owed_state)"
+expect "...an ordinary red head still raises ci-red" blocker:ci-red "$(blockers)"
+expect "...and is still the builder's ball, approvals notwithstanding" \
+  state:addressing "$(decide_state)"
+
+# -- the label suppresses the blocker, and nothing else does -----------------
+LABELS=rerun-owed
+expect "an evidenced unrerunnable head stands under the label" STANDS \
+  "$(rerun_owed_state)"
+expect "...and blocker:ci-red is not asserted there" "" "$(blockers)"
+expect "...while the state stays the builder-or-human question, never merge-me" \
+  state:addressing "$(decide_state)"
+# the other direction, same head, same facts — the label is the whole delta
+LABELS=""
+expect "the same head with the label removed carries the blocker again" \
+  blocker:ci-red "$(blockers)"
+
+# -- it clears when the head's checks leave FAILURE --------------------------
+LABELS=rerun-owed CHECKS=SUCCESS
+expect "a head that went green owes no rerun" CLEARED "$(rerun_owed_state)"
+CHECKS=NONE
+expect "...nor does one with no checks configured" CLEARED "$(rerun_owed_state)"
+CHECKS=PENDING
+expect "...nor one whose checks are running again" CLEARED "$(rerun_owed_state)"
+
+# -- and when the head moves out from under the evidence ---------------------
+# The push that reds again is the only case the first test cannot reach: the
+# label would otherwise suppress a blocker for a failure nobody has evidenced.
+# "Moved" is IDENTITY here — is the evidenced head still the head — so both
+# directions of a move are the same question, and the second one is the reset
+# that the committer-date test used to get wrong.
+CHECKS=FAILURE HEAD_SHA="$RERUN_HEAD_NEW" REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD_NEW")"
+expect "a head that is not the evidenced one is a new question" CLEARED \
+  "$(rerun_owed_state)"
+expect "...and the blocker returns in the SAME pass that clears the label" \
+  blocker:ci-red "$(blockers)"
+HEAD_SHA="$RERUN_HEAD_OLD" REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD_OLD")"
+HEAD_COMMIT_AT="$(iso_at $((RNOW - 315360000)))"
+expect "a RESET onto an older commit moved the head too" CLEARED \
+  "$(rerun_owed_state)"
+expect "...and that head is red with nobody's evidence on it" blocker:ci-red \
+  "$(blockers)"
+# ...and the case the clock got wrong in the other direction: the head has not
+# moved, and no date its commit carries may say otherwise.
+HEAD_SHA="$RERUN_HEAD" REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD")"
+HEAD_COMMIT_AT="$(iso_at $((RNOW + 315360000)))"
+expect "an unmoved head stands whatever date its commit claims" STANDS \
+  "$(rerun_owed_state)"
+HEAD_COMMIT_AT=""
+expect "...and stands with no date read at all" STANDS "$(rerun_owed_state)"
+HEAD_COMMIT_AT="$(iso_at $((RNOW + 315360000)))"
+# an abbreviated head in the evidence names this head as surely as a whole one
+RERUN_OWED_HEAD=0484345
+expect "an abbreviated evidenced head is still this head" STANDS \
+  "$(rerun_owed_state)"
+RERUN_OWED_HEAD=9f2c1d7
+expect "...and an abbreviation of ANOTHER head still moved it" CLEARED \
+  "$(rerun_owed_state)"
+RERUN_OWED_HEAD="$RERUN_HEAD"
+
+# -- an unreadable fact never clears a label somebody evidenced --------------
+# The standing rule of this file, applied in the direction that costs least: a
+# label wrongly kept asks a human to look at a PR that is fine; a label wrongly
+# cleared tells a builder to fix a tree that is not broken.
+RERUN_OWED_HEAD=""
+expect "evidence naming no head leaves the moved-head test unjudged" STANDS \
+  "$(rerun_owed_state)"
+RERUN_OWED_HEAD="$RERUN_HEAD_OLD" HEAD_SHA=""
+expect "...and an unread head SHA is not a differing one" STANDS \
+  "$(rerun_owed_state)"
+HEAD_SHA="$RERUN_HEAD" RERUN_OWED_HEAD="$RERUN_HEAD"
+# ...and the whole way through, from evidence to verdict: a builder who names a
+# second head unreadably has superseded the first, so the pair names no head
+# and the label stands. The parse is asserted on its own below; this is the
+# consequence the label cares about, and it is what the two would-be-cleared
+# heads make interesting — neither the old marker's head nor a readable new one
+# may be what the state decides on.
+RERUN_OWED_HEAD="$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD_OLD}" \
+  "${RERUN_OWED_MARKER}not-a-sha" | rerun_owed_named_head)"
+expect "an older marker superseded unreadably leaves the label standing" STANDS \
+  "$(rerun_owed_state)"
+RERUN_OWED_HEAD="$RERUN_HEAD"
+
+# -- the evidence parse, driven rather than read -----------------------------
+# What the sweep hands this function is one line per comment BY THE PR AUTHOR,
+# already reduced to its first line: a marker is how a comment declares itself,
+# so a SHA quoted mid-prose is prose. Newest wins, the order the comments API
+# returns.
+expect "a bare marker names its head" "$RERUN_HEAD" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}${RERUN_HEAD}")"
+expect "...backticked, as this repo writes a SHA" "$RERUN_HEAD" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}\`$RERUN_HEAD\` — actions/rerun 404s")"
+expect "...abbreviated, at git's own floor of seven" 0484345 \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}0484345.")"
+expect "...upper-case, as a paste from a UI can be" "$RERUN_HEAD" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}04843457BD88C326156E4B7FC9E6FE9E98007C95")"
+expect "the newest marker is the one that counts" "$RERUN_HEAD_NEW" \
+  "$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD}" \
+    "${RERUN_OWED_MARKER}${RERUN_HEAD_NEW}" | rerun_owed_named_head)"
+# ...including when the newest names no readable head: it supersedes anyway, so
+# the pair reads as UNJUDGED and the label stands. An older marker surviving a
+# newer unreadable one would clear a live label on a head nobody currently
+# names, which is the one direction this parse may not take.
+expect "a newer unreadable marker supersedes an older valid one" "" \
+  "$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD}" \
+    "${RERUN_OWED_MARKER}not-a-sha" | rerun_owed_named_head)"
+expect "...and so does a newer one whose head is too short" "" \
+  "$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD}" \
+    "${RERUN_OWED_MARKER}048434" | rerun_owed_named_head)"
+expect "a comment that is not the marker names nothing" "" \
+  "$(printf '%s\n' "🔨 Worklog — the rerun 404s at $RERUN_HEAD" | rerun_owed_named_head)"
+# ...and the same, in the two shapes that would name a head if the marker were
+# read loosely: a line that merely OPENS with a SHA, and the marker quoted
+# inside a sentence. A builder's other comments are full of both.
+expect "...nor a line that merely opens with a SHA" "" \
+  "$(rerun_owed_named_head <<<"$RERUN_HEAD is red and both rerun endpoints 404")"
+expect "...nor the marker quoted inside a sentence" "" \
+  "$(rerun_owed_named_head <<<"I posted ${RERUN_OWED_MARKER}${RERUN_HEAD} an hour ago")"
+expect "...nor does a marker with too short a head" "" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}048434")"
+expect "...nor one whose head is not hex at all" "" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}the head above")"
+expect "...nor one naming no head whatsoever" "" \
+  "$(rerun_owed_named_head <<<"$RERUN_OWED_MARKER")"
+expect "no comments at all name no head" "" "$(rerun_owed_named_head </dev/null)"
+
+# -- must fail: rerun-owed reaching the blocker set, by any of its three doors
+# The array itself. Read from the shipped array rather than a hand-listed copy,
+# so a later edit that adds the name is what reds this.
+expect "rerun-owed is not in BLOCKERS" no \
+  "$(printf '%s\n' "${BLOCKERS[@]}" | grep -qxF rerun-owed && echo yes || echo no)"
+expect "...and the taxonomy the action writes still ships its row" yes \
+  "$(core_label_rows | cut -d'|' -f1 | grep -qxF rerun-owed && echo yes || echo no)"
+# needs-human's refusal set. The label alone must disqualify nothing — a label
+# that stops a handoff is acting as a blocker, and this one is not one. What
+# refuses the handoff is the RED HEAD, which refused it before this label
+# existed and refuses it identically now.
+LABELS=rerun-owed CHECKS=SUCCESS
+expect "the label alone never takes a green passed round off the human" \
+  state:needs-human "$(decide_state)"
+LABELS="rerun-owed
+blocked"
+expect "...while the labels that ARE refusals still refuse" state:addressing \
+  "$(decide_state)"
+# the zero-delta claim for decide_state's new FAILURE clause: on every PR
+# without the label the answer is what the blocker used to produce
+LABELS="" CHECKS=FAILURE
+expect "a red head refuses needs-human with no label in sight" state:addressing \
+  "$(decide_state)"
+# the take-back predicate. Its set is blockers(), so the suppressed case
+# reports nothing — the same silence needs-ruling and blocked already get,
+# because the visible label is the why.
+LABELS="state:needs-human
+rerun-owed"
+expect "the suppressed take-back names no blocker" "" "$(handoff_taken_back)"
+LABELS=state:needs-human
+expect "...while the unlabelled one still names ci-red (control)" blocker:ci-red \
+  "$(handoff_taken_back)"
+
+# -- and through the whole of reconcile_pr, where the edit is the deliverable
+# The pure functions above say what the pass should decide; these say what it
+# WRITES. One edit call either way: the clear and the blocker that returns with
+# it are one transition, and a board that showed neither for a moment would be
+# the same lie by another route.
+RERUN_OWED_HEAD=tbhead0
+moved="$(takeback_probe 120 "state:needs-human
+rerun-owed" tbhead1 approve FAILURE)"
+expect "a head the evidence does not name clears the label" yes \
+  "$(grep -q -- '--remove-label state:needs-human,rerun-owed' "$TB/edits-120" \
+    && echo yes || echo no)"
+expect "...and raises the blocker in the same call" yes \
+  "$(grep -q -- '--add-label state:addressing,blocker:ci-red' "$TB/edits-120" \
+    && echo yes || echo no)"
+expect "...which is exactly one call, not two passes" 1 "$(edit_count 120)"
+expect "...logged as the transition it is" yes \
+  "$(grep -q 'cleared state:needs-human,rerun-owed' <<<"$moved" && echo yes || echo no)"
+RERUN_OWED_HEAD=tbhead1
+standing="$(takeback_probe 121 "state:needs-human
+rerun-owed" tbhead1 approve FAILURE)"
+expect "a standing flag keeps its label through the pass" no \
+  "$(grep -q -- 'rerun-owed' "$TB/edits-121" && echo yes || echo no)"
+expect "...takes the false merge-me claim back anyway" yes \
+  "$(grep -q 'state -> state:addressing' <<<"$standing" && echo yes || echo no)"
+expect "...raising no blocker while it stands" no \
+  "$(grep -q -- 'blocker:ci-red' "$TB/edits-121" && echo yes || echo no)"
+expect "...and says nothing, because the label already says it" 0 \
+  "$(posted_count 121)"
+LABELS="" HEAD_COMMIT_AT=2026-08-03T11:00:00Z RERUN_OWED_HEAD=""
+
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

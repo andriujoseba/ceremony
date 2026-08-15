@@ -21,13 +21,19 @@ not to guess.
   failure unchanged; treat a branch failure as an ordinary fix round,
   worklog and all; leave evidence where a rerun cannot start or the cause is
   unclear; never rerun a deterministic failure without a corrective commit;
-  hand off once green with current-head approvals. Such a PR is **never
-  parked**, whatever the verdict state says; how the engine detects a red
-  head is crew's to describe.
+  hand off once green with current-head approvals. Where the rerun cannot be
+  started **because starting it is a right you do not hold**, that same
+  evidence comment sets `rerun-owed` ([LABELS.md](LABELS.md)) and the claim
+  parks as shape 6 below — the one red head that does. Open that comment with
+  `🔁 rerun owed at head <full-sha>`: the machine clears the flag when that
+  head stops being the head, so evidence that names no head is a flag nothing
+  can ever take off. Such a PR is **never parked** on any other ground,
+  whatever the verdict state says; how the engine detects a red head is
+  crew's to describe.
 - **One build at a time**: one issue on which you are writing or revising a
   deliverable, finished or released before you start more. The rule counts
   work in flight, not claims — a **parked** claim, whose next move is
-  someone else's, does not hold the slot. Five shapes park:
+  someone else's, does not hold the slot. Six shapes park:
   1. `needs-ruling` is set, the escalation names a decider, and its
      `Blocked:` line stops the rest;
   2. a **live** review round holds it, every outstanding verdict someone
@@ -52,10 +58,18 @@ not to guess.
      read, their timestamps and their actor. Where they do not resolve the
      contradiction, say so and take the next `ready` issue; refusing is no
      resting place.
-  Not parked: waiting on yourself, on CI (a red head is yours; a pending one
-  resolves without you), or for a good moment. An issue you stopped working
-  on is abandoned — unassign and restore `ready`. Parked claims are held
-  beside the one active build (#15, #16, #73).
+  6. the head is **red on a rerun you may not start** — the failure class is
+     infrastructure or the rerun could not be started at all, the evidence is
+     posted and names its head, and `rerun-owed` is set. The claim parks and
+     the slot frees, because the next move is one API call by a human and no
+     push of yours produces it. The bound is the whole of the shape: only a
+     head whose next move is a **right you do not hold** parks, so a
+     deterministic red, and a red whose rerun you could have started, are
+     ordinary fix rounds and hold the claim (#423).
+  Not parked: waiting on yourself, on CI (a red head is yours unless shape 6
+  takes it; a pending one resolves without you), or for a good moment. An
+  issue you stopped working on is abandoned — unassign and restore `ready`.
+  Parked claims are held beside the one active build (#15, #16, #73).
 
 ## Claiming
 
@@ -66,8 +80,10 @@ not to guess.
 - **A park is declared, never inferred.** Comment naming what the claim
   waits on and who owns the next move — no new label; the comment is the
   activity the reclaim clock reads, as for `needs-ruling` (#52) and
-  `offsite` (#68). Shape 4 is exempt: the handoff comment and
-  `state:needs-human` already say both.
+  `offsite` (#68). Shape 6 is the exception and sets `rerun-owed` beside its
+  comment, because that park's reader is a queue and a queue cannot read
+  prose — which is why those two are labels as well (#423). Shape 4 is
+  exempt: the handoff comment and `state:needs-human` already say both.
 - **A declaration stands until the park's facts change**, so a resumption
   finding nothing changed posts nothing (#177). Each change owes one comment
   — the wait resolves or changes hands, the shape changes, the claim
