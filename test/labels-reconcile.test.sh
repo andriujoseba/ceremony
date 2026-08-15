@@ -1932,12 +1932,30 @@ expect "...and a malformed panel= line in that same file is refused, not passed"
 # fixture roster first, the way the #205 block does for the same reason.
 load_config "$FIXTURE_CONF"
 set_required_bots "$FIXTURE_AUTHOR"
-RERUN_LABELED_AT="$(iso_at $((RNOW - 3600)))"    # the flag went up an hour ago
-RERUN_HEAD_BEFORE="$(iso_at $((RNOW - 7200)))"   # ...on a head pushed before it
-RERUN_HEAD_AFTER="$(iso_at $((RNOW - 600)))"     # ...and a push that came after
-DRAFT=false HEAD_SHA=head1 REQUESTED="" MERGEABLE=MERGEABLE NOW="$RNOW"
-REVIEWS_JSON="$ALL_APPROVE"
-HEAD_COMMIT_AT="$RERUN_HEAD_BEFORE" RERUN_OWED_AT="$RERUN_LABELED_AT"
+# The heads this block moves between. Real SHAs, not the symbolic `head1` the
+# rest of this file uses, because one of the cases below is an ABBREVIATED head
+# in the evidence — and `head` is a prefix of `head1`, so a symbolic name would
+# make that case pass for a reason no real PR has.
+RERUN_HEAD=04843457bd88c326156e4b7fc9e6fe9e98007c95   # the head the evidence names
+RERUN_HEAD_NEW=9f2c1d7e6a5b4c3d2e1f0a9b8c7d6e5f40312233  # a push that lands after it
+RERUN_HEAD_OLD=1b6d0f3a2c4e5d7f8091a2b3c4d5e6f708192a3b  # ...and a reset BACK to an older one
+
+rerun_reviews() { # $1 = head → a whole panel approving exactly that head
+  reviews "$(rev "$BOT1" APPROVED "$1" "" t1)" \
+    "$(rev "$BOT2" APPROVED "$1" "" t2)" \
+    "$(rev "$BOT3" APPROVED "$1" "" t3)"
+}
+
+DRAFT=false HEAD_SHA="$RERUN_HEAD" REQUESTED="" MERGEABLE=MERGEABLE NOW="$RNOW"
+REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD")"
+RERUN_OWED_HEAD="$RERUN_HEAD"
+# The head commit's date is a lie in every case below, and no case may notice.
+# A commit's committer date is a field its author writes: an earlier draft of
+# this decided "the head moved" by comparing it with the flag's own `labeled`
+# event, which discarded a valid label under clock skew and kept a stale one
+# after a reset onto an older commit. Ten years in the future here, and an
+# ancient date on the reset case, are what pin that the clock is gone.
+HEAD_COMMIT_AT="$(iso_at $((RNOW + 315360000)))"
 
 # -- the bound, first: an ordinary red head is unchanged in every respect ----
 # This is the case the issue says must NOT move. If the amended machine ever
@@ -1969,31 +1987,78 @@ expect "...nor does one with no checks configured" CLEARED "$(rerun_owed_state)"
 CHECKS=PENDING
 expect "...nor one whose checks are running again" CLEARED "$(rerun_owed_state)"
 
-# -- and when the head moves under it ---------------------------------------
+# -- and when the head moves out from under the evidence ---------------------
 # The push that reds again is the only case the first test cannot reach: the
 # label would otherwise suppress a blocker for a failure nobody has evidenced.
-CHECKS=FAILURE HEAD_COMMIT_AT="$RERUN_HEAD_AFTER"
-expect "a head pushed after the flag is a new question" CLEARED "$(rerun_owed_state)"
+# "Moved" is IDENTITY here — is the evidenced head still the head — so both
+# directions of a move are the same question, and the second one is the reset
+# that the committer-date test used to get wrong.
+CHECKS=FAILURE HEAD_SHA="$RERUN_HEAD_NEW" REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD_NEW")"
+expect "a head that is not the evidenced one is a new question" CLEARED \
+  "$(rerun_owed_state)"
 expect "...and the blocker returns in the SAME pass that clears the label" \
   blocker:ci-red "$(blockers)"
-HEAD_COMMIT_AT="$RERUN_LABELED_AT"
-expect "a head dated exactly at the flag has not moved under it" STANDS \
+HEAD_SHA="$RERUN_HEAD_OLD" REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD_OLD")"
+HEAD_COMMIT_AT="$(iso_at $((RNOW - 315360000)))"
+expect "a RESET onto an older commit moved the head too" CLEARED \
   "$(rerun_owed_state)"
-HEAD_COMMIT_AT="$RERUN_HEAD_BEFORE"
+expect "...and that head is red with nobody's evidence on it" blocker:ci-red \
+  "$(blockers)"
+# ...and the case the clock got wrong in the other direction: the head has not
+# moved, and no date its commit carries may say otherwise.
+HEAD_SHA="$RERUN_HEAD" REVIEWS_JSON="$(rerun_reviews "$RERUN_HEAD")"
+HEAD_COMMIT_AT="$(iso_at $((RNOW + 315360000)))"
+expect "an unmoved head stands whatever date its commit claims" STANDS \
+  "$(rerun_owed_state)"
+HEAD_COMMIT_AT=""
+expect "...and stands with no date read at all" STANDS "$(rerun_owed_state)"
+HEAD_COMMIT_AT="$(iso_at $((RNOW + 315360000)))"
+# an abbreviated head in the evidence names this head as surely as a whole one
+RERUN_OWED_HEAD=0484345
+expect "an abbreviated evidenced head is still this head" STANDS \
+  "$(rerun_owed_state)"
+RERUN_OWED_HEAD=9f2c1d7
+expect "...and an abbreviation of ANOTHER head still moved it" CLEARED \
+  "$(rerun_owed_state)"
+RERUN_OWED_HEAD="$RERUN_HEAD"
 
 # -- an unreadable fact never clears a label somebody evidenced --------------
 # The standing rule of this file, applied in the direction that costs least: a
 # label wrongly kept asks a human to look at a PR that is fine; a label wrongly
 # cleared tells a builder to fix a tree that is not broken.
-HEAD_COMMIT_AT=""
-expect "an unread head date leaves the moved-head test unjudged" STANDS \
+RERUN_OWED_HEAD=""
+expect "evidence naming no head leaves the moved-head test unjudged" STANDS \
   "$(rerun_owed_state)"
-HEAD_COMMIT_AT=null
-expect "...and jq's literal null is unread, not epoch zero" STANDS \
+RERUN_OWED_HEAD="$RERUN_HEAD_OLD" HEAD_SHA=""
+expect "...and an unread head SHA is not a differing one" STANDS \
   "$(rerun_owed_state)"
-HEAD_COMMIT_AT="$RERUN_HEAD_AFTER" RERUN_OWED_AT=""
-expect "an unreadable timeline leaves it unjudged too" STANDS "$(rerun_owed_state)"
-RERUN_OWED_AT="$RERUN_LABELED_AT" HEAD_COMMIT_AT="$RERUN_HEAD_BEFORE"
+HEAD_SHA="$RERUN_HEAD" RERUN_OWED_HEAD="$RERUN_HEAD"
+
+# -- the evidence parse, driven rather than read -----------------------------
+# What the sweep hands this function is one line per comment BY THE PR AUTHOR,
+# already reduced to its first line: a marker is how a comment declares itself,
+# so a SHA quoted mid-prose is prose. Newest wins, the order the comments API
+# returns.
+expect "a bare marker names its head" "$RERUN_HEAD" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}${RERUN_HEAD}")"
+expect "...backticked, as this repo writes a SHA" "$RERUN_HEAD" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}\`$RERUN_HEAD\` — actions/rerun 404s")"
+expect "...abbreviated, at git's own floor of seven" 0484345 \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}0484345.")"
+expect "...upper-case, as a paste from a UI can be" "$RERUN_HEAD" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}04843457BD88C326156E4B7FC9E6FE9E98007C95")"
+expect "the newest marker is the one that counts" "$RERUN_HEAD_NEW" \
+  "$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD}" \
+    "${RERUN_OWED_MARKER}${RERUN_HEAD_NEW}" | rerun_owed_named_head)"
+expect "a comment that is not the marker names nothing" "" \
+  "$(printf '%s\n' "🔨 Worklog — the rerun 404s at $RERUN_HEAD" | rerun_owed_named_head)"
+expect "...nor does a marker with too short a head" "" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}048434")"
+expect "...nor one whose head is not hex at all" "" \
+  "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}the head above")"
+expect "...nor one naming no head whatsoever" "" \
+  "$(rerun_owed_named_head <<<"$RERUN_OWED_MARKER")"
+expect "no comments at all name no head" "" "$(rerun_owed_named_head </dev/null)"
 
 # -- must fail: rerun-owed reaching the blocker set, by any of its three doors
 # The array itself. Read from the shipped array rather than a hand-listed copy,
@@ -2033,10 +2098,10 @@ expect "...while the unlabelled one still names ci-red (control)" blocker:ci-red
 # WRITES. One edit call either way: the clear and the blocker that returns with
 # it are one transition, and a board that showed neither for a moment would be
 # the same lie by another route.
-HEAD_COMMIT_AT="$RERUN_HEAD_AFTER" RERUN_OWED_AT="$RERUN_LABELED_AT"
+RERUN_OWED_HEAD=tbhead0
 moved="$(takeback_probe 120 "state:needs-human
 rerun-owed" tbhead1 approve FAILURE)"
-expect "a moved head clears the label" yes \
+expect "a head the evidence does not name clears the label" yes \
   "$(grep -q -- '--remove-label state:needs-human,rerun-owed' "$TB/edits-120" \
     && echo yes || echo no)"
 expect "...and raises the blocker in the same call" yes \
@@ -2045,7 +2110,7 @@ expect "...and raises the blocker in the same call" yes \
 expect "...which is exactly one call, not two passes" 1 "$(edit_count 120)"
 expect "...logged as the transition it is" yes \
   "$(grep -q 'cleared state:needs-human,rerun-owed' <<<"$moved" && echo yes || echo no)"
-HEAD_COMMIT_AT="$RERUN_HEAD_BEFORE"
+RERUN_OWED_HEAD=tbhead1
 standing="$(takeback_probe 121 "state:needs-human
 rerun-owed" tbhead1 approve FAILURE)"
 expect "a standing flag keeps its label through the pass" no \
@@ -2056,7 +2121,7 @@ expect "...raising no blocker while it stands" no \
   "$(grep -q -- 'blocker:ci-red' "$TB/edits-121" && echo yes || echo no)"
 expect "...and says nothing, because the label already says it" 0 \
   "$(posted_count 121)"
-LABELS="" HEAD_COMMIT_AT=2026-08-03T11:00:00Z RERUN_OWED_AT=""
+LABELS="" HEAD_COMMIT_AT=2026-08-03T11:00:00Z RERUN_OWED_HEAD=""
 
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

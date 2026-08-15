@@ -51,10 +51,15 @@ BLOCKERS=(blocker:conflict blocker:ci-red blocker:unrequested)
 # fixtures call decide_state — which now reads has_label — without ever
 # setting it (#51). An empty default keeps has_label honest for every caller.
 LABELS=""
-# The newest `labeled` event for `rerun-owed` on this PR, ISO-8601; empty when
-# the PR does not carry the label, or the timeline could not be read. Read only
-# on PRs carrying the label — one API call, paid by the few (#423).
-RERUN_OWED_AT=""
+# The head SHA named by the newest `rerun-owed` evidence comment on this PR;
+# empty when the PR does not carry the label, no evidence names a head, or the
+# comments could not be read. Read only on PRs carrying the label — one API
+# call, paid by the few (#423).
+RERUN_OWED_HEAD=""
+# What that evidence comment opens with. A marker, not a prose match: the head
+# it names is a fact the machine acts on, so it is written where a machine can
+# read it, in the shape this repo's other head-scoped markers already use.
+RERUN_OWED_MARKER='🔁 rerun owed at head '
 # Labels this machine used to own and no longer does. Cleared on sight so a
 # retirement heals the board instead of stranding a label nothing recomputes.
 RETIRED=(state:needs-rebase)
@@ -499,24 +504,56 @@ rerun_owed_state() { # → STANDS | CLEARED | ABSENT — what `rerun-owed` says 
   #   this second one is for the push that reds again, where the label would
   #   otherwise suppress blocker:ci-red for a failure nobody has evidenced.
   #
-  # "The head moved" is measured as the head commit being NEWER than the label's
-  # own `labeled` event, which is the ordering the act produces: the builder
-  # reads a red head, then sets the label. Neither timestamp readable leaves the
-  # question unjudged and the label standing — an unreadable fact never invents
-  # a verdict, and here the error directions are not symmetric: a label wrongly
-  # kept asks a human to look at a PR that is fine, a label wrongly cleared
-  # tells the builder to fix a tree that is not broken, which is the defect
-  # this label exists to end.
+  # "The head moved" is a question about IDENTITY and is answered with identity:
+  # the evidence names its head, and this asks whether that is still the head.
+  # It deliberately does not ask whether the head commit is NEWER than the flag,
+  # which an earlier draft of this did: a commit's date is a field its author
+  # writes, so that test both discarded a valid label under clock skew and let
+  # the label suppress blocker:ci-red after a reset onto an older red commit —
+  # neither of which is a fact about which commit the branch points at (#423).
+  #
+  # A head not named, not read, or named unreadably leaves the question unjudged
+  # and the label standing — an unread fact never invents a verdict, and here
+  # the error directions are not symmetric: a label wrongly kept asks a human to
+  # look at a PR that is fine, a label wrongly cleared tells a builder to fix a
+  # tree that is not broken, which is the defect this label exists to end.
   has_label rerun-owed || { echo ABSENT; return; }
   case "${CHECKS:-NONE}" in FAILURE) ;; *) echo CLEARED; return ;; esac
-  local head_epoch labeled_epoch
-  if head_epoch="$(iso_epoch "${HEAD_COMMIT_AT:-}")" &&
-    labeled_epoch="$(iso_epoch "${RERUN_OWED_AT:-}")" &&
-    [ "$head_epoch" -gt "$labeled_epoch" ]; then
+  local named="${RERUN_OWED_HEAD:-}" head="${HEAD_SHA:-}"
+  # Prefix, not equality: a marker naming an abbreviated SHA names this head as
+  # surely as a full one, and reading it as a moved head would clear a label on
+  # a spelling. Both empty-guards are load-bearing — an unread head SHA is not
+  # a differing one.
+  if [ -n "$named" ] && [ -n "$head" ] &&
+    [ "${head:0:${#named}}" != "$named" ]; then
     echo CLEARED
     return
   fi
   echo STANDS
+}
+
+rerun_owed_named_head() { # evidence first-lines on stdin → the head the newest names
+  # Pure, so the fixtures can drive the parse rather than the API around it, and
+  # split off here for the reason lib/attention.sh splits attention_newest_flag
+  # off: the read either worked or it did not, and that is the caller's problem,
+  # never a shape this function has to infer from an empty line.
+  #
+  # Newest wins, which is the order the comments API returns: a builder who
+  # re-evidences a second unrerunnable head on the same PR has said something
+  # newer, and the older marker is history.
+  local line rest sha=""
+  while IFS= read -r line; do
+    case "$line" in "$RERUN_OWED_MARKER"*) ;; *) continue ;; esac
+    rest="${line#"$RERUN_OWED_MARKER"}"
+    rest="${rest#\`}"                # the house style backticks a SHA
+    rest="${rest,,}"                 # ...and a pasted one may be upper-case
+    rest="${rest%%[!0-9a-f]*}"       # everything after the hex run is prose
+    # A marker whose head is not a SHA names no head. Seven is git's own floor
+    # for an abbreviation and forty is a whole one; outside that the line is
+    # decoration somebody wrote, not a fact to clear a label on.
+    if [ "${#rest}" -ge 7 ] && [ "${#rest}" -le 40 ]; then sha="$rest"; fi
+  done
+  [ -z "$sha" ] || echo "$sha"
 }
 
 blockers() { # → the blocker:* labels this PR should carry, one per line
@@ -829,12 +866,12 @@ state:needs-human|8250DF|No blockers, all bots approve — waiting on the human 
 blocker:conflict|B60205|Does not merge — the branch conflicts and the agent owes a rebase
 blocker:ci-red|B60205|A check is failing — the agent owes a fix (not a rebase)
 blocker:unrequested|E99695|Somebody still owes a verdict and nobody was asked for one
-rerun-owed|D4C5F9|The head is red on a rerun no agent may start — a human owes the button, not the builder a fix
 merge-next|0E8A16|Head of the merge queue — merge this one next (set by hand/agent, cleared here)
 stale|B60205|No activity for 48h — needs a poke (sweep-managed)
 blocked|6A737D|Waiting on another PR or issue to land first
 offsite|CFD3D7|Issue deliverable is a PR in another repository — claim clock paused
 needs-ruling|D4C5F9|A human decision is pending — question, options and a recommendation are in the comment
+rerun-owed|D4C5F9|The head is red on a rerun no agent may start — a human owes the button, not the builder a fix
 attention|D93F0B|A demand is parked here for the assignee: pick up the thread, ack by removing this label
 release|0E8A16|Release flow and version/packaging work
 needs-triage|FBCA04|Did not come through triage — owes normalization or conversion to a discussion
@@ -1238,11 +1275,7 @@ main() {
       # which never reach that blocker. Empty (a failed read, or a body without
       # the field) leaves the blocker unjudged, by unrequested_quiescent.
       HEAD_COMMIT_AT=""
-      # A draft normally skips this read (it reaches no blocker that needs it),
-      # but `rerun-owed` dates the head against its own labeled event (#423) and
-      # a fix round may ride a draft — so a draft carrying the label pays for
-      # the read too, or its label could never clear on a moved head.
-      if [ "$DRAFT" != true ] || has_label rerun-owed; then
+      if [ "$DRAFT" != true ]; then
         HEAD_COMMIT_ERR_FILE="$(mktemp)"
         HEAD_COMMIT_AT="$(gh api "repos/$REPO/commits/$HEAD_SHA" \
           --jq '.commit.committer.date' 2>"$HEAD_COMMIT_ERR_FILE" || echo "")"
@@ -1254,26 +1287,30 @@ main() {
             # narrows a blocker rather than skipping the PR, so it must not
             # read as the wholly-blind shape the counted line above matches.
             HEAD_COMMIT_AT=""
-            log "#$n: could not read the head commit's date: $(read_failure_reason "$HEAD_COMMIT_ERR") — blocker:unrequested and rerun-owed's moved-head test not judged this pass" ;;
+            log "#$n: could not read the head commit's date: $(read_failure_reason "$HEAD_COMMIT_ERR") — blocker:unrequested not judged this pass" ;;
         esac
       fi
-      # `rerun-owed`'s own clock (#423): the newest `labeled` event for it, the
-      # shape lib/attention.sh reads for its flag. Behind the label, so an
-      # ordinary PR pays nothing. An unreadable timeline leaves the moved-head
-      # test unjudged and the label standing — never cleared on a fact this
-      # sweep did not read, the standing rule everywhere in this file.
-      RERUN_OWED_AT=""
+      # The head `rerun-owed`'s evidence names (#423). Behind the label, so an
+      # ordinary PR pays nothing for it, and behind the AUTHOR too: the label is
+      # the builder's to set with its evidence, so a marker quoted back by a
+      # reviewer is a quotation and not a second flag. Read whole, then filtered
+      # — the shape lib/attention.sh uses — so an unreadable list and a label
+      # nobody evidenced are told apart by the read's own status and not by
+      # whether a pipeline happened to be running under `pipefail`.
+      RERUN_OWED_HEAD=""
       if has_label rerun-owed; then
-        if ! RERUN_OWED_AT="$(gh api --paginate "repos/$REPO/issues/$n/timeline" \
-          --jq '.[] | select(.event == "labeled" and .label.name == "rerun-owed") | .created_at' \
-          2>/dev/null | sort | tail -n1)"; then
-          RERUN_OWED_AT=""
-          log "#$n: rerun-owed timeline unreadable — its moved-head test not judged this pass"
-        elif [ -z "$RERUN_OWED_AT" ]; then
-          # Told apart from the failed read on purpose, as lib/attention.sh
-          # tells them apart: a label whose `labeled` event is not visible is a
-          # different thing to investigate from a timeline that would not read.
-          log "#$n: rerun-owed has no visible labeled event — its moved-head test not judged this pass"
+        if ! RERUN_OWED_EVIDENCE="$(RERUN_OWED_AUTHOR="$AUTHOR" gh api --paginate \
+          "repos/$REPO/issues/$n/comments" \
+          --jq '.[] | select(.user.login == env.RERUN_OWED_AUTHOR)
+                | .body | split("\n")[0] | sub("\r$"; "")' 2>/dev/null)"; then
+          log "#$n: rerun-owed evidence unreadable — its moved-head test not judged this pass"
+        else
+          RERUN_OWED_HEAD="$(rerun_owed_named_head <<<"$RERUN_OWED_EVIDENCE")"
+          # Told apart from the failed read on purpose: a label whose evidence
+          # names no head is a builder to talk to, a list that would not read is
+          # an API to look at. Both leave the label standing.
+          [ -n "$RERUN_OWED_HEAD" ] ||
+            log "#$n: rerun-owed evidence names no head — its moved-head test not judged this pass"
         fi
       fi
       reconcile_pr "$n"
