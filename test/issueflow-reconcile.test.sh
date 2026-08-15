@@ -3062,6 +3062,7 @@ check "a four-long chain flags its head" 0 \
   printf '%s\n' "$deep_out"
 check "the deep chain flags its head only" 0 "1" \
   flag_count deep "$deep_out"
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
 check "the one deep threshold constant is greppable" 0 "1" \
   bash -c 'grep -c "^GRAPH_DEEP_THRESHOLD=4$" "$1"' _ \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"

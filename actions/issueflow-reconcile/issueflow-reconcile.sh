@@ -662,9 +662,7 @@ board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdi
     function has_label(labels, label) {
       return ("," labels "," ~ "," label ",")
     }
-    function reaches(cur, target,    e,nxt,key) {
-      key = cur SUBSEP target
-      if (reach_cache[key] != "") return reach_cache[key] - 1
+    function reaches(cur, target,    e,nxt) {
       if (visiting[cur]) return 0
       visiting[cur] = 1
       for (e = 1; e <= edge_count; e++) {
@@ -672,12 +670,10 @@ board_shape_flags() { # $1 deep threshold, $2 graph edges; board records on stdi
         nxt = edge_to[e]
         if (nxt == target || reaches(nxt, target)) {
           delete visiting[cur]
-          reach_cache[key] = 2
           return 1
         }
       }
       delete visiting[cur]
-      reach_cache[key] = 1
       return 0
     }
     function longest(cur, depth, path,    e,nxt) {
@@ -1595,7 +1591,7 @@ main() {
       done)"
 
   local n tail_line issue_numbers board_json release_numbers rn window_records
-  local rc release_body window_rendered="" blocker_graph
+  local rc release_body window_rendered="" blocker_graph shape_board_records
   # The pre-loop region NAMES THE STAGE IT DIED IN before the status
   # propagates (#364 D8). Both runs of the 2026-08-10T04:24Z class emitted
   # `jq: error: writing output failed: Broken pipe` and an exit code after 61
@@ -1720,8 +1716,9 @@ main() {
       log "could not compute the board flags: the blocker graph"
       return "$rc"
     }
+  shape_board_records="$(sort -t $'\t' -k1,1n <<<"$BOARD_RECORDS")"
   SHAPE_FLAGS="$(board_shape_flags "$GRAPH_DEEP_THRESHOLD" "$blocker_graph" \
-    <<<"$BOARD_RECORDS")" || {
+    <<<"$shape_board_records")" || {
       rc=$?
       log "could not compute the board flags: the graph shapes"
       return "$rc"
