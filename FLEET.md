@@ -170,10 +170,11 @@ builder wakes; they are duties of their own.
   `report_suppressed` path — suppressed, still said. A check that has not
   finished is **not** a red head and wakes nothing here: nothing has failed
   yet, so there is no investigation to launch. A head carrying `rerun-owed`
-  is **skipped**: the builder has already recorded that the rerun is a right
-  it does not hold, so waking it there is the stall in miniature, and the
-  skip is what lets the build wake below reach a new claim — the claim on
-  that PR's issue is parked ([BUILDER.md](BUILDER.md), shape 6). Only this
+  is **skipped**: the evidence is already posted and starting the rerun is a
+  right no fleet identity holds, so waking a session there is the stall in
+  miniature, and the skip is what lets the build wake below reach a new claim
+  — the claim on that PR's issue is parked ([BUILDER.md](BUILDER.md),
+  shape 6). Only this
   row skips: the build wake's hold on a red head is unchanged, so the round
   at that head still waits. The label is what a **servicing** actor wakes on,
   and that wake belongs to no row here — it is crew's to build
