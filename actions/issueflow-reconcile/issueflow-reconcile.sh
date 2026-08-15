@@ -712,6 +712,31 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       delete path_seen[cur]
       return 0
     }
+    function reachable_shape(root,    changed,e,i,n,node_list,edge_list) {
+      # The displayed witness stops at the threshold, but marker identity
+      # covers the complete reachable subgraph. Extending or branching a deep
+      # shape therefore speaks without enumerating its simple paths (#426 D1).
+      delete deep_reachable
+      deep_reachable[root] = 1
+      do {
+        changed = 0
+        for (e = 1; e <= edge_count; e++) {
+          if (!deep_reachable[edge_from[e]] || deep_reachable[edge_to[e]]) continue
+          deep_reachable[edge_to[e]] = 1
+          changed = 1
+        }
+      } while (changed)
+      node_list = ""
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (deep_reachable[n]) node_list = node_list (node_list ? "," : "") "#" n
+      }
+      edge_list = ""
+      for (e = 1; e <= edge_count; e++)
+        if (deep_reachable[edge_from[e]] && deep_reachable[edge_to[e]])
+          edge_list = edge_list (edge_list ? "," : "") "#" edge_from[e] ">#" edge_to[e]
+      return "nodes=" node_list ";edges=" edge_list
+    }
     BEGIN {
       count = split(edges, lines, "\n")
       for (i = 1; i <= count; i++) {
@@ -792,7 +817,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
         found_path = ""
         delete path_seen
         if (threshold_path(n, 1, "#" n))
-          print n "\tdeep\t≥" threshold ":" found_path
+          print n "\tdeep\t≥" threshold ":" found_path "\t" reachable_shape(n)
       }
 
       # Mutual reachability is the strongly connected component definition.
@@ -804,6 +829,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
         component = ""
         for (j = 1; j <= node_count; j++) {
           m = node_order[j]
+          if (!cyclic[m]) continue
           delete reach_seen
           forward = (m == n || reaches(n, m))
           delete reach_seen
@@ -956,6 +982,21 @@ flag_for_issue() { # $1 = issue, $2 = flag records "number<TAB>state"
 shape_flag_for_issue() { # $1 issue, $2 family, $3 records -> state
   awk -F '\t' -v n="$1" -v family="$2" \
     '$1 == n && $2 == family { print $3 }' <<<"$3"
+}
+
+shape_flag_identity_for_issue() { # $1 issue, $2 family, $3 records -> identity
+  awk -F '\t' -v n="$1" -v family="$2" \
+    '$1 == n && $2 == family { print $4 }' <<<"$3"
+}
+
+graph_marker_state() { # $1 rendered state, $2 optional full graph identity
+  local state="$1" identity="${2:-}" digest
+  if [ -z "$identity" ]; then
+    printf '%s\n' "$state"
+    return
+  fi
+  digest="$(printf '%s' "$identity" | sha256sum | cut -c1-12)"
+  printf '%s:%s\n' "$state" "$digest"
 }
 
 offsite_cross_referenced_prs() { # timeline JSON on stdin -> owner/repo#N
@@ -1122,7 +1163,7 @@ reconcile_board_flags() { # $1 issue, $2 concluded queue state — board flags (
   # own boundary, and it is the right one here — the flag speaks about a
   # board fact that is true right now, and a board where the fact never
   # changed has nothing new to say.
-  local n="$1" state marker rendered count path family message snapshot_state
+  local n="$1" state identity marker rendered count path family message snapshot_state
   if board_flags_in_scope "$2"; then
     state="$(flag_for_issue "$n" "${COLLISION_FLAGS:-}")"
     if [ -n "$state" ]; then
@@ -1201,7 +1242,8 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
   for family in idle deep cycle; do
     state="$(shape_flag_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
     [ -n "$state" ] || continue
-    marker="$(state_marker "graph-$family" "$state")"
+    identity="$(shape_flag_identity_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
+    marker="$(state_marker "graph-$family" "$(graph_marker_state "$state" "$identity")")"
     state_echo_needed "$n" "graph-$family" "$marker" || continue
     case "$family" in
       idle)

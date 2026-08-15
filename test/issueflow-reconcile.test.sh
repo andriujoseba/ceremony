@@ -3093,7 +3093,8 @@ branch_rc=$?
 check "a branching DAG is bounded rather than enumerating every simple path" 0 "" \
   test "$branch_rc" -eq 0
 check "the bounded branching walk still finds the deep threshold" 0 \
-  $'601\tdeep\t≥4:#601 > #602 > #603 > #604' printf '%s\n' "$branch_out"
+  $'601\tdeep\t≥4:#601 > #602 > #603 > #604' \
+  bash -c 'cut -f1-3 <<<"$1"' _ "$branch_out"
 
 # A cycle is deliberately tested beside a ready issue so only the cycle
 # signal fires. Mutual reachability puts the comment on every member, and the
@@ -3197,7 +3198,9 @@ check "the graph tripwires never edit a label or queue state" 1 "" \
 # Persisting state is silent, but extending the same chain changes the marker
 # state and speaks. This is the existing per-family board-marker contract,
 # proved on the new family rather than inferred from collision/window tests.
-jq -n --arg b "<!-- issueflow:$(state_marker graph-deep '≥4:#501 > #502 > #503 > #504') -->
+deep_display='≥4:#501 > #502 > #503 > #504'
+deep_identity='nodes=#501,#502,#503,#504;edges=#501>#502,#502>#503,#503>#504'
+jq -n --arg b "<!-- issueflow:$(state_marker graph-deep "$(graph_marker_state "$deep_display" "$deep_identity")") -->
 said already" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
   >"$BOARD/repos_owner_repo_issues_501_comments.json"
 board_assemble_keep 501 502 503 504
@@ -3208,8 +3211,9 @@ board_issue 505 blocked 'november.sh — a newly extended tail' 'Blocked by #504
 printf '[]\n' >"$BOARD/repos_owner_repo_issues_505_comments.json"
 board_assemble_keep 501 502 503 504 505
 deep_changed_out="$(board_run)"
-check "an extension beyond the threshold remains the same deep tripwire" 1 "" \
-  grep -qF 'issueflow: #501: deep graph flag' <<<"$deep_changed_out"
+check "extending a deep shape changes its marker and speaks" 0 \
+  'issueflow: #501: deep graph flag — ≥4:#501 > #502 > #503 > #504' \
+  printf '%s\n' "$deep_changed_out"
 
 # -- today's board draws nothing (the post-ruling shape, live) --------------
 # #249 the `blocked` sink, this issue `claimed` with no open PR and a gate
