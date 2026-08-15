@@ -2033,6 +2033,17 @@ RERUN_OWED_HEAD="$RERUN_HEAD_OLD" HEAD_SHA=""
 expect "...and an unread head SHA is not a differing one" STANDS \
   "$(rerun_owed_state)"
 HEAD_SHA="$RERUN_HEAD" RERUN_OWED_HEAD="$RERUN_HEAD"
+# ...and the whole way through, from evidence to verdict: a builder who names a
+# second head unreadably has superseded the first, so the pair names no head
+# and the label stands. The parse is asserted on its own below; this is the
+# consequence the label cares about, and it is what the two would-be-cleared
+# heads make interesting — neither the old marker's head nor a readable new one
+# may be what the state decides on.
+RERUN_OWED_HEAD="$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD_OLD}" \
+  "${RERUN_OWED_MARKER}not-a-sha" | rerun_owed_named_head)"
+expect "an older marker superseded unreadably leaves the label standing" STANDS \
+  "$(rerun_owed_state)"
+RERUN_OWED_HEAD="$RERUN_HEAD"
 
 # -- the evidence parse, driven rather than read -----------------------------
 # What the sweep hands this function is one line per comment BY THE PR AUTHOR,
