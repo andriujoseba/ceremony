@@ -331,12 +331,11 @@ cells** — the engine does these steps for the builder, in order:
 The prose precondition is the builder's alone and the handoff waits on it:
 the row appears mechanically, so an empty cell is visible in the rendered
 section, and handing off over one hands the human a record saying nothing
-(#418). The label write is
-optimistic — the reconciler validates it and takes it back if the PR is not
-mergeable-right-now. Then stop: the PR is the human's, and the claim parks
-as shape 4 (Picking, above), that comment its declaration and your slot
-free. Address what comes back (`state:addressing`) and re-hand-off the same
-way.
+(#418). The label write is optimistic — the reconciler validates it and
+takes it back if the PR is not mergeable-right-now. Then stop: the PR is
+the human's, and the claim parks as shape 4 (Picking, above), that comment
+its declaration and your slot free. Address what comes back
+(`state:addressing`) and re-hand-off the same way.
 
 **A taken-back handoff is answered by clearing the blocker, never by
 re-setting the label**: the take-back says the precondition was not met, so
