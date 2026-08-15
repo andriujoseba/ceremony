@@ -23,6 +23,9 @@ NOW="$ISSUEFLOW_NOW"
 STALE_AFTER=$((ISSUEFLOW_STALE_HOURS * 3600))
 QUEUE_LABELS=(ready claimed blocked post-merge)
 TRIAGE_ACTORS=()
+# Four issues in one blocker chain can occupy only one builder at a time and
+# therefore provably under-employ this fleet's two builders (#426 D2).
+GRAPH_DEEP_THRESHOLD=4
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -630,6 +633,221 @@ window_flags() { # $1 window members, $2 window carriers; records on stdin -> nu
   done
 }
 
+blocker_graph_records() { # $1 open numbers; board JSON on stdin -> blocker<TAB>dependent
+  local open_numbers="$1" board_json n body blocker
+  board_json="$(cat)"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    body="$(jq -r --argjson n "$n" '.[]
+      | select((has("pull_request") | not) and .number == $n)
+      | .body // ""' <<<"$board_json")"
+    while IFS= read -r blocker; do
+      [ -n "$blocker" ] || continue
+      if grep -qxF "$blocker" <<<"$open_numbers"; then
+        printf '%s\t%s\n' "$blocker" "$n"
+      fi
+    done < <(blocked_references <<<"$body")
+  done < <(jq -r '.[] | select(has("pull_request") | not)
+    | select((.labels // []) | map(.name) | index("blocked"))
+    | .number' <<<"$board_json")
+  return 0
+}
+
+blocker_graph_releasing_issues() { # $1 open numbers; board JSON on stdin -> numbers
+  # A blocked issue with local declarations but no open local predecessor is
+  # about to take the existing blockers-cleared path. The graph snapshot is
+  # therefore stale for `idle` even before that issue's own turn arrives;
+  # suppress the board-wide fact for this pass rather than announce that
+  # nothing is claimable while the same pass makes something claimable (#426).
+  local open_numbers="$1" board_json n body refs
+  board_json="$(cat)"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    body="$(jq -r --argjson n "$n" '.[]
+      | select((has("pull_request") | not) and .number == $n)
+      | .body // ""' <<<"$board_json")"
+    refs="$(blocked_references <<<"$body")"
+    [ -n "$refs" ] || continue
+    blocked_cross_references <<<"$body" | grep -q . && continue
+    grep -qxFf <(printf '%s\n' "$open_numbers") <<<"$refs" || printf '%s\n' "$n"
+  done < <(jq -r '.[] | select(has("pull_request") | not)
+    | select((.labels // []) | map(.name) | index("blocked"))
+    | .number' <<<"$board_json")
+}
+
+board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on stdin
+  # Emits carrier<TAB>family<TAB>state. The graph is blocker -> dependent, so
+  # a zero-indegree node is the chain head whose movement can release the
+  # shape. Reachability remembers every visited vertex for one query, and the
+  # deep walk stops at the configured threshold. Both costs are therefore
+  # polynomial even on a branching graph, while malformed cycles terminate
+  # instead of hanging the hourly sweep (#426 D1-D2).
+  local threshold="$1" edges="$2" releasing="$3"
+  awk -F '\t' -v threshold="$threshold" -v edges="$edges" -v releasing="$releasing" '
+    function has_label(labels, label) {
+      return ("," labels "," ~ "," label ",")
+    }
+    function reaches(cur, target,    e,nxt) {
+      if (reach_seen[cur]) return 0
+      reach_seen[cur] = 1
+      for (e = 1; e <= edge_count; e++) {
+        if (edge_from[e] != cur) continue
+        nxt = edge_to[e]
+        if (nxt == target || reaches(nxt, target)) return 1
+      }
+      return 0
+    }
+    function threshold_path(cur, depth, path,    e,nxt) {
+      if (depth >= threshold) {
+        found_path = path
+        return 1
+      }
+      path_seen[cur] = 1
+      for (e = 1; e <= edge_count; e++) {
+        if (edge_from[e] != cur) continue
+        nxt = edge_to[e]
+        if (!path_seen[nxt] && threshold_path(nxt, depth + 1, path " > #" nxt)) {
+          delete path_seen[cur]
+          return 1
+        }
+      }
+      delete path_seen[cur]
+      return 0
+    }
+    function reachable_shape(root,    changed,e,i,n,node_list,edge_list) {
+      # The displayed witness stops at the threshold, but marker identity
+      # covers the complete reachable subgraph. Extending or branching a deep
+      # shape therefore speaks without enumerating its simple paths (#426 D1).
+      delete deep_reachable
+      deep_reachable[root] = 1
+      do {
+        changed = 0
+        for (e = 1; e <= edge_count; e++) {
+          if (!deep_reachable[edge_from[e]] || deep_reachable[edge_to[e]]) continue
+          deep_reachable[edge_to[e]] = 1
+          changed = 1
+        }
+      } while (changed)
+      node_list = ""
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (deep_reachable[n]) node_list = node_list (node_list ? "," : "") "#" n
+      }
+      edge_list = ""
+      for (e = 1; e <= edge_count; e++)
+        if (deep_reachable[edge_from[e]] && deep_reachable[edge_to[e]])
+          edge_list = edge_list (edge_list ? "," : "") "#" edge_from[e] ">#" edge_to[e]
+      return "nodes=" node_list ";edges=" edge_list
+    }
+    BEGIN {
+      count = split(edges, lines, "\n")
+      for (i = 1; i <= count; i++) {
+        split(lines[i], fields, "\t")
+        if (fields[1] == "" || fields[2] == "") continue
+        edge_count++
+        edge_from[edge_count] = fields[1]
+        edge_to[edge_count] = fields[2]
+        vertex[fields[1]] = vertex[fields[2]] = 1
+        outdegree[fields[1]]++
+        indegree[fields[2]]++
+      }
+    }
+    {
+      n = $1
+      node_order[++node_count] = n
+      labels[n] = $2
+      vertex[n] = 1
+      if (has_label($2, "blocked")) { blocked[n] = 1; blocked_count++ }
+      if (has_label($2, "ready") || has_label($2, "claimed")) movable_count++
+    }
+    END {
+      # Kahn-prune the acyclic region before asking any reachability question.
+      # Most boards are DAGs, so they pay O(VE) here and skip cycle DFS
+      # entirely. A cycle and anything fed only by it remains as a candidate;
+      # reaches(n,n) below separates the actual component from such tails.
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        work_indegree[n] = indegree[n]
+      }
+      do {
+        pruned = 0
+        for (i = 1; i <= node_count; i++) {
+          n = node_order[i]
+          if (removed[n] || work_indegree[n]) continue
+          removed[n] = 1
+          pruned = 1
+          for (e = 1; e <= edge_count; e++)
+            if (edge_from[e] == n) work_indegree[edge_to[e]]--
+        }
+      } while (pruned)
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (removed[n]) continue
+        delete reach_seen
+        if (reaches(n, n)) cyclic[n] = 1
+      }
+
+      # Idle is a board fact, but lands on each chain head where action can
+      # change it. A graph made only of cycles has no head, so its blocked
+      # members are the only actionable carriers and receive the same fact.
+      if (blocked_count > 0 && movable_count == 0 && releasing == "") {
+        head_count = 0
+        blocked_list = ""
+        for (i = 1; i <= node_count; i++) {
+          n = node_order[i]
+          if (blocked[n]) blocked_list = blocked_list (blocked_list ? "," : "") "#" n
+          if (!indegree[n] && (outdegree[n] || blocked[n])) {
+            idle_target[n] = 1
+            head_count++
+          }
+        }
+        if (head_count == 0)
+          for (i = 1; i <= node_count; i++)
+            if (blocked[node_order[i]] && cyclic[node_order[i]]) idle_target[node_order[i]] = 1
+        edge_list = ""
+        for (i = 1; i <= edge_count; i++)
+          edge_list = edge_list (edge_list ? "," : "") "#" edge_from[i] ">#" edge_to[i]
+        idle_state = blocked_count ":" blocked_list ":" edge_list
+        for (i = 1; i <= node_count; i++) {
+          n = node_order[i]
+          if (idle_target[n]) print n "\tidle\t" idle_state
+        }
+      }
+
+      # Deep is a threshold tripwire, not a longest-path report. Stop at the
+      # first deterministic threshold-long path: the constant bound prevents
+      # a branching DAG from turning the hourly audit exponential.
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (indegree[n]) continue
+        found_path = ""
+        delete path_seen
+        if (threshold_path(n, 1, "#" n))
+          print n "\tdeep\t≥" threshold ":" found_path "\t" reachable_shape(n)
+      }
+
+      # Mutual reachability is the strongly connected component definition.
+      # Rendering that component as state means an unchanged cycle is silent
+      # while adding or removing a member speaks on every remaining carrier.
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (!cyclic[n]) continue
+        component = ""
+        for (j = 1; j <= node_count; j++) {
+          m = node_order[j]
+          if (!cyclic[m]) continue
+          delete reach_seen
+          forward = (m == n || reaches(n, m))
+          delete reach_seen
+          backward = (m == n || reaches(m, n))
+          if (forward && backward) component = component (component ? "," : "") "#" m
+        }
+        print n "\tcycle\t" component
+      }
+    }
+  '
+}
+
 membership_references() { # release body on stdin -> its enumerated members
   # The membership record (#343 D2), read by HEADING and never by a marker
   # phrase. `blocked_reference_records` unions every occurrence of its marker
@@ -765,6 +983,26 @@ window_state() { # $1 = window carriers -> the rendered state, "#249" | "#249, #
 
 flag_for_issue() { # $1 = issue, $2 = flag records "number<TAB>state"
   awk -F '\t' -v n="$1" '$1 == n { print $2 }' <<<"$2"
+}
+
+shape_flag_for_issue() { # $1 issue, $2 family, $3 records -> state
+  awk -F '\t' -v n="$1" -v family="$2" \
+    '$1 == n && $2 == family { print $3 }' <<<"$3"
+}
+
+shape_flag_identity_for_issue() { # $1 issue, $2 family, $3 records -> identity
+  awk -F '\t' -v n="$1" -v family="$2" \
+    '$1 == n && $2 == family { print $4 }' <<<"$3"
+}
+
+graph_marker_state() { # $1 rendered state, $2 optional full graph identity
+  local state="$1" identity="${2:-}" digest
+  if [ -z "$identity" ]; then
+    printf '%s\n' "$state"
+    return
+  fi
+  digest="$(printf '%s' "$identity" | sha256sum | cut -c1-12)"
+  printf '%s:%s\n' "$state" "$digest"
 }
 
 offsite_cross_referenced_prs() { # timeline JSON on stdin -> owner/repo#N
@@ -931,15 +1169,15 @@ reconcile_board_flags() { # $1 issue, $2 concluded queue state — board flags (
   # own boundary, and it is the right one here — the flag speaks about a
   # board fact that is true right now, and a board where the fact never
   # changed has nothing new to say.
-  local n="$1" state marker rendered
-  board_flags_in_scope "$2" || return 0
-  state="$(flag_for_issue "$n" "${COLLISION_FLAGS:-}")"
-  if [ -n "$state" ]; then
-    marker="$(state_marker collision "$state")"
-    if state_echo_needed "$n" collision "$marker"; then
-      rendered="$(tr ',' '\n' <<<"$state" \
-        | awk -F= '{ print "- `" $1 "` — also carried by #" $2 }')"
-      run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
+  local n="$1" state identity marker rendered count path family message snapshot_state
+  if board_flags_in_scope "$2"; then
+    state="$(flag_for_issue "$n" "${COLLISION_FLAGS:-}")"
+    if [ -n "$state" ]; then
+      marker="$(state_marker collision "$state")"
+      if state_echo_needed "$n" collision "$marker"; then
+        rendered="$(tr ',' '\n' <<<"$state" \
+          | awk -F= '{ print "- `" $1 "` — also carried by #" $2 }')"
+        run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 This issue and the issue named beside each key below are both open and
 unblocked, and their titles name the same deliverable:
 
@@ -960,15 +1198,15 @@ to one deliverable that is really two, say so and no edge is owed.
 
 *Comment only: nothing on this path writes a label or changes a state. The
 marker carries the collision itself, so an unchanged one never re-posts.*" >/dev/null
-      log "#$n: collision flag — $state"
+        log "#$n: collision flag — $state"
+      fi
     fi
-  fi
 
-  state="$(flag_for_issue "$n" "${WINDOW_FLAGS:-}")"
-  if [ -n "$state" ]; then
-    marker="$(state_marker window-nonmember "$state")"
-    if state_echo_needed "$n" window-nonmember "$marker"; then
-      run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
+    state="$(flag_for_issue "$n" "${WINDOW_FLAGS:-}")"
+    if [ -n "$state" ]; then
+      marker="$(state_marker window-nonmember "$state")"
+      if state_echo_needed "$n" window-nonmember "$marker"; then
+        run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 A release window is standing ($state) and this issue is neither one of its
 members nor an \`epic\` or \`post-merge\` issue.
 
@@ -993,9 +1231,55 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
       # flight or not, which is the one wording #293 D3b went out of its way
       # to correct. The log line is read by a human deciding whether the
       # sweep understood the board, so it says what the predicate says.
-      log "#$n: window flag — an unblocked non-member under $state"
+        log "#$n: window flag — an unblocked non-member under $state"
+      fi
     fi
   fi
+
+  # Emit only when this issue still has the queue state from which the board
+  # snapshot derived its flag. The same six-label set is concluded by
+  # reconcile_issue; omitting epic or needs-triage would silence stable heads,
+  # while an initially unlabeled issue correctly waits for the next pass.
+  snapshot_state="$(awk -F '\t' -v n="$n" '$1 == n {
+    split($2, labels, ",")
+    for (i in labels) if (labels[i] ~ /^(needs-triage|epic|ready|claimed|blocked|post-merge)$/) print labels[i]
+  }' <<<"${BOARD_RECORDS:-}")"
+  [ "$snapshot_state" = "$2" ] || return 0
+  for family in idle deep cycle; do
+    state="$(shape_flag_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
+    [ -n "$state" ] || continue
+    identity="$(shape_flag_identity_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
+    marker="$(state_marker "graph-$family" "$(graph_marker_state "$state" "$identity")")"
+    state_echo_needed "$n" "graph-$family" "$marker" || continue
+    case "$family" in
+      idle)
+        count="${state%%:*}"
+        message="The issue queue is **idle by construction**: it has zero open
+\`ready\` issues and zero open \`claimed\` issues while $count open issues are
+\`blocked\`. Nothing is claimable. An operator or triage must decide which
+edge to invert, following #425's priority route." ;;
+      deep)
+        count="${state%%:*}"
+        path="${state#*:}"
+        message="This blocker chain is $count issues deep: $path.
+
+The configured deep-chain threshold is **$GRAPH_DEEP_THRESHOLD**. At or above
+that depth the chain serializes the fleet; consider whether a member belongs
+at the front before preserving this order." ;;
+      cycle)
+        message="These open issues form a blocker cycle: ${state//,/, }.
+
+Nothing in this set can ever release another member. The set is dead until
+triage or an operator breaks the cycle by hand." ;;
+    esac
+    run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
+$message
+
+*Comment only: this tripwire writes no label, changes no queue state, and
+re-points no edge. Its per-family marker carries the current graph shape, so
+an unchanged shape never re-posts and a changed one speaks.*" >/dev/null
+    log "#$n: $family graph flag — $state"
+  done
 }
 
 reconcile_issue() {
@@ -1407,7 +1691,7 @@ main() {
       done)"
 
   local n tail_line issue_numbers board_json release_numbers rn window_records
-  local rc release_body window_rendered=""
+  local rc release_body window_rendered="" blocker_graph graph_releasing shape_board_records
   # The pre-loop region NAMES THE STAGE IT DIED IN before the status
   # propagates (#364 D8). Both runs of the 2026-08-10T04:24Z class emitted
   # `jq: error: writing output failed: Broken pipe` and an exit code after 61
@@ -1524,6 +1808,25 @@ main() {
     | awk -v state="$window_rendered" 'NF { print $1 "\t" state }')" || {
     rc=$?
     log "could not compute the board flags: the window flags"
+    return "$rc"
+  }
+  blocker_graph="$(blocker_graph_records "$issue_numbers" <<<"$board_json" \
+    | sort -t $'\t' -k1,1n -k2,2n)" || {
+    rc=$?
+    log "could not compute the board flags: the blocker graph"
+    return "$rc"
+  }
+  graph_releasing="$(blocker_graph_releasing_issues "$issue_numbers" <<<"$board_json" \
+    | sort -nu)" || {
+    rc=$?
+    log "could not compute the board flags: the releasing graph members"
+    return "$rc"
+  }
+  shape_board_records="$(sort -t $'\t' -k1,1n <<<"$BOARD_RECORDS")"
+  SHAPE_FLAGS="$(board_shape_flags "$GRAPH_DEEP_THRESHOLD" "$blocker_graph" "$graph_releasing" \
+    <<<"$shape_board_records")" || {
+    rc=$?
+    log "could not compute the board flags: the graph shapes"
     return "$rc"
   }
   if [ -z "$issue_numbers" ]; then

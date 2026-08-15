@@ -2751,8 +2751,11 @@ board_assemble() { # numbers… -> the open-issue list, with fresh comment threa
     | jq -sc . >"$BOARD/repos_owner_repo_issues_state_open_per_page_100.json"
 }
 
-flag_count() { # $1 = collision|window, $2 = a sweep's output
-  grep -c ": $1 flag — " <<<"$2"
+flag_count() { # $1 = collision|window|idle|deep|cycle, $2 = sweep output
+  case "$1" in
+    collision|window) grep -c ": $1 flag — " <<<"$2" ;;
+    *) grep -c ": $1 graph flag — " <<<"$2" ;;
+  esac
 }
 
 board_run() {
@@ -3037,6 +3040,214 @@ board_assemble_keep 253 284
 recreated_out="$(board_run)"
 check "an unchanged state recreated is silent — D4's stated boundary" 1 "" \
   grep -qF 'issueflow: #284: collision flag' <<<"$recreated_out"
+
+# -- #426: the blocker declarations form a graph, so inspect its shape -----
+# The board snapshot already carries every body and label needed here. These
+# fixtures drive the full subprocess path to prove graph construction, flag
+# placement, comment-only emission and marker dedup together.
+printf '%s\n' \
+  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
+  >"$BOARD/graphql-open.json"
+
+# A four-node chain has one zero-indegree head. The flag belongs there only,
+# and the named constant's value must be visible to the person reading it.
+board_issue 501 ready 'alpha.sh — the chain head'
+board_issue 502 blocked 'bravo.sh — second in the chain' 'Blocked by #501.'
+board_issue 503 blocked 'charlie.sh — third in the chain' 'Blocked by #502.'
+board_issue 504 blocked 'delta.sh — fourth in the chain' 'Blocked by #503.'
+board_assemble 501 502 503 504
+deep_out="$(board_run)"
+check "a four-long chain flags its head" 0 \
+  'issueflow: #501: deep graph flag — ≥4:#501 > #502 > #503 > #504' \
+  printf '%s\n' "$deep_out"
+check "the deep chain flags its head only" 0 "1" \
+  flag_count deep "$deep_out"
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
+check "the one deep threshold constant is greppable" 0 "1" \
+  bash -c 'grep -c "^GRAPH_DEEP_THRESHOLD=4$" "$1"' _ \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+check "the deep flag text names the threshold number" 0 "" \
+  grep -qF 'deep-chain threshold is **4**' "$BOARD/edits"
+check "every graph tripwire comment carries its own marker family" 0 "" \
+  grep -qF '<!-- issueflow:graph-deep-' "$BOARD/edits"
+check "a fired graph tripwire writes no label or queue state" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
+
+# A complete acyclic graph is the adversarial form for simple-path
+# enumeration: eighteen vertices previously exceeded the bound below. The
+# threshold walk has no reason to inspect paths after its fourth vertex.
+branch_records=""
+branch_edges=""
+for ((i = 601; i <= 618; i++)); do
+  if [ "$i" -eq 601 ]; then label=ready; else label=blocked; fi
+  branch_records+="${i}"$'\t'"${label}"$'\t'"branch-${i}"$'\n'
+  for ((j = i + 1; j <= 618; j++)); do
+    branch_edges+="${i}"$'\t'"${j}"$'\n'
+  done
+done
+# shellcheck disable=SC2016 # expansions belong to the isolated bash process
+branch_out="$(timeout 2 env BRANCH_RECORDS="$branch_records" BRANCH_EDGES="$branch_edges" \
+  bash -c 'source "$1"; board_shape_flags 4 "$BRANCH_EDGES" "" <<<"$BRANCH_RECORDS"' \
+  _ "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh")"
+branch_rc=$?
+check "a branching DAG is bounded rather than enumerating every simple path" 0 "" \
+  test "$branch_rc" -eq 0
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
+check "the bounded branching walk still finds the deep threshold" 0 \
+  $'601\tdeep\t≥4:#601 > #602 > #603 > #604' \
+  bash -c 'cut -f1-3 <<<"$1"' _ "$branch_out"
+
+# A cycle is deliberately tested beside a ready issue so only the cycle
+# signal fires. Mutual reachability puts the comment on every member, and the
+# subprocess returning proves the traversal terminated.
+board_issue 510 ready 'epsilon.sh — unrelated movable work'
+board_issue 511 blocked 'foxtrot.sh — first cycle member' 'Blocked by #512.'
+board_issue 512 blocked 'golf.sh — second cycle member' 'Blocked by #511.'
+board_assemble 510 511 512
+cycle_out="$(board_run)"
+cycle_rc=$?
+check "the cyclic fixture terminates successfully" 0 "" test "$cycle_rc" -eq 0
+check "a cycle flags its first member" 0 \
+  'issueflow: #511: cycle graph flag — #511,#512' printf '%s\n' "$cycle_out"
+check "a cycle flags its second member" 0 \
+  'issueflow: #512: cycle graph flag — #511,#512' printf '%s\n' "$cycle_out"
+check "the cycle fixture emits exactly one cycle flag per member" 0 "2" \
+  flag_count cycle "$cycle_out"
+check "the non-idle cycle board emits no idle flag" 1 "" \
+  grep -qF ': idle graph flag' <<<"$cycle_out"
+
+# The unresolved external dependency is intentionally absent from the local
+# graph. It leaves #523 as the one actionable chain head while all three open
+# issues remain blocked, exactly the zero-ready/zero-claimed shape.
+board_issue 521 blocked 'hotel.sh — idle tail' 'Blocked by #522.'
+board_issue 522 blocked 'india.sh — idle middle' 'Blocked by #523.'
+board_issue 523 blocked 'juliet.sh — idle head' 'Blocked by other/repo#99.'
+board_issue 524 needs-triage 'kilo.sh — unrelated untriaged issue'
+board_issue 525 epic 'lima.sh — unrelated epic'
+board_assemble 521 522 523 524 525
+idle_out="$(board_run)"
+check "an idle board flags the chain head" 0 \
+  'issueflow: #523: idle graph flag — 3:#521,#522,#523:#522>#521,#523>#522' \
+  printf '%s\n' "$idle_out"
+check "the idle board flags its head only" 0 "1" flag_count idle "$idle_out"
+check "unrelated off-graph issues receive no idle carrier comment" 1 "" \
+  grep -qE 'issueflow: #(524|525): idle graph flag' <<<"$idle_out"
+check "the idle remedy names the priority route" 0 "" \
+  grep -qF "following #425's priority route" "$BOARD/edits"
+
+# A local predecessor absent from the open board is closed. That issue is on
+# the existing blocked -> ready path, so it contributes no graph edge and the
+# whole pre-pass idle snapshot stays silent while the same pass releases it.
+board_issue 539 '' 'november.sh — closed predecessor'
+jq '.state = "closed"' "$BOARD/repos_owner_repo_issues_539.json" \
+  >"$BOARD/repos_owner_repo_issues_539.closed.json"
+mv "$BOARD/repos_owner_repo_issues_539.closed.json" \
+  "$BOARD/repos_owner_repo_issues_539.json"
+board_issue 540 blocked 'oscar.sh — closed predecessor releases' 'Blocked by #539.'
+board_issue 541 blocked 'papa.sh — external dependency remains' 'Blocked by other/repo#99.'
+board_assemble 541 540
+closed_predecessor_out="$(board_run)"
+closed_predecessor_rc=$?
+check "a last-position closed predecessor does not abort the graph gather" 0 "" \
+  test "$closed_predecessor_rc" -eq 0
+check "a closed predecessor follows the existing release path" 0 \
+  'issueflow: #540: blockers closed -> ready' printf '%s\n' "$closed_predecessor_out"
+check "a releasing predecessor suppresses the stale board-wide idle fact" 1 "" \
+  grep -qF ': idle graph flag' <<<"$closed_predecessor_out"
+
+# A dependent with one closed and one open local predecessor is not releasing:
+# the open predecessor remains an edge, so the genuinely idle board still
+# speaks. This pins the releasing predicate's any-open-match semantics.
+board_issue 570 '' 'quebec.sh — closed half of mixed predecessors'
+jq '.state = "closed"' "$BOARD/repos_owner_repo_issues_570.json" \
+  >"$BOARD/repos_owner_repo_issues_570.closed.json"
+mv "$BOARD/repos_owner_repo_issues_570.closed.json" \
+  "$BOARD/repos_owner_repo_issues_570.json"
+board_issue 571 blocked 'romeo.sh — open mixed predecessor' 'Blocked by other/repo#99.'
+board_issue 572 blocked 'sierra.sh — mixed dependent' 'Blocked by #570, #571.'
+board_assemble 571 572
+mixed_predecessor_out="$(board_run)"
+check "an open half keeps a mixed-predecessor issue in the graph" 0 \
+  'issueflow: #571: idle graph flag — 2:#571,#572:#571>#572' \
+  printf '%s\n' "$mixed_predecessor_out"
+check "a mixed-predecessor idle board flags its head only" 0 "1" \
+  flag_count idle "$mixed_predecessor_out"
+
+# Stable epic and needs-triage heads are graph carriers even though they are
+# not claimable. An unlabeled head changes to needs-triage during the pass and
+# correctly waits until the next snapshot before speaking.
+for head_state in epic needs-triage ''; do
+  board_issue 550 "$head_state" 'quebec.sh — non-queue chain head'
+  board_issue 551 blocked 'romeo.sh — second stable-state node' 'Blocked by #550.'
+  board_issue 552 blocked 'sierra.sh — third stable-state node' 'Blocked by #551.'
+  board_issue 553 blocked 'tango.sh — fourth stable-state node' 'Blocked by #552.'
+  board_assemble 550 551 552 553
+  stable_state_out="$(board_run)"
+  if [ -n "$head_state" ]; then
+    check "a stable $head_state head carries the deep flag" 0 \
+      'issueflow: #550: deep graph flag — ≥4:#550 > #551 > #552 > #553' \
+      printf '%s\n' "$stable_state_out"
+    check "a stable $head_state head carries the idle flag" 0 \
+      'issueflow: #550: idle graph flag — 3:#551,#552,#553:#550>#551,#551>#552,#552>#553' \
+      printf '%s\n' "$stable_state_out"
+    check "the stable $head_state idle board flags its head only" 0 "1" \
+      flag_count idle "$stable_state_out"
+  else
+    check "an unlabeled head waits after becoming needs-triage" 1 "" \
+      grep -qF ': deep graph flag' <<<"$stable_state_out"
+  fi
+done
+
+# With no zero-indegree node, only the source cycle is actionable. A tail fed
+# by that cycle must not receive the idle comment as if every blocked member
+# were a carrier.
+board_issue 560 blocked 'uniform.sh — first source-cycle member' 'Blocked by #562.'
+board_issue 561 blocked 'victor.sh — second source-cycle member' 'Blocked by #560.'
+board_issue 562 blocked 'whiskey.sh — third source-cycle member' 'Blocked by #561.'
+board_issue 563 blocked 'xray.sh — cycle tail' 'Blocked by #562.'
+board_issue 564 blocked 'yankee.sh — cycle tail end' 'Blocked by #563.'
+board_issue 570 needs-triage 'zulu.sh — unrelated untriaged issue'
+board_assemble 560 561 562 563 564 570
+cycle_tail_out="$(board_run)"
+check "a headless cycle with a tail flags only the cycle as idle carriers" 0 "3" \
+  flag_count idle "$cycle_tail_out"
+check "the cycle tail receives no idle carrier comment" 1 "" \
+  grep -qE 'issueflow: #(563|564): idle graph flag' <<<"$cycle_tail_out"
+check "an off-graph issue does not suppress or carry headless-cycle idle" 1 "" \
+  grep -qF 'issueflow: #570: idle graph flag' <<<"$cycle_tail_out"
+
+# The explicit quiet case from the issue: two ready issues and a two-deep
+# chain. Distinct deliverables keep the older collision flag out too, so any
+# board-flag output is a regression rather than fixture noise.
+board_issue 531 ready 'kilo.sh — first movable issue'
+board_issue 532 ready 'lima.sh — second movable issue'
+board_issue 533 blocked 'mike.sh — short chain tail' 'Blocked by #531.'
+board_assemble 531 532 533
+quiet_graph_out="$(board_run)"
+check "a movable board with only a two-deep chain posts no graph flag" 1 "" \
+  grep -qE ': (idle|deep|cycle) graph flag' <<<"$quiet_graph_out"
+check "the graph tripwires never edit a label or queue state" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
+
+# Persisting state is silent, but extending the same chain changes the marker
+# state and speaks. This is the existing per-family board-marker contract,
+# proved on the new family rather than inferred from collision/window tests.
+deep_display='≥4:#501 > #502 > #503 > #504'
+deep_identity='nodes=#501,#502,#503,#504;edges=#501>#502,#502>#503,#503>#504'
+jq -n --arg b "<!-- issueflow:$(state_marker graph-deep "$(graph_marker_state "$deep_display" "$deep_identity")") -->
+said already" '[{"user": {"login": "sweep-bot"}, "body": $b}]' \
+  >"$BOARD/repos_owner_repo_issues_501_comments.json"
+board_assemble_keep 501 502 503 504
+deep_repeat_out="$(board_run)"
+check "a persisting deep shape is silent after its first word" 1 "" \
+  grep -qF 'issueflow: #501: deep graph flag' <<<"$deep_repeat_out"
+board_issue 505 blocked 'november.sh — a newly extended tail' 'Blocked by #504.'
+printf '[]\n' >"$BOARD/repos_owner_repo_issues_505_comments.json"
+board_assemble_keep 501 502 503 504 505
+deep_changed_out="$(board_run)"
+check "extending a deep shape changes its marker and speaks" 0 \
+  'issueflow: #501: deep graph flag — ≥4:#501 > #502 > #503 > #504' \
+  printf '%s\n' "$deep_changed_out"
 
 # -- today's board draws nothing (the post-ruling shape, live) --------------
 # #249 the `blocked` sink, this issue `claimed` with no open PR and a gate
