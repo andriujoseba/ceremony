@@ -13,6 +13,7 @@ source "$ROOT/test/harness.sh"
 LABELS="$ROOT/.github/workflows/labels.yml"
 SWEEP="$ROOT/.github/workflows/labels-sweep.yml"
 RELEASE="$ROOT/.github/workflows/release.yml"
+CI_RERUN="$ROOT/.github/workflows/ci-rerun.yml"
 CONSUMERS="$ROOT/docs/CONSUMERS.md"
 
 runner_field_count() { # $1 = reusable workflow, $2 = exact field
@@ -28,7 +29,7 @@ count_fixed() { # $1 = literal, $2 = file
   grep -cF "$1" "$2"
 }
 
-for workflow in "$LABELS" "$SWEEP" "$RELEASE"; do
+for workflow in "$LABELS" "$SWEEP" "$RELEASE" "$CI_RERUN"; do
   check "$(basename "$workflow") declares runner as a string" 0 "1" \
     runner_field_count "$workflow" "type: string"
   check "$(basename "$workflow") declares runner as optional" 0 "1" \
@@ -48,17 +49,20 @@ check "labels-sweep routes reconcile through the runner input" 0 "1" \
 # shellcheck disable=SC2016 # the GitHub expression is asserted literally
 check "release routes both doors through the runner input" 0 "2" \
   count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$RELEASE"
+# shellcheck disable=SC2016 # the GitHub expression is asserted literally
+check "ci-rerun routes its service job through the runner input" 0 "1" \
+  count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$CI_RERUN"
 
 # The local callers intentionally pass nothing: they exercise the unchanged
 # default route on ceremony's GitHub-hosted runner (#383 decision 6).
-for caller in self-labels.yml self-labels-sweep.yml self-release.yml; do
+for caller in self-labels.yml self-labels-sweep.yml self-release.yml self-ci-rerun.yml; do
   check "$caller does not override runner" 1 "" \
     grep -E '^[[:space:]]+runner:' "$ROOT/.github/workflows/$caller"
 done
 
-check "each caller stub shows the hosted JSON form" 0 "3" \
+check "each caller stub shows the hosted JSON form" 0 "4" \
   count_fixed "runner: '\"ubuntu-22.04\"'" "$CONSUMERS"
-check "each caller stub shows the multi-label JSON form" 0 "3" \
+check "each caller stub shows the multi-label JSON form" 0 "4" \
   count_fixed "runner: '[\"self-hosted\",\"ci-runner\"]'" "$CONSUMERS"
 check "consumer doctrine carries the exact runner isolation requirement" 0 \
   "Route these to a runner isolated from anything the token should not reach — never to a host that is itself part of the deploy path." \

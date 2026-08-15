@@ -1,0 +1,102 @@
+name: ci-rerun
+# Reusable half of the rerun servicing (#424). Triggers and permissions live in
+# the caller; docs/CONSUMERS.md carries the complete caller stub.
+#
+# WHY THIS EXISTS IN THE BASE REPOSITORY. A fork PR's run lives here, in the
+# base repo, and rerunning it needs `actions: write` here — which no fleet
+# identity holds and none should be given. A job's GITHUB_TOKEN can be granted
+# exactly that right and nothing else: scoped to one repository, expired with
+# the run, unable to push a commit, impossible to hand to a fork. That is the
+# whole idea; the gates in actions/ci-rerun are the safety around it (#424 D3).
+#
+# THE HEAD TREE IS NEVER READ. The caller uses pull_request_target, so this runs
+# with a writable token on a fork PR's event — the shape `runner-isolated`
+# exists to interrogate. It answers by construction: both checkouts below fetch
+# the BASE repository's default branch and the pinned ceremony implementation,
+# never `github.event.pull_request.head.*`; no step consumes a path from the
+# head; the action makes API calls and nothing else. A step that reads the head
+# tree is a blocking finding here, not a preference (#424 D2).
+#
+# NO CADENCE. The trigger is one `labeled` event and there is no schedule: a
+# sweep that re-attempted a refused rerun would turn one bad state into a loop
+# against the API, which is #109's `edited` runs and #110's draft runs over
+# again — 75 of 76 and 57% of runs bought nothing (#424 D5).
+#
+# This cannot loop: the label removal and the comment both use GITHUB_TOKEN,
+# and GitHub creates no workflow run from a GITHUB_TOKEN-raised event. An agent
+# setting the label uses a PAT and therefore does wake this — exactly the
+# asymmetry wanted.
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: >-
+          JSON-encoded runner label or label set. Keep the default for a
+          GitHub-hosted runner, or pass an array for a self-hosted runner.
+        type: string
+        required: false
+        default: '"ubuntu-latest"'
+
+env:
+  # A called workflow arrives without its repository. Keep this literal pin
+  # aligned with the ceremony release consumed by callers (issue #9 D3).
+  CEREMONY_SELF_REF: "0.7.3"
+
+jobs:
+  service:
+    # One label, one event. Every other label event exits before a runner is
+    # spent, and the action re-checks the same fact from EVENT_LABEL: a caller
+    # is a file consumers copy, and a gate that lives only in copied YAML is a
+    # gate one consumer will paste away.
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'rerun-owed'
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    permissions:
+      # The whole credential, itemised. `actions: write` is the one right no
+      # fleet identity holds and the only reason this workflow exists;
+      # `pull-requests: write` removes the label and posts the outcome;
+      # `contents: read` reads the base repo's own .github/labels.conf, which
+      # is where the fleet roster gate 1 measures against lives. Nothing here
+      # can push a commit, and nothing reads the PR's head.
+      contents: read
+      actions: write
+      pull-requests: write
+    concurrency:
+      # Two `rerun-owed` events on one PR must not race into two attempts.
+      group: ci-rerun-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        # The self-consumption bypass — labels-sweep.yml's twin, for #11's
+        # reason: on the dogfood path the base-branch checkout above already IS
+        # ceremony.
+        if: github.repository != 'heavy-duty/ceremony'
+        with:
+          repository: heavy-duty/ceremony
+          ref: ${{ env.CEREMONY_SELF_REF }}
+          path: .ceremony-src
+      # Two steps with mutually exclusive `if:`s, because a `uses:` path must be
+      # a literal — the same fork labels-sweep.yml wears.
+      - name: service rerun-owed
+        if: github.repository != 'heavy-duty/ceremony'
+        uses: ./.ceremony-src/actions/ci-rerun
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ACTOR: ${{ github.event.sender.login }}
+          EVENT_LABEL: ${{ github.event.label.name }}
+      - name: service rerun-owed (dogfood — the workspace IS ceremony)
+        if: github.repository == 'heavy-duty/ceremony'
+        uses: ./actions/ci-rerun
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ACTOR: ${{ github.event.sender.login }}
+          EVENT_LABEL: ${{ github.event.label.name }}

@@ -175,12 +175,15 @@ builder wakes; they are duties of their own.
   miniature, and the skip is what lets the build wake below reach a new claim
   — the claim on that PR's issue is parked ([BUILDER.md](BUILDER.md), shape
   6). Only this row skips: the build wake's hold on a red head is unchanged,
-  so the round at that head still waits. The label is what a **servicing**
-  actor wakes on, and that wake belongs to no row here — it is crew's to build
-  ([crew#295](https://github.com/heavy-duty/crew/issues/295)), and until it
-  exists the operator services the label by hand, which is today's cost minus
-  the silence. How a red head is detected and kept quiet is the engine's
-  mechanism, described in crew's `shared/README.md`, not here.
+  so the round at that head still waits. The label is **serviced by
+  `actions/ci-rerun`**, a `labeled`-triggered workflow in the base repository
+  holding `actions: write` for the length of one run (ceremony#424) — so no
+  row here is owed and the crew wake ([crew#295](https://github.com/heavy-duty/crew/issues/295))
+  is retired for this label: nothing detects, nothing sessions, and no chair is
+  spent. What is left to the operator is the **refusal** path, where one of that
+  action's four gates declines and its comment says which. How a red head is
+  detected and kept quiet is the engine's mechanism, described in crew's
+  `shared/README.md`, not here.
 - **Build**: a `ready` **unclaimed** issue (an assignee means mid-claim, not
   pickable), or a completed review round on my PR — a changes-request with
   no panel review request still outstanding; whole rounds, never single

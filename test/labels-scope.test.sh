@@ -236,6 +236,21 @@ EOF
   check "derive: the self sweep workflow is scope:labels" 0 \
     "[scope:labels]" derives '.github/workflows/self-labels-sweep.yml'
 
+  # #424 D8: the rerun servicing. `.github/labeler.yml` enumerates every
+  # action by name and has no `actions/**` catch-all, so an unmapped action
+  # means a PR touching only it derives NO scope at all — the board lying by
+  # omission, which is the gap #399 hit. Four paths, four assertions, each
+  # ALONE in bracket form for #300 round 1's reason: a set holding several
+  # would let a row be deleted with the case still green.
+  check "derive: the rerun servicing action is scope:labels" 0 \
+    "[scope:labels]" derives 'actions/ci-rerun/ci-rerun.sh'
+  check "derive: the rerun servicing reusable workflow is scope:labels" 0 \
+    "[scope:labels]" derives '.github/workflows/ci-rerun.yml'
+  check "derive: the rerun servicing caller is scope:labels" 0 \
+    "[scope:labels]" derives '.github/workflows/self-ci-rerun.yml'
+  check "derive: the rerun servicing test is scope:labels" 0 \
+    "[scope:labels]" derives 'test/ci-rerun.test.sh'
+
   # D3, the deliberate asymmetry with D1: a test file inherits no lib/**
   # glob, so its row is the one scope its subject actually locates
   check "derive: attention's test is scope:labels alone" 0 \
