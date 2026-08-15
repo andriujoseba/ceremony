@@ -23,7 +23,10 @@ and the reconciler recomputes it from GitHub's own facts.
 | `state:needs-human` | `#8250DF` | the human — **this PR could be merged right now**: zero blockers, whole panel approved the current head |
 
 `bots-reviewing` vs `addressing` is deliberate: staleness in the first means
-*poke the reviewers*, in the second *the builder dropped the ball*. And
+*poke the reviewers*, in the second *the builder dropped the ball* — unless a
+`rerun-owed` flag stands on that head, and then it means *poke whoever
+services the rerun*, because the builder there owes nothing until the rerun is
+made and its quiet is the flag's, not the builder's (#423). And
 `state:needs-human` means exactly one thing — a human could merge this now —
 so it requires zero blockers and head-current approvals; anything less and
 the reconciler takes it back. The author sets it at handoff (the one
@@ -192,6 +195,9 @@ naming the head it is evidence for** —
 ```
 
 — because the head is the label's whole subject and the machine has to read it.
+The marker is read only on comments by the pull request's **author**, which on
+a fleet PR is the builder the previous sentence names: a reviewer quoting the
+line back is quoting it, not raising a second flag.
 The **machine clears it** and nobody's memory does, on the first sweep where
 the head's checks are no longer failing *or* the named head is no longer this
 PR's head. It is the one hand-set label this machine removes, because its
@@ -206,6 +212,23 @@ commit the branch points at. A head nobody named, or one the sweep could not
 read, leaves the question unjudged and the label standing: a label wrongly kept
 asks a human to look at a PR that is fine, a label wrongly cleared tells a
 builder to fix a tree that is not broken.
+
+It is **not exempt from the 48-hour staleness clock**, and that is the
+decision rather than an omission: the sweep's exemption is `blocked` and
+`needs-ruling` only, so a head standing under this flag draws `stale` like any
+other. The rule that decides it, written here so the next label does not have
+to re-derive it: **a flag is exempt from the 48-hour clock when it carries an
+escalation clock of its own.** `needs-ruling` has the ladder and the 7-day
+nudge; `blocked` has the sweep that flips it the moment its named dependency
+lands. Their silence is not merely legitimate, it is already watched.
+`rerun-owed` has neither, and until the servicing wake ships (FLEET.md) the
+rerun is made by hand — so `stale` at 48h is the only thing in this system
+that says a flag has stood unserviced too long, and exempting it would buy
+silence on a stalled PR, which is the precise defect this label exists to end.
+What the resulting `stale` **asks for is a poke of whoever services the
+rerun** — never a fix from the builder, who owes nothing at a head carrying
+this flag. `stale` names no actor of its own; the actor is this row's to
+supply, and so it does (#423).
 
 It is a label although a park is otherwise declared by comment, because this
 park's reader is a **queue** and a queue cannot read prose — the same reason
