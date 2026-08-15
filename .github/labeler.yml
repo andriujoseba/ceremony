@@ -90,6 +90,15 @@ scope:labels:
           - actions/issueflow-reconcile/**
           - actions/labels-reconcile/**
           - actions/labels-scope/**
+          # the rerun servicing (#424): labels, not guards. That block is the
+          # family of actions that GRADE a PR and can fail it, each with a
+          # test/<guard>.test.sh beside it; this one grades nothing — it is
+          # triggered by a label, clears a label, and services the same board
+          # machinery as the two reconcilers above.
+          - actions/ci-rerun/**
+          - .github/workflows/ci-rerun.yml
+          - .github/workflows/self-ci-rerun.yml
+          - test/ci-rerun.test.sh
           # shared by both reconcilers; lib/** keeps scope:release-flow too,
           # and a mixed file honestly wears both labels (#267 D4, #302 D1)
           - lib/read.sh

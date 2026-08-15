@@ -99,7 +99,7 @@ and re-entry does not set `attention`.
 | `blocked` | `#6A737D` | (see above — same label serves PRs waiting on another PR/issue; legitimately quiet, the staleness sweep skips it). The reconciler refuses `state:needs-human` while `blocked` stands — the PR falls to `state:addressing` (#180) |
 | `offsite` | `#CFD3D7` | issue deliverable is a PR in another repository; set by the builder with the draft link and cleared by the builder at handoff |
 | `needs-ruling` | `#D4C5F9` | a human-owned decision is required; use BUILDER.md's ruling template and ladder. Set by triage or the builder; a state, not a signal — it clears on agreement, not on a reply |
-| `rerun-owed` | `#D4C5F9` | PR-only: the head is red on a rerun no agent may start, so a human owes one API call and the builder owes nothing. Set by the builder with its evidence; cleared by the reconciler |
+| `rerun-owed` | `#D4C5F9` | PR-only: the head is red on a rerun no agent may start, so the builder owes nothing until it is made. Set by the builder with its evidence; cleared by `ci-rerun` when it starts the attempt, and by the reconciler when the head recovers or moves (#424) |
 | `attention` | `#D93F0B` | issue-only demand parked for the assignee; hand-set, and never written by the machine |
 | `release` | `#0E8A16` | release flow, versioning, packaging work — and the ceremony PR itself |
 | `merge-next` | `#0E8A16` | head of the merge queue — merge this one next. Queue order is *intent*: never set by the reconciler, only cleared by it |
@@ -198,10 +198,23 @@ naming the head it is evidence for** —
 The marker is read only on comments by the pull request's **author**, which on
 a fleet PR is the builder the previous sentence names: a reviewer quoting the
 line back is quoting it, not raising a second flag.
-The **machine clears it** and nobody's memory does, on the first sweep where
-the head's checks are no longer failing *or* the named head is no longer this
-PR's head. It is the one hand-set label this machine removes, because its
-subject is a head and a head moves.
+**Two machines clear it and nobody's memory does.** `actions/ci-rerun` clears
+it the moment it starts the attempt, and comments that attempt's URL: the
+flag's whole subject is a rerun nobody could start, and one now has (#424). The
+**reconciler** clears it on the first sweep where the head's checks are no
+longer failing *or* the named head is no longer this PR's head — the backstop
+for every other ending, including the refusal below. They do not fight: the
+reconciler only ever removes this label and never writes it, so a start that
+clears it early is a no-op to the next sweep. It is the one hand-set label
+these machines remove, because its subject is a head and a head moves.
+
+**A refusal leaves the flag standing, and that is the one case where it
+deliberately outlives a service.** `actions/ci-rerun` measures four gates at
+service time — the actor is a fleet identity in `.github/labels.conf`, the head
+is still the one the evidence names, the run concluded `failure`, and it is on
+its first attempt — and where one refuses it comments which gate and what a
+human would have to do, and clears nothing. A service that dropped the state it
+declined to act on would be the stall again, with a robot in it (#424).
 
 The moved-head test is **identity, never recency**: it asks whether the
 evidenced SHA is still the head, not whether the head commit is newer than the
@@ -221,12 +234,15 @@ to re-derive it: **a flag is exempt from the 48-hour clock when it carries an
 escalation clock of its own.** `needs-ruling` has the ladder and the 7-day
 nudge; `blocked` has the sweep that flips it the moment its named dependency
 lands. Their silence is not merely legitimate, it is already watched.
-`rerun-owed` has neither, and until the servicing wake ships (FLEET.md) the
-rerun is made by hand — so `stale` at 48h is the only thing in this system
-that says a flag has stood unserviced too long, and exempting it would buy
-silence on a stalled PR, which is the precise defect this label exists to end.
-What the resulting `stale` **asks for is a poke of whoever services the
-rerun** — never a fix from the builder, who owes nothing at a head carrying
+`rerun-owed` has neither. `actions/ci-rerun` answers it within seconds of the
+label event, so a flag still standing hours later is one that service
+**refused** — and a refusal is exactly the state nothing else watches, since
+the four gates are conditions no push of the builder's resolves. So `stale` at
+48h is the only thing in this system that says a flag has stood unserviced too
+long, and exempting it would buy silence on a stalled PR, which is the precise
+defect this label exists to end. What the resulting `stale` **asks for is a
+poke of whoever services the rerun** — the refusal comment names them and what
+they owe — never a fix from the builder, who owes nothing at a head carrying
 this flag. `stale` names no actor of its own; the actor is this row's to
 supply, and so it does (#423).
 

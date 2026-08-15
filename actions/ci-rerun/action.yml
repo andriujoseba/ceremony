@@ -1,0 +1,10 @@
+name: Service a rerun-owed head
+description: Start the one rerun a fork PR's author cannot, behind four gates measured at service time
+runs:
+  using: composite
+  steps:
+    - name: service rerun-owed
+      shell: bash
+      env:
+        LABELS_CONF: ${{ github.workspace }}/.github/labels.conf
+      run: bash "$GITHUB_ACTION_PATH/ci-rerun.sh"
