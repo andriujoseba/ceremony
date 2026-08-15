@@ -807,7 +807,8 @@ attempt's URL.
 
 Four gates are measured at service time and none is inherited from the label:
 the label's actor is a fleet identity named in this repository's own
-`.github/labels.conf` (`panel=`, `panel[<login>]=` or `triage-actors=`), the
+`.github/labels.conf` — the `panel=` line, a `panel[<login>]=` row's bracketed
+login or its listed reviewers, or the `triage-actors=` line — the
 PR's head still is the one the evidence names, the newest non-successful run at
 that head concluded `failure` — a cancelled or in-flight run is not a verdict
 (#139, #209) — and that run is on attempt 1. **A refusal leaves the label
@@ -853,6 +854,18 @@ the gate that reads `.github/labels.conf` at all. A consumer that adopts the
 label without this caller
 gets the state and no servicing — which is where the fleet was before #424, and
 the operator services it by hand.
+
+**The roster is the second precondition, and the taxonomy this guide bootstraps
+does not meet it.** A consumer whose `.github/labels.conf` names none of the
+identities that set the label gets a refusal at gate 1 every time. The shipped
+conf names a review panel and a triage actor and no builder, so a repository
+that adopts this caller against that file unchanged, and then has a builder set
+`rerun-owed`, is refused — the happy path above, where the builder sets the
+label with its evidence comment and the rerun starts, does not happen until the
+conf names that builder by one of the fields the gate reads. Who belongs in
+that roster is the repository's own call and is not something this workflow
+decides: it reads the file and refuses anyone absent from it, and the refusal
+comment names both the actor and the file so the fix is one edit away.
 
 ## Doctrine mirror
 
