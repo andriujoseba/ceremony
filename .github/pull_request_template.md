@@ -1,5 +1,6 @@
 <!-- Short on purpose: a template longer than a small PR gets deleted by
-reflex, not read (issue #24). One issue, one PR — draft while building. -->
+reflex, not read (issue #24). One issue, an ordered chain of PRs — normally
+one; draft while building. -->
 
 Closes #
 
