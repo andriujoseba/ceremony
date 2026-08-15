@@ -287,9 +287,13 @@ main() {
   is_fleet_actor "$ACTOR" && actor_ok=yes
 
   local head named="" runs="" record="" run_id="" conclusion="" attempt="" url="" name=""
-  head="$(api_read "PR #$PR_NUMBER" "repos/$REPO/pulls/$PR_NUMBER" --jq '.head.sha')" || return 1
-  local author
-  author="$(api_read "PR #$PR_NUMBER's author" "repos/$REPO/pulls/$PR_NUMBER" --jq '.user.login')" || return 1
+  # One read for both facts: the head this service is about and the author whose
+  # evidence names it. Two reads of one endpoint would also let the two disagree
+  # across a push landing between them.
+  local pr author
+  pr="$(api_read "PR #$PR_NUMBER" "repos/$REPO/pulls/$PR_NUMBER" \
+    --jq '[.head.sha, .user.login] | @tsv')" || return 1
+  IFS=$'\t' read -r head author <<<"$pr"
 
   # The evidence is the PR AUTHOR's, as the reconciler reads it (#423): the
   # label is the builder's to set with its evidence, so a marker quoted back by
@@ -309,7 +313,9 @@ main() {
     runs="$(api_read "the runs at $head" \
       "repos/$REPO/actions/runs?head_sha=$head&per_page=100")" || return 1
     record="$(pick_run "$SELF_WORKFLOW" <<<"$runs")"
-    IFS=$'\t' read -r run_id conclusion attempt url name <<<"$record"
+    # `|| true` because an empty record is an answer — a head whose every run
+    # succeeded — and gate 3 is where that is said, not here.
+    IFS=$'\t' read -r run_id conclusion attempt url name <<<"$record" || true
   fi
 
   local decision

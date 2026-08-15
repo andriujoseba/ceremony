@@ -296,6 +296,18 @@ check "gate 4: nothing was rerun" 0 "no" started "$d"
 check "gate 4: the refusal names the attempt that spent it" 0 "already on attempt \`2\`" comment "$d"
 check "gate 4: the label is left standing" 0 "no" label_removed "$d"
 
+# A head whose every run succeeded: gate 3 says so rather than the script
+# dying on an empty record, which is what an unguarded `read` under
+# `pipefail` would do — and it would die on the ONE path where nothing is
+# wrong.
+d="$(scenario allgreen "$HEAD" "🔁 rerun owed at head \`$HEAD\`" \
+  "$(runs_json 11 success 1 ci 2026-08-15T10:00:00Z)")"
+check "gate 3: a head with no failing run is refused, not crashed into" 0 \
+  "gate verdict" service "$d" one-bot
+check "gate 3: and the refusal says there is nothing to rerun" 0 \
+  "is anything other than a success" comment "$d"
+check "gate 3: and the label is left standing" 0 "no" label_removed "$d"
+
 # A refusal that cleared the label is the tempting implementation — the one
 # that removes it in a `finally` — and it is the stall again, with a robot in
 # it (D4). Asserted for every gate at once so a fifth gate cannot arrive
