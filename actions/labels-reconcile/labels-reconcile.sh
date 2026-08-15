@@ -51,6 +51,10 @@ BLOCKERS=(blocker:conflict blocker:ci-red blocker:unrequested)
 # fixtures call decide_state — which now reads has_label — without ever
 # setting it (#51). An empty default keeps has_label honest for every caller.
 LABELS=""
+# The newest `labeled` event for `rerun-owed` on this PR, ISO-8601; empty when
+# the PR does not carry the label, or the timeline could not be read. Read only
+# on PRs carrying the label — one API call, paid by the few (#423).
+RERUN_OWED_AT=""
 # Labels this machine used to own and no longer does. Cleared on sight so a
 # retirement heals the board instead of stranding a label nothing recomputes.
 RETIRED=(state:needs-rebase)
@@ -475,6 +479,46 @@ human_request_needed() { # 0 when needs-human requires a FRESH human request
   return 0
 }
 
+rerun_owed_state() { # → STANDS | CLEARED | ABSENT — what `rerun-owed` says about THIS head
+  # The label a builder sets when the head is red on a rerun no identity in the
+  # fleet can start (#423). It is not a blocker: every blocker:* names work the
+  # BUILDER owes, and here the builder owes nothing and a human owes one API
+  # call. So it is hand-set intent this machine reads, like `needs-ruling` and
+  # `blocked` — with one difference that is the whole reason it is a label at
+  # all: this one the machine CLEARS, because its subject is a head, and a head
+  # moves. Set by the builder with its evidence, cleared here at the transition.
+  #
+  # Two transitions end it, and both are read off facts this sweep already has:
+  #
+  #   the head's checks left FAILURE — whatever was owed was serviced, or the
+  #   run reported something else; nothing is owed at a green head; and
+  #
+  #   the head MOVED under the label — the evidence named a commit that is no
+  #   longer this PR's head. Almost every such push clears by the first test
+  #   (a new head's checks are NONE or PENDING before they are anything else);
+  #   this second one is for the push that reds again, where the label would
+  #   otherwise suppress blocker:ci-red for a failure nobody has evidenced.
+  #
+  # "The head moved" is measured as the head commit being NEWER than the label's
+  # own `labeled` event, which is the ordering the act produces: the builder
+  # reads a red head, then sets the label. Neither timestamp readable leaves the
+  # question unjudged and the label standing — an unreadable fact never invents
+  # a verdict, and here the error directions are not symmetric: a label wrongly
+  # kept asks a human to look at a PR that is fine, a label wrongly cleared
+  # tells the builder to fix a tree that is not broken, which is the defect
+  # this label exists to end.
+  has_label rerun-owed || { echo ABSENT; return; }
+  case "${CHECKS:-NONE}" in FAILURE) ;; *) echo CLEARED; return ;; esac
+  local head_epoch labeled_epoch
+  if head_epoch="$(iso_epoch "${HEAD_COMMIT_AT:-}")" &&
+    labeled_epoch="$(iso_epoch "${RERUN_OWED_AT:-}")" &&
+    [ "$head_epoch" -gt "$labeled_epoch" ]; then
+    echo CLEARED
+    return
+  fi
+  echo STANDS
+}
+
 blockers() { # → the blocker:* labels this PR should carry, one per line
   # The second axis. These are FACTS ABOUT THE BRANCH, and they are mutually
   # independent — a PR can be conflicted and red and unasked at once — so they
@@ -491,7 +535,19 @@ blockers() { # → the blocker:* labels this PR should carry, one per line
   # nothing. An unset global (an older fixture, a failed fetch) must never
   # invent a verdict it did not read.
   case "${MERGEABLE:-UNKNOWN}" in CONFLICTING) echo blocker:conflict ;; esac
-  case "${CHECKS:-NONE}" in FAILURE) echo blocker:ci-red ;; esac
+  # A red head is the builder's by default and stays so. The one exception is a
+  # head standing under `rerun-owed` (#423): blocker:ci-red asserts the builder
+  # owes a FIX, and on a fork PR whose run only the base repo may restart that
+  # sentence is false in every word — the tree is not broken, the fix does not
+  # exist, and the actor is not in the fleet. Suppressing the blocker is not a
+  # claim the head is green: `blocker:unrequested` still reads FAILURE below,
+  # decide_state still refuses state:needs-human on it, and the label itself is
+  # what the board says instead. The moment rerun_owed_state stops saying STANDS
+  # — the head went green, or moved — this line returns unchanged, in the same
+  # sweep that clears the label.
+  case "${CHECKS:-NONE}" in
+    FAILURE) [ "$(rerun_owed_state)" = STANDS ] || echo blocker:ci-red ;;
+  esac
 
   # Nobody is on the hook for a verdict somebody still owes. Distinct from
   # bots-reviewing, which says a request is live and an answer is coming:
@@ -598,6 +654,21 @@ decide_state() { # → the one state:* label this PR should carry
     echo state:addressing; return
   fi
 
+  # And the branch fact behind blocker:ci-red, asked directly rather than
+  # through the label (#423). Until `rerun-owed` existed these were the same
+  # question — FAILURE always produced the blocker, and the clause above always
+  # caught it — so on every PR without that label this line changes nothing and
+  # a fixture pins that. With it, the clause above can come up empty at a head
+  # whose checks are red, and state:needs-human means exactly "a human could
+  # merge this RIGHT NOW", which is false at a red head however good the reason
+  # for the red is. Deliberately NOT `has_label rerun-owed`: the label never
+  # enters a refusal set, because a label that disqualifies needs-human is
+  # acting as a blocker and this one is not one. The red head is what refuses;
+  # the label only says who is owed the next move.
+  if [ "$s" = state:needs-human ] && [ "${CHECKS:-NONE}" = FAILURE ]; then
+    echo state:addressing; return
+  fi
+
   # A pending ruling disqualifies needs-human the same way (#51): while
   # `needs-ruling` is up, the human's turn lives in the THREAD — the flag
   # marks it — and "mergeable right now" must not read true beside an open
@@ -674,6 +745,14 @@ handoff_taken_back() { # → the blockers that took a handoff back, one per line
   # above it — so the answer is decide_state's own, not a second opinion
   # about it. A test pins the equivalence across the fixture matrix rather
   # than a runtime re-ask that no fixture could ever red.
+  # Since #423 the clause has one arm this predicate deliberately does not
+  # report: a red head under `rerun-owed` moves needs-human to addressing with
+  # NO blocker standing, so `blockers` is empty here and no comment is posted.
+  # That is the same treatment `needs-ruling` and `blocked` already get one
+  # paragraph up, and for the same reason — each of those take-backs wears a
+  # visible label saying why, and this one wears the label whose whole purpose
+  # is to say why. The comment exists for the take-back whose cause lived only
+  # in a run log; this cause is on the board.
   has_label state:needs-human || return 0
   [ "$DRAFT" != true ] || return 0
   [ "$(round_state)" = state:needs-human ] || return 0
@@ -750,6 +829,7 @@ state:needs-human|8250DF|No blockers, all bots approve — waiting on the human 
 blocker:conflict|B60205|Does not merge — the branch conflicts and the agent owes a rebase
 blocker:ci-red|B60205|A check is failing — the agent owes a fix (not a rebase)
 blocker:unrequested|E99695|Somebody still owes a verdict and nobody was asked for one
+rerun-owed|D4C5F9|The head is red on a rerun no agent may start — a human owes the button, not the builder a fix
 merge-next|0E8A16|Head of the merge queue — merge this one next (set by hand/agent, cleared here)
 stale|B60205|No activity for 48h — needs a poke (sweep-managed)
 blocked|6A737D|Waiting on another PR or issue to land first
@@ -942,6 +1022,18 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   for s in "${RETIRED[@]}"; do
     if has_label "$s"; then remove="$remove,$s"; fi
   done
+  # `rerun-owed` is cleared and never written (#423) — the one hand-set label
+  # this machine takes off, because its subject is a head and a head moves. It
+  # rides the same edit as everything else on purpose: the clear and the
+  # blocker:ci-red that returns with it are one transition, and splitting them
+  # across two calls would show the board a head with neither for a moment.
+  # NOT a BLOCKERS entry, which would be the reverse contract: that array is
+  # machine-owned and re-derived every pass, so the converge loop would strip a
+  # live evidenced label on the next tick — the trap #51 and #180 name for
+  # `needs-ruling` and `blocked`.
+  # An `if`, not a `&&` one-liner: this runs under `set -e`, where a trailing
+  # false test is a failed command and takes the whole PR's subshell with it.
+  if [ "$(rerun_owed_state)" = CLEARED ]; then remove="$remove,rerun-owed"; fi
   for s in "${BLOCKERS[@]}"; do
     if grep -qxF "$s" <<<"$want_blockers"; then
       has_label "$s" || add="$add,$s"
@@ -1146,7 +1238,11 @@ main() {
       # which never reach that blocker. Empty (a failed read, or a body without
       # the field) leaves the blocker unjudged, by unrequested_quiescent.
       HEAD_COMMIT_AT=""
-      if [ "$DRAFT" != true ]; then
+      # A draft normally skips this read (it reaches no blocker that needs it),
+      # but `rerun-owed` dates the head against its own labeled event (#423) and
+      # a fix round may ride a draft — so a draft carrying the label pays for
+      # the read too, or its label could never clear on a moved head.
+      if [ "$DRAFT" != true ] || has_label rerun-owed; then
         HEAD_COMMIT_ERR_FILE="$(mktemp)"
         HEAD_COMMIT_AT="$(gh api "repos/$REPO/commits/$HEAD_SHA" \
           --jq '.commit.committer.date' 2>"$HEAD_COMMIT_ERR_FILE" || echo "")"
@@ -1158,8 +1254,22 @@ main() {
             # narrows a blocker rather than skipping the PR, so it must not
             # read as the wholly-blind shape the counted line above matches.
             HEAD_COMMIT_AT=""
-            log "#$n: could not read the head commit's date: $(read_failure_reason "$HEAD_COMMIT_ERR") — blocker:unrequested not judged this pass" ;;
+            log "#$n: could not read the head commit's date: $(read_failure_reason "$HEAD_COMMIT_ERR") — blocker:unrequested and rerun-owed's moved-head test not judged this pass" ;;
         esac
+      fi
+      # `rerun-owed`'s own clock (#423): the newest `labeled` event for it, the
+      # shape lib/attention.sh reads for its flag. Behind the label, so an
+      # ordinary PR pays nothing. An unreadable timeline leaves the moved-head
+      # test unjudged and the label standing — never cleared on a fact this
+      # sweep did not read, the standing rule everywhere in this file.
+      RERUN_OWED_AT=""
+      if has_label rerun-owed; then
+        if ! RERUN_OWED_AT="$(gh api --paginate "repos/$REPO/issues/$n/timeline" \
+          --jq '.[] | select(.event == "labeled" and .label.name == "rerun-owed") | .created_at' \
+          2>/dev/null | sort | tail -n1)"; then
+          RERUN_OWED_AT=""
+          log "#$n: rerun-owed timeline unreadable — its moved-head test not judged this pass"
+        fi
       fi
       reconcile_pr "$n"
       ) 2>&1
