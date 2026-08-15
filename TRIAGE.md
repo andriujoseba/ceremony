@@ -119,6 +119,31 @@ the repo can succeed.** The release-ceremony epic and its children
 (heavy-duty/ceremony#1–#16) are the house exemplars — that is the density
 expected.
 
+## Sizing
+
+Before minting, ask whether one builder can carry the work to a verdict in a
+bounded number of review rounds. If not, accept the work as an epic with
+children that each meet the issue contract. @danmt's rule of thumb is: *"is
+the PR to fix this issue complex? yes? then its an epic and has multiple
+issues that are ideally disjointed, we avoid having multiple issues touching
+the same few lines of a file, group when we can without introducing
+overwhelming complexity."* (#416)
+
+Splitting does not promise parallel work. Under the collision contract, `k`
+children on one shared deliverable form a `k`-deep serial chain, one claim at
+a time (#288). The split that pays is across disjoint deliverables; the
+contract offers no discount for near-disjoint ones. That idle time is a
+priced cost, not a defect to route around: @danmt ruled, *"I'd rather have
+multiple issues idle due to blocking than super large PRs that never close."*
+(#416)
+
+A PR that keeps generating review rounds is evidence that its issue was
+mis-sized. Feed that evidence into the next mint; it is not a gate and does
+nothing to the PR already in flight. Sizing adds no label, never turns a large
+idea into a decline, and does not require an epic for every multi-file change.
+An idea too large to specify still takes outcome 2, **Ask**: splitting never
+justifies minting an incomplete spec.
+
 ## Multi-issue work
 
 When an acceptance produces more than one issue, mint an **epic** (`epic`
@@ -139,8 +164,9 @@ Repositories that adopt version epics follow [RELEASES.md](RELEASES.md).
 
 ## Backlog hygiene
 
-- **Dedup before minting** — search issues *and* closed issues; extend or
-  reopen before duplicating.
+- **Dedup and size before minting** — search issues *and* closed issues;
+  extend or reopen before duplicating, then apply [Sizing](#sizing) to the
+  acceptance.
 - The issue-flow sweep flips `blocked` → `ready` when every named dependency
   lands, and flags a blocked issue whose dependency declaration is unreadable.
 - The sweep reclaims abandoned claims after 48 hours: `claimed` + no open PR
