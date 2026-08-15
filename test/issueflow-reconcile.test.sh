@@ -3122,12 +3122,16 @@ check "the non-idle cycle board emits no idle flag" 1 "" \
 board_issue 521 blocked 'hotel.sh — idle tail' 'Blocked by #522.'
 board_issue 522 blocked 'india.sh — idle middle' 'Blocked by #523.'
 board_issue 523 blocked 'juliet.sh — idle head' 'Blocked by other/repo#99.'
-board_assemble 521 522 523
+board_issue 524 needs-triage 'kilo.sh — unrelated untriaged issue'
+board_issue 525 epic 'lima.sh — unrelated epic'
+board_assemble 521 522 523 524 525
 idle_out="$(board_run)"
 check "an idle board flags the chain head" 0 \
   'issueflow: #523: idle graph flag — 3:#521,#522,#523:#522>#521,#523>#522' \
   printf '%s\n' "$idle_out"
 check "the idle board flags its head only" 0 "1" flag_count idle "$idle_out"
+check "unrelated off-graph issues receive no idle carrier comment" 1 "" \
+  grep -qE 'issueflow: #(524|525): idle graph flag' <<<"$idle_out"
 check "the idle remedy names the priority route" 0 "" \
   grep -qF "following #425's priority route" "$BOARD/edits"
 
@@ -3202,12 +3206,15 @@ board_issue 561 blocked 'victor.sh — second source-cycle member' 'Blocked by #
 board_issue 562 blocked 'whiskey.sh — third source-cycle member' 'Blocked by #561.'
 board_issue 563 blocked 'xray.sh — cycle tail' 'Blocked by #562.'
 board_issue 564 blocked 'yankee.sh — cycle tail end' 'Blocked by #563.'
-board_assemble 560 561 562 563 564
+board_issue 570 needs-triage 'zulu.sh — unrelated untriaged issue'
+board_assemble 560 561 562 563 564 570
 cycle_tail_out="$(board_run)"
 check "a headless cycle with a tail flags only the cycle as idle carriers" 0 "3" \
   flag_count idle "$cycle_tail_out"
 check "the cycle tail receives no idle carrier comment" 1 "" \
   grep -qE 'issueflow: #(563|564): idle graph flag' <<<"$cycle_tail_out"
+check "an off-graph issue does not suppress or carry headless-cycle idle" 1 "" \
+  grep -qF 'issueflow: #570: idle graph flag' <<<"$cycle_tail_out"
 
 # The explicit quiet case from the issue: two ready issues and a two-deep
 # chain. Distinct deliverables keep the older collision flag out too, so any

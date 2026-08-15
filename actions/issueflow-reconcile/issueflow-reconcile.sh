@@ -748,6 +748,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
         edge_from[edge_count] = fields[1]
         edge_to[edge_count] = fields[2]
         vertex[fields[1]] = vertex[fields[2]] = 1
+        outdegree[fields[1]]++
         indegree[fields[2]]++
       }
     }
@@ -795,7 +796,10 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
         for (i = 1; i <= node_count; i++) {
           n = node_order[i]
           if (blocked[n]) blocked_list = blocked_list (blocked_list ? "," : "") "#" n
-          if (!indegree[n]) { idle_target[n] = 1; head_count++ }
+          if (!indegree[n] && (outdegree[n] || blocked[n])) {
+            idle_target[n] = 1
+            head_count++
+          }
         }
         if (head_count == 0)
           for (i = 1; i <= node_count; i++)
