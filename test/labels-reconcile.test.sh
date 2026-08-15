@@ -2052,6 +2052,13 @@ expect "the newest marker is the one that counts" "$RERUN_HEAD_NEW" \
     "${RERUN_OWED_MARKER}${RERUN_HEAD_NEW}" | rerun_owed_named_head)"
 expect "a comment that is not the marker names nothing" "" \
   "$(printf '%s\n' "🔨 Worklog — the rerun 404s at $RERUN_HEAD" | rerun_owed_named_head)"
+# ...and the same, in the two shapes that would name a head if the marker were
+# read loosely: a line that merely OPENS with a SHA, and the marker quoted
+# inside a sentence. A builder's other comments are full of both.
+expect "...nor a line that merely opens with a SHA" "" \
+  "$(rerun_owed_named_head <<<"$RERUN_HEAD is red and both rerun endpoints 404")"
+expect "...nor the marker quoted inside a sentence" "" \
+  "$(rerun_owed_named_head <<<"I posted ${RERUN_OWED_MARKER}${RERUN_HEAD} an hour ago")"
 expect "...nor does a marker with too short a head" "" \
   "$(rerun_owed_named_head <<<"${RERUN_OWED_MARKER}048434")"
 expect "...nor one whose head is not hex at all" "" \
