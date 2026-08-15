@@ -106,10 +106,10 @@ load_fleet() { # $1 = labels.conf → FLEET, the identities allowed to spend thi
         ;;
     esac
   done <"$conf"
-  [ "$seen" = true ] && [ "${#FLEET[@]}" -gt 0 ] || {
+  if [ "$seen" != true ] || [ "${#FLEET[@]}" -eq 0 ]; then
     echo "ci-rerun: $conf names no fleet identity (panel=, panel[<login>]= or triage-actors=)" >&2
     return 2
-  }
+  fi
 }
 
 is_fleet_actor() { # $1 = login
@@ -232,11 +232,13 @@ To service it: wait for the run to conclude, and re-apply the label if it conclu
 To service it: a second failure at one head is no longer retryable-unknown — read the run, and either fix it or take it to the operator by hand."
       ;;
   esac
+  # shellcheck disable=SC2016 # the backticks are markdown, not a substitution
   printf '%s`%s`\n\n%s\n\n<sub>`%s` is left standing: a refused service that drops the state is worse than no service at all (#424 D4).</sub>\n' \
     "$REFUSED_MARKER" "$head" "$why" "$LABEL"
 }
 
 started_body() { # $1 head, $2 run url, $3 attempt url, $4 run name
+  # shellcheck disable=SC2016 # the backticks are markdown, not a substitution
   printf '%s`%s`\n\n**%s** was on attempt 1 and is now on attempt 2: %s\n\nThe run that was rerun: %s. `%s` is removed and this head is back in the ordinary red-or-green flow — if the rerun reds again the failure is no longer retryable-unknown, `blocker:ci-red` returns, and it is the builder'"'"'s (#423 D5).\n' \
     "$STARTED_MARKER" "$1" "$4" "$3" "$2" "$LABEL"
 }
