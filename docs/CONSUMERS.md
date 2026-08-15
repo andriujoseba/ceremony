@@ -815,6 +815,18 @@ that head concluded `failure` — a cancelled or in-flight run is not a verdict
 standing** and comments which gate refused and what a human would have to do;
 only a started attempt clears it.
 
+Which runs are candidates is bounded the same way. A `pull_request_target` run
+carries the PR **head's** SHA, so every workflow the label event wakes — your
+`labels.yml`, this workflow itself, any other caller triggered on `labeled` —
+appears in the run list at that head alongside the checks. None of them is the
+run the label is about, so a candidate must have been **created before the
+evidence comment that names the head**: the builder evidenced a head it saw
+red, and a run that did not exist when that comment was written cannot be the
+one it names. Nothing is filtered by workflow name or by event kind, so a red
+`pull_request_target` check of your own — as unrerunnable by a fork author as
+any other — is serviced like the rest, as long as it was there to be
+evidenced.
+
 The job holds a privileged token, so what it does is bounded by construction:
 it checks out this repository's default branch and the pinned ceremony
 implementation, never the PR head, runs no PR-authored code, and makes API

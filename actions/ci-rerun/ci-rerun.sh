@@ -274,7 +274,7 @@ To service it: if the current head is red on the same unstartable rerun, evidenc
 
 To service it: nothing — a head with no failing run needs no attempt. Remove \`$LABEL\` if it is standing on a head that recovered. A run created *after* the evidence — including everything the label event itself woke — is never a candidate: it cannot be the run the evidence names."
       else
-        why="**Gate 3 — the verdict.** The newest non-successful run at \`$head\` concluded \`${conclusion:-in flight}\`, not \`failure\`: $url. A cancelled run is not a verdict (#139, #209) and an in-flight one has not reached one, so neither is resurrected into one here. Nothing was rerun.
+        why="**Gate 3 — the verdict.** The newest non-successful run at \`$head\` that pre-dates the evidence concluded \`${conclusion:-in flight}\`, not \`failure\`: $url. A cancelled run is not a verdict (#139, #209) and an in-flight one has not reached one, so neither is resurrected into one here. Nothing was rerun.
 
 To service it: wait for the run to conclude, and re-apply the label if it concludes \`failure\`."
       fi
