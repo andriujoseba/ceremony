@@ -1,8 +1,10 @@
 # BUILDER.md — the builder role
 
-You turn one issue into one PR. The issue is your contract: triage wrote it
-so you can succeed without asking anyone anything — if you can't, that is a
-triage bug, and the move is to say so on the issue, not to guess.
+You turn one issue into an ordered chain of PRs — normally one, and a second
+only where [the round cap](#the-round-cap) cuts it. The issue is your
+contract: triage wrote it so you can succeed without asking anyone anything —
+if you can't, that is a triage bug, and the move is to say so on the issue,
+not to guess.
 
 ## Picking
 
@@ -84,6 +86,14 @@ triage bug, and the move is to say so on the issue, not to guess.
   active elsewhere, finish or release that work first and say which on both
   issues. No machinery counts claims per builder, and none should be built
   expecting this section to have specified one.
+- **The claim survives a round-cap cut.** The claim is on the issue, and the
+  issue does not change because a different PR now carries its code, so the
+  cut ([The round cap](#the-round-cap)) is not a park, not a handoff, and
+  never a reason for anyone to unassign. Between closing the predecessor and
+  opening the successor the claim briefly has **no open PR** — the state the
+  48-hour reclaim clock reads. The window is seconds and inside your own turn,
+  and the cut comment on the issue is activity, so the clock is no threat;
+  the bookkeeping is named here rather than left to be rediscovered.
 - **Abandoning is fine; ghosting is not.** Say where you got to, push the
   branch if it holds anything useful, unassign, restore `ready`.
 
@@ -263,6 +273,77 @@ the head answer, then request, step 1's precondition and not a second one.
 Waiting there is compliance — again the request's wait, not the
 declaration's — and `blocker:unrequested` does not fire while a head's
 checks are pending or red (#236).
+
+## The round cap
+
+**A PR carries at most five rounds.** At the **close of round 5** the branch
+continues in a **successor** PR and the predecessor **closes** as the ledger
+of how the work got there, every comment, verdict and ruling intact. Round six
+never opens on the same PR. Five is ruled, not derived from any measurement,
+and no build re-derives it (#420).
+
+**The cap is a consensus-surface rule that happens to bound bytes, and it is
+stated in that order**: the longer a PR runs the harder it is to bring the
+whole panel onto one head, which is true whatever the body weighs. Written as
+a byte defence it would read as obsolete the moment the numbers moved.
+
+**Rounds are numbered per PR.** The successor's first round is **round 1**,
+never round 6, so every PR in a chain carries at most five and no builder has
+to choose a numbering. Where the PR sits in the chain is what the issue's
+ordered `## Pull requests` list records ([TRIAGE.md](TRIAGE.md)), not the
+round number.
+
+**You perform the cut, at the round close.** Every act in it is an authoring
+act you already perform, and nothing else performs any of it: nothing counts
+rounds for you, nothing enforces the cut, and nothing stops a sixth round on
+one PR. Where an engine does count and says the boundary is here, that is
+instruction and never performance — the procedure below is executable by a
+builder counting rounds by hand, and that is how it is written.
+
+At the close of round 5, in this order:
+
+1. **Answer round 5 whole, as any round** — the reply is owed and is still the
+   round-answered event — and bring `## Round log` current. Push the fixes.
+2. **Do not re-request the panel.** The ordinary rule re-requests by head
+   after a push; here the cut spends every approval, so a verdict bought on
+   the predecessor is a verdict on a PR that will never merge. Nothing you do
+   on the predecessor asks for one — neither the request itself nor the
+   declaration that elsewhere produces it. The panel is requested once, on the
+   successor.
+3. **Edit the predecessor's body, `Closes #N` → `Refs #N`.** This is the one
+   act that moves the close, and it happens **before** the close so the ledger
+   never stands closed while claiming to close an issue it does not. That edit
+   is a chain act and not a round record, so it neither is nor consumes the
+   round's one `## Round log` edit.
+4. **Close the predecessor.**
+5. **Open the successor from the same branch.** The order is forced rather
+   than preferred: GitHub permits only one open pull request per (base, head)
+   pair, so the successor cannot open while the predecessor is open on that
+   branch. A second branch at the same commit is not the alternative — it
+   renames the work for a mechanical reason and leaves two branches where the
+   chain has one. The window in which the branch has no open PR is seconds
+   long and inside your own turn.
+6. **The successor's body** carries `Closes #N`, the issue's acceptance
+   criteria verbatim, and a `## Round log` whose `### Current state` is
+   carried forward from the predecessor and whose `### Rounds` starts empty.
+7. **Comment on the predecessor, linking forward to the successor.** A comment
+   and not a second body edit: a body edit notifies nobody, and a reader who
+   arrives at the ledger needs exactly this pointer.
+8. **Comment on the issue, naming the cut** — predecessor closed at round 5,
+   successor opened, both linked. That comment is what triage reads to
+   maintain the issue's ordered PR list; the issue body is triage's and you do
+   not edit it.
+9. **Request the panel on the successor**, which is its round 1, under
+   [The review round](#the-review-round)'s green-check-at-head precondition
+   and nothing further.
+
+**What the cap does not do**, each stated because each is a plausible
+misreading. It is not a deadline and excuses no unanswered round: round 5 is
+answered whole before anything is cut. It permits no **mid-round** cut — the
+cut already spends the approvals, and cutting mid-round spends a round's work
+on top of them, which is why the boundary is a round boundary and not a byte
+count. It is not a failure and carries no stigma, though a chain reaching a
+**second** cut is sizing evidence for the next mint ([TRIAGE.md](TRIAGE.md)).
 
 ## The ruling ask
 

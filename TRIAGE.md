@@ -111,6 +111,15 @@ Every issue you mint carries, in this order:
   it — a release issue's `Blocked by` line answers its predecessor gate and
   never its membership (#292, #343). Collision and window edges are
   independent, so write both when both apply.
+- **Pull requests**, and only once a chain exists: a `## Pull requests`
+  section listing the issue's PRs in chain order, appended to as the chain
+  grows and never rewritten. A builder cuts
+  a PR at the close of its fifth round, continuing the branch in a successor
+  and closing the predecessor ([BUILDER.md](BUILDER.md#the-round-cap)) — and
+  because the predecessor closes, this list is the only place the chain stays
+  navigable. **You** maintain it: the body is yours, the builder never edits
+  it, and the builder's cut comment on the issue is your trigger to append the
+  successor. An issue whose work fitted one PR grows no such section.
 - **Labels**: type (`bug`/`enhancement`/`documentation`), `scope:*`, and
   exactly one of `ready` / `blocked` (see [LABELS.md](LABELS.md)).
 

@@ -141,6 +141,16 @@ saw Y" outranks one that says "this looks like it might".
 - The builder answers rounds whole and re-requests you; until re-requested,
   the ball is not yours (`state:addressing` is the builder working — pile-on
   reviews mid-address just churn the target).
+- **A round-cap cut spends every approval, and the review target becomes the
+  successor.** At the close of a PR's fifth round the builder continues the
+  branch in a new PR and closes the predecessor as the ledger
+  ([BUILDER.md](BUILDER.md#the-round-cap)). Your approval was of a tree on a
+  PR that will now never merge, so the cut stales it exactly as a push would —
+  this is *your approval is of a specific head* reaching one step further, not
+  an exception to it. **No verdict is owed on a closed predecessor**: you are
+  not re-requested there, and if you arrive there anyway, follow its forward
+  comment to the successor and review that head. The successor's first round
+  is its round 1.
 - A **draft carrying `state:addressing` is a fix round in progress**, not
   abandonment: an engine may convert a PR back to draft at round close so the
   builder's mid-round saves stop firing CI, and the flip back to ready is the
