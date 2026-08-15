@@ -16,5 +16,19 @@ to the issue for triage to amend, not silently unshipped. -->
 
 ## Round log
 
-<!-- The engine appends each whole-round reply here, newest last: what
-changed and what was verified. Builders write the reply, not this section. -->
+<!-- The rolling summary of this PR — what reviewers read, instead of the
+thread. Current state is rewritten in full every round; Rounds gains one row
+per round and its existing rows are never rewritten. The engine renders each
+row's facts; the builder writes the two prose cells and Current state, and
+keeps the section current at the round close (issue #418). -->
+
+### Current state
+
+<!-- What the PR does now, and what is outstanding. Budget: 1,500 chars. -->
+
+### Rounds
+
+<!-- One row per round. Prose cells: 500 chars each. -->
+
+| # | head | verdicts | reply | requested | done |
+| --- | --- | --- | --- | --- | --- |

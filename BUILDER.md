@@ -192,11 +192,15 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    red one author session. What the machine drops from the rollup before
    grading is crew's to describe.
 2. **Wait for every verdict, then answer the round whole** — one reply
-   covering every point, stating what changed and what was verified. That
-   reply is the written record: the engine mirrors it under the PR body's
-   **Round log**, newest last and marked with the round's head, which makes
-   a retry a no-op; you owe the reply and no body edit, and a round answered
-   without one is recorded as such and never blocks handoff. Then push the
+   covering every point, stating what changed and what was verified. **The
+   round is answered by a comment**, which names the round number and the
+   head SHA and points at the PR body's **Round log**: a body edit fires no
+   notification, so it wakes no reviewer and marks no event with an author,
+   a time or a head. With the detail in the body that reply is short, and a
+   round answered without one is recorded as such and never blocks handoff.
+   **You owe exactly one body edit per round, and it is confined to
+   `## Round log`** — no other section of the body is a round record, and
+   the body is still not where a round is answered (#418). Then push the
    fixes and re-request **by head, not by verdict**. A push makes every
    approval stale — an approval is of a specific tree, and the handoff
    predicate counts only approvals at the current head — so **every panelist
@@ -224,6 +228,26 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    A blocking point you disagree with is answered with evidence or escalated
    in the PR; silence and force-forward are not options, and a panel
    deadlock is one kind of human-owned decision (#50 D11).
+
+**The `## Round log` is a rolling summary, not a mirror of the replies**,
+and its two parts are what make it roll. **`### Current state`** is
+rewritten in full every round — what the PR does now and what is
+outstanding — so that it, and nothing else, is what a builder resuming cold
+or a reviewer opening the PR has to read. **`### Rounds`** is one row per
+round, appended and never rewritten: the round number, the head SHA, each
+panel verdict's author and state, a permalink to that round's reply, and
+**two prose cells, what was requested and what was done**. The **engine**
+renders the row's facts; the **builder** writes the two prose cells and
+`### Current state`, that half being the one no machine can produce without
+copying verdict bodies into the body, which is the growth this replaces
+(#418). **Until the engine renders the row, the builder writes the row
+too**: what you owe is that the section is current at the round close, which
+is true with or without an engine.
+
+**Its budgets are a budget and not a checked rule**, kept by eye: each prose
+cell at most 500 characters, `### Current state` at most 1,500. *Minimal*
+does not enforce itself, and a body growing by kilobytes a round becomes the
+payload that defeats the machinery reading the PR (#418).
 
 **A fix round may ride a draft**, and the draft changes nothing about who
 owes what: a mid-round draft reads as a draft always read — the phase is
@@ -295,15 +319,18 @@ the same comment ([LABELS.md](LABELS.md)).
 
 When the round passes — every panel verdict approving the **current head**,
 no `blocker:*` standing (conflicts rebased, CI green, drill recorded if this
-is a release PR) — the engine does these steps for the builder, in order:
+is a release PR), and the current round's row carrying **non-empty prose
+cells** — the engine does these steps for the builder, in order:
 
 1. request the human's review;
 2. set `state:needs-human`;
 3. post the engine-rendered handoff comment: approvals at the current head,
    the head SHA, and a pointer to the PR body's **Round log**.
 
-The builder composes no new summary: the authored record already lives in
-the Round log, mirrored from each whole-round reply. The label write is
+The prose precondition is the builder's alone and the handoff waits on it:
+the row appears mechanically, so an empty cell is visible in the rendered
+section, and handing off over one hands the human a record saying nothing
+(#418). The label write is
 optimistic — the reconciler validates it and takes it back if the PR is not
 mergeable-right-now. Then stop: the PR is the human's, and the claim parks
 as shape 4 (Picking, above), that comment its declaration and your slot
