@@ -544,6 +544,13 @@ rerun_owed_named_head() { # evidence first-lines on stdin → the head the newes
   local line rest sha=""
   while IFS= read -r line; do
     case "$line" in "$RERUN_OWED_MARKER"*) ;; *) continue ;; esac
+    # Newest wins even when the newest is unreadable, so the candidate dies on
+    # the marker and not on the validation: a builder who evidences a second
+    # head has superseded the first whether or not the new line spells its SHA,
+    # and an older marker outliving it would answer a question the newest
+    # evidence declines to answer — clearing a live label from a head nobody
+    # currently names, which is the one direction this parse must never take.
+    sha=""
     rest="${line#"$RERUN_OWED_MARKER"}"
     rest="${rest#\`}"                # the house style backticks a SHA
     rest="${rest,,}"                 # ...and a pasted one may be upper-case

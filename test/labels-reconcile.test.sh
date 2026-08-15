@@ -2050,6 +2050,16 @@ expect "...upper-case, as a paste from a UI can be" "$RERUN_HEAD" \
 expect "the newest marker is the one that counts" "$RERUN_HEAD_NEW" \
   "$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD}" \
     "${RERUN_OWED_MARKER}${RERUN_HEAD_NEW}" | rerun_owed_named_head)"
+# ...including when the newest names no readable head: it supersedes anyway, so
+# the pair reads as UNJUDGED and the label stands. An older marker surviving a
+# newer unreadable one would clear a live label on a head nobody currently
+# names, which is the one direction this parse may not take.
+expect "a newer unreadable marker supersedes an older valid one" "" \
+  "$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD}" \
+    "${RERUN_OWED_MARKER}not-a-sha" | rerun_owed_named_head)"
+expect "...and so does a newer one whose head is too short" "" \
+  "$(printf '%s\n%s\n' "${RERUN_OWED_MARKER}${RERUN_HEAD}" \
+    "${RERUN_OWED_MARKER}048434" | rerun_owed_named_head)"
 expect "a comment that is not the marker names nothing" "" \
   "$(printf '%s\n' "🔨 Worklog — the rerun 404s at $RERUN_HEAD" | rerun_owed_named_head)"
 # ...and the same, in the two shapes that would name a head if the marker were
