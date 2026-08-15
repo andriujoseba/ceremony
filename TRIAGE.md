@@ -94,8 +94,8 @@ Every issue you mint carries, in this order:
   repository qualified (`Blocked by repo#N` or `owner/repo#N`); the sweep
   cannot resolve it, so triage verifies it and flips the issue by hand.
   When a deliverable is already carried by an open `ready`, `claimed`, or
-  `blocked` issue, every new carrier gets an unconditional collision edge;
-  disjoint regions never excuse the edge. Precedence decides its direction,
+  `blocked` issue, the carriers get an unconditional collision edge;
+  disjoint regions never excuse it. Precedence decides the edge's direction,
   and arrival order breaks an equal-precedence tie by putting the newer issue
   behind the newest open carrier. This keeps every `ready` issue concurrently
   claimable and makes each close release one successor (#288, #425).
