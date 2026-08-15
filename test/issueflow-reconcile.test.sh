@@ -3068,6 +3068,8 @@ check "the one deep threshold constant is greppable" 0 "1" \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 check "the deep flag text names the threshold number" 0 "" \
   grep -qF 'deep-chain threshold is **4**' "$BOARD/edits"
+check "every graph tripwire comment carries its own marker family" 0 "" \
+  grep -qF '<!-- issueflow:graph-deep-' "$BOARD/edits"
 check "a fired graph tripwire writes no label or queue state" 1 "" \
   grep -qF 'issue edit' "$BOARD/edits"
 
@@ -3129,6 +3131,11 @@ check "the idle remedy names the priority route" 0 "" \
 # A local predecessor absent from the open board is closed. That issue is on
 # the existing blocked -> ready path, so it contributes no graph edge and the
 # whole pre-pass idle snapshot stays silent while the same pass releases it.
+board_issue 539 '' 'november.sh — closed predecessor'
+jq '.state = "closed"' "$BOARD/repos_owner_repo_issues_539.json" \
+  >"$BOARD/repos_owner_repo_issues_539.closed.json"
+mv "$BOARD/repos_owner_repo_issues_539.closed.json" \
+  "$BOARD/repos_owner_repo_issues_539.json"
 board_issue 540 blocked 'oscar.sh — closed predecessor releases' 'Blocked by #539.'
 board_issue 541 blocked 'papa.sh — external dependency remains' 'Blocked by other/repo#99.'
 board_assemble 540 541
@@ -3202,8 +3209,6 @@ board_assemble_keep 501 502 503 504 505
 deep_changed_out="$(board_run)"
 check "an extension beyond the threshold remains the same deep tripwire" 1 "" \
   grep -qF 'issueflow: #501: deep graph flag' <<<"$deep_changed_out"
-check "every graph tripwire comment carries its own marker family" 0 "" \
-  grep -qF '<!-- issueflow:graph-deep-' "$BOARD/edits"
 
 # -- today's board draws nothing (the post-ruling shape, live) --------------
 # #249 the `blocked` sink, this issue `claimed` with no open PR and a gate

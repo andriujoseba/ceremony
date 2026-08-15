@@ -733,8 +733,28 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       if (has_label($2, "ready") || has_label($2, "claimed")) movable_count++
     }
     END {
+      # Kahn-prune the acyclic region before asking any reachability question.
+      # Most boards are DAGs, so they pay O(VE) here and skip cycle DFS
+      # entirely. A cycle and anything fed only by it remains as a candidate;
+      # reaches(n,n) below separates the actual component from such tails.
       for (i = 1; i <= node_count; i++) {
         n = node_order[i]
+        work_indegree[n] = indegree[n]
+      }
+      do {
+        pruned = 0
+        for (i = 1; i <= node_count; i++) {
+          n = node_order[i]
+          if (removed[n] || work_indegree[n]) continue
+          removed[n] = 1
+          pruned = 1
+          for (e = 1; e <= edge_count; e++)
+            if (edge_from[e] == n) work_indegree[edge_to[e]]--
+        }
+      } while (pruned)
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (removed[n]) continue
         delete reach_seen
         if (reaches(n, n)) cyclic[n] = 1
       }
