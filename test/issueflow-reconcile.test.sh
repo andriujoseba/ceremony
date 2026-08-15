@@ -3085,6 +3085,7 @@ for ((i = 601; i <= 618; i++)); do
     branch_edges+="${i}"$'\t'"${j}"$'\n'
   done
 done
+# shellcheck disable=SC2016 # expansions belong to the isolated bash process
 branch_out="$(timeout 2 env BRANCH_RECORDS="$branch_records" BRANCH_EDGES="$branch_edges" \
   bash -c 'source "$1"; board_shape_flags 4 "$BRANCH_EDGES" "" <<<"$BRANCH_RECORDS"' \
   _ "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh")"
