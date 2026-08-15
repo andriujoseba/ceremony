@@ -30,10 +30,18 @@ not to guess.
   can ever take off. Such a PR is **never parked** on any other ground,
   whatever the verdict state says; how the engine detects a red head is
   crew's to describe.
-- **One build at a time**: one issue on which you are writing or revising a
-  deliverable, finished or released before you start more. The rule counts
-  work in flight, not claims — a **parked** claim, whose next move is
-  someone else's, does not hold the slot. Six shapes park:
+- **One build at a time, across every repository you work in**: one issue on
+  which you are writing or revising a deliverable. The slot is the builder's
+  and not any board's, so the self-check is *"do I hold an unparked claim
+  **anywhere**?"* and never *"in this repository?"* — each board sees only
+  its own claims, so a clean one in front of you answers a different
+  question (#430). A claim **holds the slot until it is parked — one of the
+  shapes below — or released**, released meaning the claim is no longer
+  yours: unassigned and back in the queue, or ended by the work landing.
+  Those are the only two exits, and judging a deliverable finished is not
+  among them. The rule counts work in flight, not claims — a **parked**
+  claim, whose next move is someone else's, does not hold the slot, and
+  parks are unlimited: hold any number, in any repository. Six shapes park:
   1. `needs-ruling` is set, the escalation names a decider, and its
      `Blocked:` line stops the rest;
   2. a **live** review round holds it, every outstanding verdict someone
@@ -74,9 +82,13 @@ not to guess.
 ## Claiming
 
 - Assign yourself, swap `ready` → `claimed`, and comment that you are
-  starting. The claim promises a draft PR soon: a claim with no PR and no
-  activity is what the staleness sweep reclaims, unless `offsite` records
-  that its PR lives in another repo.
+  starting. **That comment asserts the slot**: you hold no unparked claim in
+  **any** repository, and it names the parked claims you do hold, each with
+  its shape and where it lives. One clause, not a form — and it is the whole
+  of the enforcement, no board being able to see another's (#430). The claim
+  promises a draft PR soon: a claim with no PR and no activity is what the
+  staleness sweep reclaims, unless `offsite` records that its PR lives in
+  another repo.
 - **A park is declared, never inferred.** Comment naming what the claim
   waits on and who owns the next move — no new label; the comment is the
   activity the reclaim clock reads, as for `needs-ruling` (#52) and
@@ -99,9 +111,10 @@ not to guess.
   `claimed` and carries `attention` until the builder acks. Nobody unassigns
   it, and the 48-hour reclaim does not fire while the claim has an open PR.
 - **Unparking is a claim like any other** and takes the slot: if you are
-  active elsewhere, finish or release that work first and say which on both
+  active anywhere, park or release that work first and say which on both
   issues. No machinery counts claims per builder, and none should be built
-  expecting this section to have specified one.
+  expecting this section to have specified one — naming the slot's scope
+  commissions no counter, the discipline being the assertion above (#430).
 - **The claim survives a round-cap cut.** The claim is on the issue, and the
   issue does not change because a different PR now carries its code, so the
   cut ([The round cap](#the-round-cap)) is not a park, not a handoff, and
