@@ -173,11 +173,10 @@ builder wakes; they are duties of their own.
   is **skipped**: the evidence is already posted and starting the rerun is a
   right no fleet identity holds, so waking a session there is the stall in
   miniature, and the skip is what lets the build wake below reach a new claim
-  — the claim on that PR's issue is parked ([BUILDER.md](BUILDER.md),
-  shape 6). Only this
-  row skips: the build wake's hold on a red head is unchanged, so the round
-  at that head still waits. The label is what a **servicing** actor wakes on,
-  and that wake belongs to no row here — it is crew's to build
+  — the claim on that PR's issue is parked ([BUILDER.md](BUILDER.md), shape
+  6). Only this row skips: the build wake's hold on a red head is unchanged,
+  so the round at that head still waits. The label is what a **servicing**
+  actor wakes on, and that wake belongs to no row here — it is crew's to build
   ([crew#295](https://github.com/heavy-duty/crew/issues/295)), and until it
   exists the operator services the label by hand, which is today's cost minus
   the silence. How a red head is detected and kept quiet is the engine's

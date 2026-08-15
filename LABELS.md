@@ -184,10 +184,28 @@ reads it (#423).
 
 The **builder sets it**, in the same comment that records the check, its
 failure class and the rerun that could not be started; a flag with no such
-comment is noise, exactly as a bare `needs-ruling` is. The **machine clears
-it** and nobody's memory does, on the first sweep where the head's checks are
-no longer failing *or* the head has moved under it. It is the one hand-set
-label this machine removes, because its subject is a head and a head moves.
+comment is noise, exactly as a bare `needs-ruling` is. That comment **opens by
+naming the head it is evidence for** —
+
+```
+🔁 rerun owed at head <full-sha>
+```
+
+— because the head is the label's whole subject and the machine has to read it.
+The **machine clears it** and nobody's memory does, on the first sweep where
+the head's checks are no longer failing *or* the named head is no longer this
+PR's head. It is the one hand-set label this machine removes, because its
+subject is a head and a head moves.
+
+The moved-head test is **identity, never recency**: it asks whether the
+evidenced SHA is still the head, not whether the head commit is newer than the
+flag. A commit's date is a field its author writes, so dating the two against
+each other would discard a valid flag under clock skew and keep a stale one
+after a reset onto an older red commit — and neither is a fact about which
+commit the branch points at. A head nobody named, or one the sweep could not
+read, leaves the question unjudged and the label standing: a label wrongly kept
+asks a human to look at a PR that is fine, a label wrongly cleared tells a
+builder to fix a tree that is not broken.
 
 It is a label although a park is otherwise declared by comment, because this
 park's reader is a **queue** and a queue cannot read prose — the same reason
