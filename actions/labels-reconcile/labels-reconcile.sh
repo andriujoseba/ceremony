@@ -1269,6 +1269,11 @@ main() {
           2>/dev/null | sort | tail -n1)"; then
           RERUN_OWED_AT=""
           log "#$n: rerun-owed timeline unreadable — its moved-head test not judged this pass"
+        elif [ -z "$RERUN_OWED_AT" ]; then
+          # Told apart from the failed read on purpose, as lib/attention.sh
+          # tells them apart: a label whose `labeled` event is not visible is a
+          # different thing to investigate from a timeline that would not read.
+          log "#$n: rerun-owed has no visible labeled event — its moved-head test not judged this pass"
         fi
       fi
       reconcile_pr "$n"
