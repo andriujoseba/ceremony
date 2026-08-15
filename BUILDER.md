@@ -232,22 +232,23 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
 **The `## Round log` is a rolling summary, not a mirror of the replies**,
 and its two parts are what make it roll. **`### Current state`** is
 rewritten in full every round — what the PR does now and what is
-outstanding — so that it, and nothing else, is what a builder resuming cold
-or a reviewer opening the PR has to read. **`### Rounds`** is one row per
-round, appended and never rewritten: the round number, the head SHA, each
-panel verdict's author and state, a permalink to that round's reply, and
-**two prose cells, what was requested and what was done**. The **engine**
-renders the row's facts; the **builder** writes the two prose cells and
-`### Current state`, that half being the one no machine can produce without
-copying verdict bodies into the body, which is the growth this replaces
-(#418). **Until the engine renders the row, the builder writes the row
-too**: what you owe is that the section is current at the round close, which
-is true with or without an engine.
+outstanding — so that a builder resuming cold, or a reviewer wanting the
+history, reads it and needs nothing of the thread. **`### Rounds`** is one
+row per round, appended and never rewritten. The **engine** renders that
+row's facts — the round number, the head SHA, each panel verdict's author
+and state, and a permalink to that round's reply — and the **builder**
+writes `### Current state` and the row's **two prose cells, what was
+requested and what was done**, that half being the one no machine can
+produce without copying verdict bodies into the body, which is the growth
+this replaces (#418). **Until the engine renders the row, the builder writes
+the row too**: what you owe is that the section is current at the round
+close, which is true with or without an engine.
 
-**Its budgets are a budget and not a checked rule**, kept by eye: each prose
-cell at most 500 characters, `### Current state` at most 1,500. *Minimal*
-does not enforce itself, and a body growing by kilobytes a round becomes the
-payload that defeats the machinery reading the PR (#418).
+**The section's two budgets are a budget and not a checked rule**, kept by
+eye: each prose cell at most 500 characters, and `### Current state` at most
+1,500 characters. *Minimal* does not enforce itself, and a body growing by
+kilobytes a round becomes the payload that defeats the machinery reading the
+PR (#418).
 
 **A fix round may ride a draft**, and the draft changes nothing about who
 owes what: a mid-round draft reads as a draft always read — the phase is
