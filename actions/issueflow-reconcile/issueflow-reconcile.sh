@@ -795,7 +795,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
         for (i = 1; i <= node_count; i++) {
           n = node_order[i]
           if (blocked[n]) blocked_list = blocked_list (blocked_list ? "," : "") "#" n
-          if (blocked[n] && !indegree[n]) { idle_target[n] = 1; head_count++ }
+          if (!indegree[n]) { idle_target[n] = 1; head_count++ }
         }
         if (head_count == 0)
           for (i = 1; i <= node_count; i++)

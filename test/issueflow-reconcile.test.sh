@@ -3183,6 +3183,11 @@ for head_state in epic needs-triage ''; do
     check "a stable $head_state head carries the deep flag" 0 \
       'issueflow: #550: deep graph flag — ≥4:#550 > #551 > #552 > #553' \
       printf '%s\n' "$stable_state_out"
+    check "a stable $head_state head carries the idle flag" 0 \
+      'issueflow: #550: idle graph flag — 3:#551,#552,#553:#550>#551,#551>#552,#552>#553' \
+      printf '%s\n' "$stable_state_out"
+    check "the stable $head_state idle board flags its head only" 0 "1" \
+      flag_count idle "$stable_state_out"
   else
     check "an unlabeled head waits after becoming needs-triage" 1 "" \
       grep -qF ': deep graph flag' <<<"$stable_state_out"
