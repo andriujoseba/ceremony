@@ -30,16 +30,16 @@ not to guess.
   can ever take off. Such a PR is **never parked** on any other ground,
   whatever the verdict state says; how the engine detects a red head is
   crew's to describe.
-- **One build at a time, across every repository you work in**: one issue on
-  which you are writing or revising a deliverable. The slot is the builder's
-  and not any board's, so the self-check is *"do I hold an unparked claim
-  **anywhere**?"* and never *"in this repository?"* — each board sees only
-  its own claims, so a clean one in front of you answers a different
-  question (#430). A claim **holds the slot until it is parked — one of the
-  shapes below — or released**, released meaning the claim is no longer
-  yours: unassigned and back in the queue, or ended by the work landing.
-  Those are the only two exits, and judging a deliverable finished is not
-  among them. The rule counts work in flight, not claims — a **parked**
+- **One build at a time, across every repository you work in**: one unparked
+  claim, on whatever board it sits, and never a second while it stands. The
+  slot is the builder's and not any board's, so the self-check is *"do I
+  hold an unparked claim **anywhere**?"* and never *"in this repository?"* —
+  each board sees only its own claims, so a clean one in front of you
+  answers a different question (#430). A claim **holds the slot until it is
+  parked — one of the shapes below — or released**, released meaning the
+  claim is no longer yours: unassigned and back in the queue, or ended by
+  the work landing. Those are the only two exits, and judging a deliverable
+  finished is not among them. The rule counts work in flight, not claims — a **parked**
   claim, whose next move is someone else's, does not hold the slot, and
   parks are unlimited: hold any number, in any repository. Six shapes park:
   1. `needs-ruling` is set, the escalation names a decider, and its
