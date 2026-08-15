@@ -196,8 +196,7 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    round is answered by a comment**, which names the round number and the
    head SHA and points at the PR body's **Round log**: a body edit fires no
    notification, so it wakes no reviewer and marks no event with an author,
-   a time or a head. With the detail in the body that reply is short, and a
-   round answered without one is recorded as such and never blocks handoff.
+   a time or a head. With the detail in the body that reply is short.
    **You owe exactly one body edit per round, and it is confined to
    `## Round log`** — no other section of the body is a round record, and
    the body is still not where a round is answered (#418). Then push the
