@@ -3092,6 +3092,7 @@ branch_out="$(timeout 2 env BRANCH_RECORDS="$branch_records" BRANCH_EDGES="$bran
 branch_rc=$?
 check "a branching DAG is bounded rather than enumerating every simple path" 0 "" \
   test "$branch_rc" -eq 0
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
 check "the bounded branching walk still finds the deep threshold" 0 \
   $'601\tdeep\t≥4:#601 > #602 > #603 > #604' \
   bash -c 'cut -f1-3 <<<"$1"' _ "$branch_out"
