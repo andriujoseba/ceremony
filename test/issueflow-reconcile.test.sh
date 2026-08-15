@@ -3141,12 +3141,33 @@ mv "$BOARD/repos_owner_repo_issues_539.closed.json" \
   "$BOARD/repos_owner_repo_issues_539.json"
 board_issue 540 blocked 'oscar.sh — closed predecessor releases' 'Blocked by #539.'
 board_issue 541 blocked 'papa.sh — external dependency remains' 'Blocked by other/repo#99.'
-board_assemble 540 541
+board_assemble 541 540
 closed_predecessor_out="$(board_run)"
+closed_predecessor_rc=$?
+check "a last-position closed predecessor does not abort the graph gather" 0 "" \
+  test "$closed_predecessor_rc" -eq 0
 check "a closed predecessor follows the existing release path" 0 \
   'issueflow: #540: blockers closed -> ready' printf '%s\n' "$closed_predecessor_out"
 check "a releasing predecessor suppresses the stale board-wide idle fact" 1 "" \
   grep -qF ': idle graph flag' <<<"$closed_predecessor_out"
+
+# A dependent with one closed and one open local predecessor is not releasing:
+# the open predecessor remains an edge, so the genuinely idle board still
+# speaks. This pins the releasing predicate's any-open-match semantics.
+board_issue 570 '' 'quebec.sh — closed half of mixed predecessors'
+jq '.state = "closed"' "$BOARD/repos_owner_repo_issues_570.json" \
+  >"$BOARD/repos_owner_repo_issues_570.closed.json"
+mv "$BOARD/repos_owner_repo_issues_570.closed.json" \
+  "$BOARD/repos_owner_repo_issues_570.json"
+board_issue 571 blocked 'romeo.sh — open mixed predecessor' 'Blocked by other/repo#99.'
+board_issue 572 blocked 'sierra.sh — mixed dependent' 'Blocked by #570, #571.'
+board_assemble 571 572
+mixed_predecessor_out="$(board_run)"
+check "an open half keeps a mixed-predecessor issue in the graph" 0 \
+  'issueflow: #571: idle graph flag — 2:#571,#572:#571>#572' \
+  printf '%s\n' "$mixed_predecessor_out"
+check "a mixed-predecessor idle board flags its head only" 0 "1" \
+  flag_count idle "$mixed_predecessor_out"
 
 # Stable epic and needs-triage heads are graph carriers even though they are
 # not claimable. An unlabeled head changes to needs-triage during the pass and

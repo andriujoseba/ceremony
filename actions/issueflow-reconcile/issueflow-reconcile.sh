@@ -643,12 +643,14 @@ blocker_graph_records() { # $1 open numbers; board JSON on stdin -> blocker<TAB>
       | .body // ""' <<<"$board_json")"
     while IFS= read -r blocker; do
       [ -n "$blocker" ] || continue
-      grep -qxF "$blocker" <<<"$open_numbers" \
-        && printf '%s\t%s\n' "$blocker" "$n"
+      if grep -qxF "$blocker" <<<"$open_numbers"; then
+        printf '%s\t%s\n' "$blocker" "$n"
+      fi
     done < <(blocked_references <<<"$body")
   done < <(jq -r '.[] | select(has("pull_request") | not)
     | select((.labels // []) | map(.name) | index("blocked"))
     | .number' <<<"$board_json")
+  return 0
 }
 
 blocker_graph_releasing_issues() { # $1 open numbers; board JSON on stdin -> numbers
