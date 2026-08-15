@@ -120,18 +120,24 @@ check "head: an unread head is not named" 1 "" names_this_head abcdef1 ""
 # --- the candidate run: picked before it is graded -------------------------
 
 runs_json() { # id conclusion attempt name started …
+  # `created_at` is the run's own moment: GitHub sets it when the EVENT fired,
+  # which is what the cutoff grades against, while `run_started_at` is when a
+  # runner picked it up. A fixture that gave one and not the other could not
+  # tell a queued run from a late one, so both are written and a case that
+  # needs them to differ says so by building its own object.
   local out="[]"
   while [ $# -gt 0 ]; do
     out="$(jq --arg id "$1" --arg c "$2" --arg a "$3" --arg n "$4" --arg s "$5" \
       '. + [{id: ($id|tonumber), conclusion: (if $c == "" then null else $c end),
              run_attempt: ($a|tonumber), name: $n, run_started_at: $s,
+             created_at: $s,
              html_url: ("https://github.com/owner/repo/actions/runs/" + $id)}]' <<<"$out")"
     shift 5
   done
   jq -n --argjson r "$out" '{workflow_runs: $r}'
 }
 
-pick() { pick_run "${2:-}" <<<"$1"; }
+pick() { pick_run "${2:-}" "${3:-}" <<<"$1"; }
 
 check "pick: the newest non-success at the head" 0 "22	failure	1" \
   pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 failure 1 ci 2026-08-15T11:00:00Z)"
@@ -153,6 +159,83 @@ check "pick: a cancelled run is picked, so gate 3 can refuse it" 0 "22	cancelled
   pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 cancelled 1 ci 2026-08-15T11:00:00Z)"
 check "pick: an in-flight run is picked, so gate 3 can refuse it" 0 "22		1" \
   pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 '' 1 ci 2026-08-15T11:00:00Z)"
+
+# --- the cohort the label event wakes --------------------------------------
+#
+# The label that wakes this service wakes every other `labeled` workflow in the
+# base repository at the same instant, and a `pull_request_target` run carries
+# the PR HEAD's SHA — so those siblings are in the run list at this head, as
+# this workflow's own run is. Excluding them by name covers exactly one name;
+# the cutoff covers the cohort, because a run created after the evidence cannot
+# be the run the evidence names. Both of the reviewer's cases are here, and the
+# control beside them: with only the red `ci` at the head nothing changes.
+EVIDENCED=2026-08-15T10:30:00Z # when the builder wrote the evidence
+SIBLING=2026-08-15T10:31:00Z   # when the label event woke everything
+
+check "cutoff: a sibling still in flight is not the run the label is about" 0 "11	failure	1" \
+  pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 '' 1 labels "$SIBLING")" \
+  ci-rerun "$EVIDENCED"
+check "cutoff: a sibling that concluded failure is not it either" 0 "11	failure	1" \
+  pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 failure 1 labels "$SIBLING")" \
+  ci-rerun "$EVIDENCED"
+check "cutoff: with only the red run at the head, nothing changes" 0 "11	failure	1" \
+  pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z)" ci-rerun "$EVIDENCED"
+# The narrowing this deliberately does NOT do. A `pull_request_target` check in
+# the base repo is exactly as unrerunnable by a fork author as a `pull_request`
+# one, so `rerun-owed` can properly be about a red `labels` run — as long as it
+# was there to be evidenced. Filtering the cohort by event kind would refuse
+# this one forever; filtering by "created before the evidence" services it.
+check "cutoff: a sibling the evidence could have seen is still a candidate" 0 "22	failure	1" \
+  pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 failure 1 labels 2026-08-15T10:20:00Z)" \
+  ci-rerun "$EVIDENCED"
+# A run whose creation time is unreadable cannot be shown to pre-date anything,
+# so it is not a candidate under a cutoff — and IS one without.
+UNDATED="$(jq -n '{workflow_runs: [{id: 22, conclusion: "failure", run_attempt: 1,
+  name: "labels", html_url: "u/22"}]}')"
+check "cutoff: an undated run is no candidate under a cutoff" 0 "" \
+  pick "$UNDATED" ci-rerun "$EVIDENCED"
+check "cutoff: and is one when nothing is filtering" 0 "22	failure	1" pick "$UNDATED" ci-rerun
+# An empty cutoff filters nothing: the rehearsal convention SELF_WORKFLOW
+# already uses, so a run outside Actions grades what it is given.
+check "cutoff: an empty cutoff filters nothing" 0 "22	failure	1" \
+  pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 failure 1 labels "$SIBLING")" ci-rerun
+# And the case the floor exists for: a cutoff dated AFTER the cohort admits it
+# again, which is what a builder who labels before it evidences would produce.
+check "cutoff: a cutoff later than the cohort admits it — hence the floor" 0 "22	failure	1" \
+  pick "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 failure 1 labels "$SIBLING")" \
+  ci-rerun 2026-08-15T10:32:00Z
+
+# The cutoff's own two facts. The evidence's moment is read off the same stream
+# and by the same newest-wins rule as the head it names, so both always come
+# from ONE comment.
+mt() { printf '%s\n' "$@" | evidence_marker_time; } # each arg one `ts<TAB>line`
+MARKER='🔁 rerun owed at head '
+check "cutoff: the newest marker's time is the cutoff" 0 "2026-08-15T10:30:00Z" \
+  mt "2026-08-15T09:00:00Z	${MARKER}\`abcdef1234\`" \
+  "2026-08-15T10:30:00Z	${MARKER}\`beef1234567\`"
+check "cutoff: prose after the marker does not move it" 0 "2026-08-15T09:00:00Z" \
+  mt "2026-08-15T09:00:00Z	${MARKER}\`abcdef1234\`" \
+  "2026-08-15T11:00:00Z	the runner died again"
+check "cutoff: no marker names no moment" 0 "" mt "2026-08-15T09:00:00Z	nothing to see"
+check "cutoff: a record with no tab is not a record" 0 "" mt "${MARKER}\`abcdef1234\`"
+
+# The floor. BUILDER.md has the evidence comment SET the label, so the evidence
+# is normally the earlier of the two — but a builder who labelled first would
+# widen the window back over the cohort that event created, and this service's
+# own run dates that event at no extra API call (it is in the list, because a
+# `pull_request_target` run carries the head's SHA).
+check "cutoff: the earlier of two stamps wins" 0 "2026-08-15T10:00:00Z" \
+  earlier_time 2026-08-15T11:00:00Z 2026-08-15T10:00:00Z
+check "cutoff: an empty stamp is no bound, not the beginning of time" 0 "2026-08-15T11:00:00Z" \
+  earlier_time "" 2026-08-15T11:00:00Z
+check "cutoff: two empty stamps are no bound at all" 0 "" earlier_time "" ""
+rca() { run_created_at "${2:-}" <<<"$1"; }
+check "cutoff: this service's own run dates the label event" 0 "$SIBLING" \
+  rca "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 99 '' 1 ci-rerun "$SIBLING")" 99
+check "cutoff: an absent run id dates nothing" 0 "" \
+  rca "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z)"
+check "cutoff: a run id not in the list dates nothing" 0 "" \
+  rca "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z)" 99
 
 # --- the decision: four gates, in order ------------------------------------
 
@@ -230,15 +313,16 @@ scenario() { # $1 name, $2 head, $3 evidence body, $4 runs json → the scenario
   rm -rf "$d"
   mkdir -p "$d"
   jq -n --arg h "$2" '{head: {sha: $h}, user: {login: "builder-bot"}}' >"$d/pull.json"
-  jq -n --arg b "$3" '[{user: {login: "builder-bot"}, body: $b}]' >"$d/comments.json"
+  jq -n --arg b "$3" --arg t "${5:-2026-08-15T10:30:00Z}" \
+    '[{user: {login: "builder-bot"}, body: $b, created_at: $t}]' >"$d/comments.json"
   printf '%s\n' "$4" >"$d/runs.json"
   : >"$d/calls"
   printf '%s' "$d"
 }
 
-service() { # $1 = scenario dir, $2 = actor
+service() { # $1 = scenario dir, $2 = actor, $3 = this service's own run id, if any
   (
-    export PATH="$STUB:$PATH" GH_STUB_DIR="$1"
+    export PATH="$STUB:$PATH" GH_STUB_DIR="$1" GITHUB_RUN_ID="${3:-}"
     REPO=owner/repo PR_NUMBER=7 ACTOR="$2" LABELS_CONF="$TMP/conf" \
       SELF_WORKFLOW=ci-rerun bash "$ACTION" 2>&1
   )
@@ -307,6 +391,49 @@ check "gate 3: a head with no failing run is refused, not crashed into" 0 \
 check "gate 3: and the refusal says there is nothing to rerun" 0 \
   "is anything other than a success" comment "$d"
 check "gate 3: and the label is left standing" 0 "no" label_removed "$d"
+
+# The cohort, through the real main() rather than only at the function
+# boundary: the assertion is which API calls happened, which is the only place
+# the two failure modes are distinguishable from a green suite. The evidence is
+# written at 10:30 and the label event wakes everything at 10:31.
+EVIDENCE="🔁 rerun owed at head \`$HEAD\`"
+d="$(scenario sibling_inflight "$HEAD" "$EVIDENCE" \
+  "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 '' 1 labels "$SIBLING")")"
+check "cohort: a sibling still in flight does not refuse the happy path" 0 \
+  "started attempt 2" service "$d" one-bot
+check "cohort: the attempt started is on the run the evidence named" 0 "1" \
+  bash -c 'grep -c "runs/11/rerun-failed-jobs" "$1/calls"' _ "$d"
+check "cohort: the in-flight sibling is not rerun" 0 "0" \
+  bash -c 'grep -c "runs/22/" "$1/calls" || true' _ "$d"
+
+# The worse one, and the deterministic one: a sibling that concluded `failure`
+# is newer than the red run, so an unfiltered selector reruns IT, removes the
+# label and comments an attempt — while the red the evidence named is untouched
+# (D4's dropped state, reached through a start instead of a refusal).
+d="$(scenario sibling_failed "$HEAD" "$EVIDENCE" \
+  "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 failure 1 labels "$SIBLING")")"
+check "cohort: a sibling that concluded failure still leaves a start to make" 0 \
+  "started attempt 2" service "$d" one-bot
+check "cohort: a sibling that concluded failure is not rerun in its place" 0 "0" \
+  bash -c 'grep -c "runs/22/" "$1/calls" || true' _ "$d"
+check "cohort: the red run the evidence named is what is rerun" 0 "1" \
+  bash -c 'grep -c "runs/11/rerun-failed-jobs" "$1/calls"' _ "$d"
+check "cohort: and the comment names that run, not the sibling" 0 "**ci** was on attempt 1" \
+  comment "$d"
+
+# The floor, exercised where it is the only thing holding: the label landed
+# BEFORE the evidence, so the evidence alone would date the cutoff after the
+# cohort. This service's own run is in the list at this head — a
+# `pull_request_target` run carries the head's SHA — and dates the event.
+d="$(scenario sibling_floor "$HEAD" "$EVIDENCE" \
+  "$(runs_json 11 failure 1 ci 2026-08-15T10:00:00Z 22 failure 1 labels "$SIBLING" \
+    99 '' 1 ci-rerun "$SIBLING")" 2026-08-15T10:32:00Z)"
+check "cohort: a label that landed before the evidence starts the right rerun" 0 \
+  "started attempt 2" service "$d" one-bot 99
+check "cohort: a label that landed before the evidence still excludes the cohort" 0 "1" \
+  bash -c 'grep -c "runs/11/rerun-failed-jobs" "$1/calls"' _ "$d"
+check "cohort: and reruns neither the sibling nor this service's own run" 0 "0" \
+  bash -c 'grep -cE "runs/(22|99)/" "$1/calls" || true' _ "$d"
 
 # A refusal that cleared the label is the tempting implementation — the one
 # that removes it in a `finally` — and it is the stall again, with a robot in

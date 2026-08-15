@@ -149,6 +149,38 @@ evidence_named_head() { # evidence first-lines on stdin → the head the newest 
   [ -z "$sha" ] || echo "$sha"
 }
 
+evidence_marker_time() { # `created_at<TAB>first-line` on stdin → the newest marker's time
+  # The cutoff pick_run grades against, read off the same stream and by the same
+  # newest-wins rule evidence_named_head uses, so the head and the moment it was
+  # evidenced always come from ONE comment. Kept separate from that parser on
+  # purpose: it is pinned byte-for-byte to labels-reconcile.sh's and a second
+  # field in its input would break the tripwire that makes the duplicate honest.
+  local line rest at="" tab=$'\t'
+  while IFS= read -r line; do
+    # A line carrying no tab is not a `created_at<TAB>line` record at all, and a
+    # marker read out of one would date the evidence by its own text.
+    case "$line" in *"$tab"*) ;; *) continue ;; esac
+    rest="${line#*"$tab"}"
+    case "$rest" in "$RERUN_OWED_MARKER"*) at="${line%%"$tab"*}" ;; esac
+  done
+  [ -z "$at" ] || echo "$at"
+}
+
+earlier_time() { # $1, $2 = ISO-8601 stamps, either possibly empty → the earlier one
+  # An empty stamp is "no bound", not "the beginning of time": a rehearsal that
+  # reads neither must filter nothing rather than everything.
+  if [ -z "${1:-}" ]; then printf '%s' "${2:-}"
+  elif [ -z "${2:-}" ]; then printf '%s' "$1"
+  elif [[ "$1" < "$2" ]]; then printf '%s' "$1"
+  else printf '%s' "$2"; fi
+}
+
+run_created_at() { # runs JSON on stdin, $1 = a run id → that run's creation time
+  jq -r --arg id "${1:-}" '
+    [ .workflow_runs[]? | select($id != "" and (.id | tostring) == $id)
+      | (.created_at // .run_started_at // empty) ] | .[0] // empty'
+}
+
 names_this_head() { # $1 = the head the evidence names, $2 = the head now
   # Prefix, not equality: a marker naming an abbreviated SHA names this head as
   # surely as a full one, and reading it as a moved head would refuse on a
@@ -157,7 +189,7 @@ names_this_head() { # $1 = the head the evidence names, $2 = the head now
   [ -n "$1" ] && [ -n "$2" ] && [ "${2:0:${#1}}" = "$1" ]
 }
 
-pick_run() { # runs JSON on stdin → id<TAB>conclusion<TAB>attempt<TAB>url<TAB>name
+pick_run() { # runs JSON on stdin, $1 self, $2 cutoff → id<TAB>conclusion<TAB>attempt<TAB>url<TAB>name
   # The candidate is the NEWEST run at the head that did not succeed, and it is
   # picked before it is graded — which is what lets gate 3 refuse at all. A
   # selector that took "the newest FAILING run" could never meet a cancelled
@@ -167,10 +199,31 @@ pick_run() { # runs JSON on stdin → id<TAB>conclusion<TAB>attempt<TAB>url<TAB>
   # Newest by start time, not by completion: a cancelled run can outlive its
   # replacement's start (#139), and the same ordering the green rule uses is
   # the one this must use.
-  local self="${1:-}"
-  jq -r --arg self "$self" '
+  #
+  # But newest among WHAT. The label event that wakes this service wakes every
+  # other `labeled` workflow in the base repository at the same instant, and a
+  # `pull_request_target` run carries the PR head's SHA — so those siblings are
+  # in this list, exactly as this workflow's own run is. Picking one refuses the
+  # happy path when it is still in flight ("has not concluded" about a run
+  # nobody asked about), and, worse, reruns the SIBLING when it concluded
+  # `failure`: the label comes off, a comment says an attempt started, and the
+  # red the evidence named is untouched — D4's dropped state, reached through a
+  # start instead of a refusal.
+  #
+  # So a candidate must PRE-DATE the evidence: the builder evidenced a head it
+  # saw red, and a run that did not exist when that comment was written cannot
+  # be the run it names. That excludes the whole cohort the label event creates
+  # by construction rather than by name — which is the property `SELF_WORKFLOW`
+  # can only have for one name. A run whose creation time is unreadable is not a
+  # candidate under a cutoff either: it cannot be shown to pre-date anything.
+  # An empty cutoff filters nothing, for a rehearsal outside Actions.
+  local self="${1:-}" cutoff="${2:-}"
+  jq -r --arg self "$self" --arg cutoff "$cutoff" '
     [ .workflow_runs[]?
       | select($self == "" or .name != $self)
+      | select($cutoff == ""
+               or ((.created_at // .run_started_at // "") != ""
+                   and (.created_at // .run_started_at) < $cutoff))
       | select(.conclusion != "success") ]
     | sort_by(.run_started_at // .created_at) | reverse | .[0] // empty
     | [ (.id | tostring), (.conclusion // ""), (.run_attempt | tostring),
@@ -217,9 +270,9 @@ To service it: if the current head is red on the same unstartable rerun, evidenc
       ;;
     verdict)
       if [ -z "$url" ]; then
-        why="**Gate 3 — the verdict.** No run at \`$head\` is anything other than a success, so there is nothing here to rerun. Nothing was rerun.
+        why="**Gate 3 — the verdict.** No run at \`$head\` that pre-dates the evidence is anything other than a success, so there is nothing here to rerun. Nothing was rerun.
 
-To service it: nothing — a head with no failing run needs no attempt. Remove \`$LABEL\` if it is standing on a head that recovered."
+To service it: nothing — a head with no failing run needs no attempt. Remove \`$LABEL\` if it is standing on a head that recovered. A run created *after* the evidence — including everything the label event itself woke — is never a candidate: it cannot be the run the evidence names."
       else
         why="**Gate 3 — the verdict.** The newest non-successful run at \`$head\` concluded \`${conclusion:-in flight}\`, not \`failure\`: $url. A cancelled run is not a verdict (#139, #209) and an in-flight one has not reached one, so neither is resurrected into one here. Nothing was rerun.
 
@@ -298,13 +351,18 @@ main() {
   # The evidence is the PR AUTHOR's, as the reconciler reads it (#423): the
   # label is the builder's to set with its evidence, so a marker quoted back by
   # a reviewer is a quotation and not a second flag.
-  local evidence=""
+  local evidence="" cutoff=""
   if [ "$actor_ok" = yes ]; then
+    # Each comment reduces to `created_at<TAB>first line`: the head the evidence
+    # names and the moment it was written are one comment's two facts, and the
+    # selector needs both. @tsv escapes a tab inside a body, so the record is
+    # two fields whatever the builder typed.
     evidence="$(RERUN_OWED_AUTHOR="$author" api_read "PR #$PR_NUMBER's comments" --paginate \
       "repos/$REPO/issues/$PR_NUMBER/comments" \
       --jq '.[] | select(.user.login == env.RERUN_OWED_AUTHOR)
-            | .body | split("\n")[0] | sub("\r$"; "")')" || return 1
-    named="$(evidence_named_head <<<"$evidence")"
+            | [ .created_at, (.body | split("\n")[0] | sub("\r$"; "")) ] | @tsv')" || return 1
+    named="$(cut -f2- <<<"$evidence" | evidence_named_head)"
+    cutoff="$(evidence_marker_time <<<"$evidence")"
   fi
 
   # Only reached once the head is known to be the evidenced one: a run list for
@@ -312,7 +370,14 @@ main() {
   if [ "$actor_ok" = yes ] && names_this_head "$named" "$head"; then
     runs="$(api_read "the runs at $head" \
       "repos/$REPO/actions/runs?head_sha=$head&per_page=100")" || return 1
-    record="$(pick_run "$SELF_WORKFLOW" <<<"$runs")"
+    # This service's own run is in that list — a `pull_request_target` run
+    # carries the PR head's SHA — so the list already carries the moment the
+    # label event fired, at no extra API call. Floor the evidence cutoff with
+    # it: BUILDER.md has the evidence comment SET the label, so the evidence is
+    # normally the earlier of the two, but a builder who labelled first would
+    # otherwise widen the window back over the cohort that event created.
+    cutoff="$(earlier_time "$cutoff" "$(run_created_at "${GITHUB_RUN_ID:-}" <<<"$runs")")"
+    record="$(pick_run "$SELF_WORKFLOW" "$cutoff" <<<"$runs")"
     # `|| true` because an empty record is an answer — a head whose every run
     # succeeded — and gate 3 is where that is said, not here.
     IFS=$'\t' read -r run_id conclusion attempt url name <<<"$record" || true
@@ -324,7 +389,7 @@ main() {
 
   if [ "$decision" != START ]; then
     local gate="${decision#REFUSE:}"
-    log "refused at $head: gate $gate (actor=$ACTOR evidence=${named:-none} run=${run_id:-none} conclusion=${conclusion:-none} attempt=${attempt:-none})"
+    log "refused at $head: gate $gate (actor=$ACTOR evidence=${named:-none} cutoff=${cutoff:-none} run=${run_id:-none} conclusion=${conclusion:-none} attempt=${attempt:-none})"
     echo "::warning::ci-rerun: refused at $head — gate $gate; $LABEL left standing"
     post_comment "$(refusal_body "$gate" "$head" "$ACTOR" "$named" "$conclusion" "$attempt" "$url")" ||
       { echo "ci-rerun: the refusal comment could not be posted" >&2; return 1; }
