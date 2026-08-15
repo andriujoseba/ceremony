@@ -1,0 +1,21 @@
+name: ci-rerun
+# Ceremony's own caller for the rerun servicing (#424) — the dogfood, wearing
+# the same local-`uses:` deviation as self-labels.yml and the same warning:
+# consumers must NEVER copy the local form (it rides main, unpinned — correct
+# only for the repo that IS the source). Consumers write:
+#   uses: heavy-duty/ceremony/.github/workflows/ci-rerun.yml@<pinned-tag>
+# docs/CONSUMERS.md carries that stub and this permissions block.
+on:
+  # pull_request_target, not pull_request: every PR in this family arrives from
+  # a fork, where pull_request runs with a READ-ONLY token and can neither
+  # rerun a run nor remove the label. `labeled` alone — the trigger is the
+  # label (#424 D1), there is no comment grammar and no schedule.
+  pull_request_target:
+    types: [labeled]
+permissions:
+  contents: read        # .github/labels.conf (the fleet roster) and the implementation — never the head
+  actions: write        # the rerun no fork PR author can start; the whole reason this exists
+  pull-requests: write  # remove rerun-owed, post the outcome
+jobs:
+  ci-rerun:
+    uses: ./.github/workflows/ci-rerun.yml
