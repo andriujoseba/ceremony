@@ -60,6 +60,29 @@ run() { # every mutation goes through here — DRY_RUN=1 logs instead of doing
   if [ -n "${DRY_RUN:-}" ]; then log "DRY_RUN: $*"; else "$@"; fi
 }
 
+fleet_add() { # append each login not already in FLEET, first-seen order (#453)
+  # The dedup is HERE and not in fleet_roster: FLEET is the roster, so the
+  # array a future reader iterates is already the set and the printer stays a
+  # printer. First-seen order keeps the roster reading as the file reads —
+  # panel='s reviewers hold their position and a bracketed login appears where
+  # its row does — which is what makes the gate-1 refusal comment actionable,
+  # since its whole servicing instruction is "ask one of these, or add
+  # yourself to that file".
+  #
+  # The membership test is is_fleet_actor and not a second scan of its own:
+  # the set this builds and the set the gate reads must be the same set, and
+  # sharing the predicate makes that structural rather than asserted.
+  #
+  # The test is written `if ! …` rather than `… && continue` deliberately: a
+  # loop whose last iteration appends nothing would leave this function
+  # returning 1, and under this file's own `set -e` that aborts the load on a
+  # conf whose final login happens to be a repeat.
+  local login
+  for login in "$@"; do
+    if ! is_fleet_actor "$login"; then FLEET+=("$login"); fi
+  done
+}
+
 load_fleet() { # $1 = labels.conf → FLEET, the identities allowed to spend this
   # Every failure is a hard one that names the file: this script's whole
   # authorization is this list, so an unreadable conf must refuse loudly rather
@@ -81,7 +104,7 @@ load_fleet() { # $1 = labels.conf → FLEET, the identities allowed to spend thi
       panel=*)
         seen=true
         read -r -a row <<<"${line#panel=}"
-        FLEET+=(${row[@]+"${row[@]}"})
+        fleet_add ${row[@]+"${row[@]}"}
         ;;
       "panel["*"]="*)
         # Both halves of a per-author row are fleet: the bracketed login is the
@@ -93,16 +116,16 @@ load_fleet() { # $1 = labels.conf → FLEET, the identities allowed to spend thi
         login="${login%%]=*}"
         case "$login" in
           "" | *[!A-Za-z0-9-]*) ;; # malformed rows are labels-reconcile's to refuse
-          *) FLEET+=("$login") ;;
+          *) fleet_add "$login" ;;
         esac
         rest="${line#*]=}"
         read -r -a row <<<"$rest"
-        FLEET+=(${row[@]+"${row[@]}"})
+        fleet_add ${row[@]+"${row[@]}"}
         ;;
       triage-actors=*)
         seen=true
         read -r -a row <<<"${line#triage-actors=}"
-        FLEET+=(${row[@]+"${row[@]}"})
+        fleet_add ${row[@]+"${row[@]}"}
         ;;
     esac
   done <"$conf"
