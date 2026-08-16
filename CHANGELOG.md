@@ -12,6 +12,100 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.4 — 2026-08-16
+
+### Added
+
+- The issue-flow sweep flags a **stalled chain head**: a blocker chain three or
+  more issues deep, counting the head, whose `claimed` head has a red open PR.
+  Comment-only, on the head alone, naming the remedy — service the red, or
+  re-order the chain (#440, #426).
+- `lib/checks.sh` — the rollup classifier both reconcilers now source, so the
+  tripwire grades a head with the same instrument that decides
+  `blocker:ci-red` and the two can never disagree (#440, #136, #139, #208).
+- Flag idle queues, deeply serial blocker chains, and dependency cycles from the issue-flow sweep's existing board snapshot (#426).
+- Triage now puts measured flow-wide breakage at the front of a collision
+  chain while ordinary work keeps arrival order (#425).
+- Front-row insertion records its evidence and edge direction, preserves a
+  claimed issue's labels, and orders overlapping work at merge (#425).
+- `actions/ci-rerun`: a base-repo workflow that services `rerun-owed` by
+  starting the rerun a fork PR's author cannot. Its job holds `actions: write`
+  for one run, checks out nothing from the head, and runs no PR-authored code
+  (#424).
+- Four gates, all measured at service time and none inherited from the label:
+  the actor is a fleet identity in `.github/labels.conf`, the head still is the
+  one the evidence names, the run concluded `failure`, and it is on attempt 1
+  (#424).
+- A started rerun removes `rerun-owed` and comments the new attempt's URL; a
+  refusal leaves the label standing and comments which gate refused and what a
+  human would have to do. There is no schedule and no retry — the workflow acts
+  on one label event and stops (#424).
+- Consumers get the servicing at their next pin bump: `docs/CONSUMERS.md`
+  carries the caller stub and the `permissions` block, without which the
+  workflow refuses every time (#424).
+- Only a run created before the evidence comment that names the head is a
+  rerun candidate: a `pull_request_target` run carries the head's SHA, so the
+  workflows the label event itself wakes are in that list too and must never
+  be rerun in the red run's place (#424).
+- `rerun-owed`: a PR-only label for a head that is red on a rerun no agent may
+  start. The builder sets it with evidence opening `🔁 rerun owed at head
+  <sha>`; the reconciler clears it when that head's checks leave failing, or
+  when the named head is no longer the head (#423).
+- While `rerun-owed` stands at a head, `blocker:ci-red` is not asserted there:
+  that label says the builder owes a fix, and on a fork PR's base-repo run the
+  builder owes nothing. It is not a blocker and never enters the set (#423).
+- A sixth park shape: a red head whose rerun is a right the builder does not
+  hold parks the claim and frees the build slot. Every other red head is still
+  the builder's, and the `ci-red` wake skips the labelled one (#423).
+- `rerun-owed` is not exempt from the 48-hour staleness clock: a head standing
+  under it still goes `stale`, and that `stale` asks for a poke of whoever
+  services the rerun, never a fix from the builder. A flag earns an exemption
+  only by carrying an escalation clock of its own (#423).
+
+### Changed
+
+- Document the issue-flow sweep's comment-only idle, deep-chain and cycle
+  tripwires, including placement, shape-keyed deduplication and shared
+  threshold ownership (#441).
+- The `ci-rerun` roster precondition in `docs/CONSUMERS.md` drops its census
+  of the governed repositories' `.github/labels.conf` files, which was false:
+  identities that build as well as review are named in the roster the gate
+  reads (#437).
+- In its place the paragraph gives a directive the reader runs against their
+  own conf — the three fields gate 1 reads — rather than a measurement of
+  other repositories that nothing re-checks when a roster changes (#437).
+- The one-build-at-a-time slot is stated as the builder's own, across every
+  repository they work in: the self-check is whether an unparked claim is
+  held anywhere, never whether the board in front of you is clean (#430).
+- The slot sentence stops carrying a second test for when a build ends. A
+  claim holds the slot until it is parked or released, so the park list is
+  the only definition of finishing and the two can no longer disagree (#430).
+- The claim comment now asserts the slot: no unparked claim in any
+  repository, naming any parked claims held elsewhere with their shape
+  (#430).
+- `AGENTS.md`'s router row now sends the builder to an ordered chain of PRs,
+  normally one — the fourth surface of the singular arithmetic, and the one
+  the mint's regex could not see behind its backticked `ready` (#420, #429).
+- One issue now means an ordered chain of PRs, normally one. A PR carries at
+  most five rounds; at the close of round 5 the builder continues the branch
+  in a successor PR and the predecessor closes as the ledger (#420).
+- The cap is a consensus-surface rule and not a byte defence: the longer a PR
+  runs, the harder it is to bring the whole panel onto one head (#417, #420).
+- A cut spends every approval. The review target becomes the successor, no
+  verdict is owed on the closed predecessor, and rounds are numbered per PR
+  so the successor's first round is round 1 (#420).
+- The issue gains a triage-maintained `## Pull requests` list in chain order,
+  present only once a chain exists and triggered by the builder's cut
+  comment; it is the only place a chain stays navigable (#420).
+- Triage now sizes accepted work for bounded review rounds and splits oversized work into ideally disjoint epic children, treating later round growth as evidence for the next mint (#419).
+- The PR body's `## Round log` is a rolling summary rather than a verbatim
+  mirror of each round's reply: `### Current state` is rewritten every
+  round, `### Rounds` gains one row of facts plus two prose cells, and
+  handoff waits on those cells being filled (#418).
+- A round's reply shrinks to a short comment naming the round and the head,
+  so the comment thread stops growing with the body it used to duplicate
+  (#418).
+
 ## 0.7.3 — 2026-08-15
 
 ### Changed
