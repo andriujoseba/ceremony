@@ -26,11 +26,12 @@ TRIAGE_ACTORS=()
 # Four issues in one blocker chain can occupy only one builder at a time and
 # therefore provably under-employ this fleet's two builders (#426 D2).
 GRAPH_DEEP_THRESHOLD=4
-# Three issues behind a head that cannot move is already harmful, which is a
-# DIFFERENT question from the one above and therefore a different number
-# (#440 D1). `deep` asks whether a chain serializes the fleet; `stalled` asks
-# whether a chain is parked behind a head nothing can advance, and one stuck
-# head with two issues queued on it is the shape incubator#204 held for days.
+# Three issues in one blocker chain whose head cannot move is already harmful,
+# which is a DIFFERENT question from the one above and therefore a different
+# number (#440 D1). `deep` asks whether a chain serializes the fleet; `stalled`
+# asks whether a chain is parked behind a head nothing can advance, and one
+# stuck head with two issues queued on it is the shape incubator#204 held for
+# days.
 # The two constants must never be spelled in terms of each other: writing
 # this as GRAPH_DEEP_THRESHOLD - 1 would make one operator's answer to the
 # staffing question silently move the stall tripwire.
