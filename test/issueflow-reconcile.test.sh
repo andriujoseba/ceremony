@@ -96,12 +96,30 @@ refs_body=$'Refs #12\nAlso refs: #8 and heavy-duty/rig#4.\nCloses #99\nNot refs-
 check "Refs parser returns only references owned by a valid Refs marker" 0 "" \
   test "$(refs_references <<<"$refs_body")" = $'8\n12\n175'
 open_records=$'BODY\tRefs #5\nCLOSING\t9\nBODY\tRefs heavy-duty/rig#112\nBODY\tRefs #5\nCLOSING\t5'
-check "open PR linkage unions closing and local Refs body references" 0 $'5\n9' \
-  open_pr_issues <<<"$open_records"
+# The records carry the head state beside the number since #440, so these
+# assert the WHOLE output rather than a substring of it: a set assertion that
+# greps is satisfied by a superset, and the linkage rules below are about what
+# is absent as much as what is present.
+check "open PR linkage unions closing and local Refs body references" 0 "" \
+  test "$(open_pr_issues <<<"$open_records")" = $'5\tUNREADABLE\n9\tUNREADABLE'
 check "cross-repo Refs never enter the local open PR set" 0 "" \
   open_pr_issues <<< $'BODY\tRefs heavy-duty/rig#112'
 check "an issue named by both linkage paths appears exactly once" 0 "1" \
-  grep -cxF 5 <<<"$(open_pr_issues <<<"$open_records")"
+  grep -cxF -- $'5\tUNREADABLE' <<<"$(open_pr_issues <<<"$open_records")"
+# A group with no ROLLUP record classifies UNREADABLE, as above: the function
+# never invents a rollup for facts it was not given (#101 D1). With one, the
+# head is classified once per PR and every issue that PR names carries it.
+stall_records=$'ROLLUP\t{"statusCheckRollup":[{"workflowName":"ci","name":"test","conclusion":"FAILURE","completedAt":"2026-08-16T10:00:00Z"}]}\nCLOSING\t5\nBODY\tRefs #6'
+check "a PR head classifies once and reaches every issue that PR names" 0 "" \
+  test "$(SELF_WORKFLOW="" open_pr_issues <<<"$stall_records")" = $'5\tFAILURE\n6\tFAILURE'
+check "only FAILURE is a red head — PENDING, NONE and UNREADABLE are not" 0 "" \
+  test "$(SELF_WORKFLOW="" issues_with_failing_head <<< $'5\tFAILURE\n6\tPENDING\n7\tNONE\n8\tUNREADABLE\n9\tSUCCESS')" = "5"
+check "a second open PR on the same issue counts when either head is red" 0 "" \
+  test "$(issues_with_failing_head <<< $'5\tSUCCESS\n5\tFAILURE')" = "5"
+check "the membership test reads field one, not the whole record" 0 "" \
+  issue_has_open_pr 5 <<< $'5\tFAILURE'
+check "...and does not match an issue named only by another record's state" 1 "" \
+  issue_has_open_pr 4 <<< $'5\tFAILURE\n40\tSUCCESS'
 check "unchecked criteria preserve their source lines verbatim" 0 \
   $'- [ ] first criterion\n  * [ ] indented criterion\n1. [ ] numbered criterion' \
   unchecked_criteria <<< $'- [x] done\n- [ ] first criterion\r\n  * [ ] indented criterion\n1. [ ] numbered criterion'
@@ -2760,7 +2778,16 @@ flag_count() { # $1 = collision|window|idle|deep|cycle, $2 = sweep output
 
 board_run() {
   : >"$BOARD/edits"
-  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$BOARD" ISSUEFLOW_NOW="$INOW" \
+  # GITHUB_WORKFLOW is unset rather than overridden, because the script reads
+  # it through `${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}` and `:-` treats an
+  # empty override as absent — so exporting SELF_WORKFLOW="" would fall
+  # straight back through to the runner's ambient name. Under CI that name is
+  # `CI`, and any rollup fixture whose workflow happened to match it would
+  # have its entries dropped by #208's exclusion and the verdict would flip
+  # between a laptop and a runner. Unset means the exclusion filters nothing,
+  # which is what every fixture below assumes.
+  env -u GITHUB_WORKFLOW -u SELF_WORKFLOW \
+    PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$BOARD" ISSUEFLOW_NOW="$INOW" \
     REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
     bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
 }
@@ -3087,7 +3114,7 @@ for ((i = 601; i <= 618; i++)); do
 done
 # shellcheck disable=SC2016 # expansions belong to the isolated bash process
 branch_out="$(timeout 2 env BRANCH_RECORDS="$branch_records" BRANCH_EDGES="$branch_edges" \
-  bash -c 'source "$1"; board_shape_flags 4 "$BRANCH_EDGES" "" <<<"$BRANCH_RECORDS"' \
+  bash -c 'source "$1"; board_shape_flags 4 "$BRANCH_EDGES" "" 3 "" <<<"$BRANCH_RECORDS"' \
   _ "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh")"
 branch_rc=$?
 check "a branching DAG is bounded rather than enumerating every simple path" 0 "" \
@@ -3225,7 +3252,7 @@ board_issue 533 blocked 'mike.sh — short chain tail' 'Blocked by #531.'
 board_assemble 531 532 533
 quiet_graph_out="$(board_run)"
 check "a movable board with only a two-deep chain posts no graph flag" 1 "" \
-  grep -qE ': (idle|deep|cycle) graph flag' <<<"$quiet_graph_out"
+  grep -qE ': (idle|deep|cycle|stalled) graph flag' <<<"$quiet_graph_out"
 check "the graph tripwires never edit a label or queue state" 1 "" \
   grep -qF 'issue edit' "$BOARD/edits"
 
@@ -3248,6 +3275,228 @@ deep_changed_out="$(board_run)"
 check "extending a deep shape changes its marker and speaks" 0 \
   'issueflow: #501: deep graph flag — ≥4:#501 > #502 > #503 > #504' \
   printf '%s\n' "$deep_changed_out"
+
+# -- #440: the stalled head — a chain deep enough, claimed, and red ----------
+# The shape a human found by hand on incubator#204: the fix everything was
+# waiting on sat sixth in a chain, `claimed`, with its own PR red, and the
+# sweep had nothing to say about it. Each fixture below breaks ONE term of the
+# conjunction, because a signal proved only by its positive case is a signal
+# whose predicate nobody has read.
+#
+# The rollup rides the open-PR query, so the fixtures are GraphQL-shaped —
+# `checkSuite.workflowRun.workflow.name`, not the flat `workflowName` the
+# classifier reads. That is deliberate: it puts the query's own projection
+# under test alongside the flag, and a fixture written in the classifier's
+# shape would have proved the projection by assuming it.
+stall_ck() { # $1 name, $2 conclusion, $3 startedAt, $4 workflow
+  jq -nc --arg n "$1" --arg o "$2" --arg t "${3:-2026-08-16T10:00:00Z}" \
+    --arg w "${4:-ci}" \
+    '{__typename: "CheckRun", name: $n, status: "COMPLETED", conclusion: $o,
+      startedAt: $t, completedAt: $t,
+      checkSuite: {workflowRun: {workflow: {name: $w}}}}'
+}
+stall_open_pr() { # $1 PR, $2 issue it closes, $3 contexts JSON array | NOCOMMIT
+  local commits
+  if [ "$3" = NOCOMMIT ]; then
+    commits='{"nodes":[]}'
+  else
+    commits="$(jq -nc --argjson c "$3" \
+      '{nodes: [{commit: {statusCheckRollup: {contexts: {nodes: $c}}}}]}')"
+  fi
+  jq -nc --argjson pr "$1" --argjson issue "$2" --argjson commits "$commits" \
+    '{data: {repository: {pullRequests: {
+       nodes: [{body: ("Refs #" + ($issue | tostring)),
+                closingIssuesReferences: {nodes: [{number: $issue}]},
+                commits: $commits}],
+       pageInfo: {hasNextPage: false, endCursor: null}}}}}' \
+    >"$BOARD/graphql-open.json"
+}
+stall_chain() { # $1 head labels; the three-deep chain the fixtures share
+  board_issue 801 "$1" 'alpha-stall.sh — the claimed chain head' '' 1
+  board_issue 802 blocked 'bravo-stall.sh — second in the chain' 'Blocked by #801.'
+  board_issue 803 blocked 'charlie-stall.sh — third in the chain' 'Blocked by #802.'
+  board_assemble 801 802 803
+}
+
+stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
+stall_chain claimed
+stalled_out="$(board_run)"
+check "a three-deep chain behind a claimed red head flags that head" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$stalled_out"
+check "the stalled chain flags its head alone" 0 "1" flag_count stalled "$stalled_out"
+check "no issue behind the head carries the flag" 1 "" \
+  grep -qE 'issueflow: #(802|803): stalled graph flag' <<<"$stalled_out"
+check "the stalled flag text names its own threshold number" 0 "" \
+  grep -qF 'stalled-chain threshold is **3**' "$BOARD/edits"
+check "the stalled remedy names servicing the red head and re-ordering" 0 "" \
+  grep -qF 'rerun-owed' "$BOARD/edits"
+check "...and the re-ordering route beside it" 0 "" grep -qF '#425' "$BOARD/edits"
+check "the stalled comment carries its own marker family" 0 "" \
+  grep -qF '<!-- issueflow:graph-stalled-' "$BOARD/edits"
+check "a fired stalled tripwire writes no label or queue state" 1 "" \
+  grep -qF 'issue edit' "$BOARD/edits"
+check "...and the only line it wrote to the log is its own comment" 0 "1" \
+  bash -c 'grep -c "^issue comment 801" "$1"' _ "$BOARD/edits"
+# The three-deep chain is below the deep threshold on purpose: the two
+# tripwires must be separable, or the new one could be the old one misread.
+check "a three-deep chain draws no deep flag" 1 "" \
+  grep -qF ': deep graph flag' <<<"$stalled_out"
+check "a board with a claimed head draws no idle flag" 1 "" \
+  grep -qF ': idle graph flag' <<<"$stalled_out"
+
+# The two constants are separate numbers for separate questions, and neither
+# is spelled in terms of the other — writing 3 as GRAPH_DEEP_THRESHOLD - 1
+# would let a staffing decision move the stall tripwire silently (D1).
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
+check "the stalled threshold constant is greppable" 0 "1" \
+  bash -c 'grep -c "^GRAPH_STALLED_THRESHOLD=3$" "$1"' _ \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
+check "the deep threshold constant is still its own" 0 "1" \
+  bash -c 'grep -c "^GRAPH_DEEP_THRESHOLD=4$" "$1"' _ \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
+check "neither threshold is defined in terms of the other" 1 "" \
+  bash -c 'grep -E "^GRAPH_(DEEP|STALLED)_THRESHOLD=.*GRAPH_" "$1"' _ \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
+# D7: a head nobody can rerun is exactly the head worth flagging. #423
+# suppresses blocker:ci-red there because the BUILDER owes nothing; the board
+# still owes the chain behind it. The signal reads the rollup and never a
+# label, which is what makes this fixture pass without an exemption to write.
+stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
+stall_chain claimed,rerun-owed
+rerun_owed_out="$(board_run)"
+check "a rerun-owed head still fires the stalled flag" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$rerun_owed_out"
+# The fixture above can only put the label on the ISSUE, while `rerun-owed`
+# lives on the PR — so it proves no exemption was added on this surface and
+# cannot prove one was not added on the other. What closes that gap is that
+# the label is unreachable from here at all: every occurrence of the string in
+# this script is inside the remedy sentence, so no branch can read it.
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
+check "every rerun-owed mention in the sweep is prose, never a predicate" 0 "2" \
+  bash -c 'grep -c "rerun-owed" "$1"' _ \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+# shellcheck disable=SC2016 # $1 expands in the isolated bash -c process
+check "...none of them reached by a label test" 1 "" \
+  bash -c 'grep -E "(has_issue_label|grep -q[a-z]*F?).*rerun-owed" "$1"' _ \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+
+# -- the instrument, not the field (the acceptance criterion that names one) -
+# GraphQL's `statusCheckRollup { state }` would call this rollup FAILURE: it
+# is one enum over the whole array with none of #136's newest-entry collapse.
+# The classifier collapses the context to its newest entry first and sees the
+# SUCCESS that replaced the failure. Same fixture minus the newer entry must
+# fire, or the silence above is the flag being broken rather than correct.
+stall_open_pr 900 801 \
+  "[$(stall_ck test FAILURE 2026-08-16T10:00:00Z),$(stall_ck test SUCCESS 2026-08-16T10:30:00Z)]"
+stall_chain claimed
+superseded_out="$(board_run)"
+check "a superseded FAILURE beside its newer SUCCESS is not a red head" 1 "" \
+  grep -qF ': stalled graph flag' <<<"$superseded_out"
+stall_open_pr 900 801 "[$(stall_ck test FAILURE 2026-08-16T10:00:00Z)]"
+stall_chain claimed
+unsuperseded_out="$(board_run)"
+check "...and the same rollup without the newer entry fires" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$unsuperseded_out"
+# #139's other half travels with the classifier: an all-cancelled context
+# never reported at all, so it classifies FAILURE and the head is red.
+stall_open_pr 900 801 "[$(stall_ck test CANCELLED)]"
+stall_chain claimed
+cancelled_out="$(board_run)"
+check "an all-cancelled context is a red head, per #139" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$cancelled_out"
+# #208's half: a rollup of only the sweep's own runs classifies NONE, and a
+# self-only rollup must never manufacture a red head.
+stall_open_pr 900 801 "[$(stall_ck reconcile CANCELLED 2026-08-16T10:00:00Z labels-sweep)]"
+stall_chain claimed
+self_only_out="$(env SELF_WORKFLOW=labels-sweep board_run)"
+check "a rollup of only the sweep's own runs is no red head, per #208" 1 "" \
+  grep -qF ': stalled graph flag' <<<"$self_only_out"
+
+# -- the four states that are not FAILURE, one fixture apiece (D4) ----------
+check "a green head is silent" 1 "" \
+  bash -c 'stall_open_pr 900 801 "[$(stall_ck test SUCCESS)]"; stall_chain claimed
+    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+check "a pending head is silent" 1 "" \
+  bash -c 'stall_open_pr 900 801 "[$(stall_ck test QUEUED)]"; stall_chain claimed
+    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+check "a head with no checks at all (NONE) is silent" 1 "" \
+  bash -c 'stall_open_pr 900 801 "[]"; stall_chain claimed
+    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+# UNREADABLE in its own case, and it is the one that is easiest to get wrong:
+# a failed read is not a failed check, and #101 D1 forbids the sweep
+# recomputing on facts it did not read. The PR arrives with no commit node.
+check "an unreadable head is silent — a failed read is not a failed check" 1 "" \
+  bash -c 'stall_open_pr 900 801 NOCOMMIT; stall_chain claimed
+    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+
+# -- the remaining terms of the conjunction, each broken alone --------------
+stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
+board_issue 801 claimed 'alpha-stall.sh — the claimed red head' '' 1
+board_issue 802 blocked 'bravo-stall.sh — the only issue behind it' 'Blocked by #801.'
+board_assemble 801 802
+shallow_out="$(board_run)"
+check "a two-deep chain behind the same red claimed head is silent" 1 "" \
+  grep -qF ': stalled graph flag' <<<"$shallow_out"
+for head_state in ready blocked; do
+  stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
+  stall_chain "$head_state"
+  head_state_out="$(board_run)"
+  check "a three-deep chain whose head is $head_state is silent" 1 "" \
+    grep -qF ': stalled graph flag' <<<"$head_state_out"
+done
+# A claimed red head with nothing queued behind it is one builder's fix round
+# and no board's business — the depth term carrying its own weight at zero.
+stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
+board_issue 801 claimed 'alpha-stall.sh — a lone claimed red head' '' 1
+board_assemble 801
+lone_out="$(board_run)"
+check "a claimed red head with nothing behind it is silent" 1 "" \
+  grep -qF ': stalled graph flag' <<<"$lone_out"
+# The head is claimed and three-deep, but its open PR belongs to another
+# issue: the red head must be THIS head's, never any red PR on the board.
+stall_open_pr 900 803 "[$(stall_ck test FAILURE)]"
+stall_chain claimed
+foreign_pr_out="$(board_run)"
+check "a red PR belonging to another issue in the chain is not this head's" 1 "" \
+  grep -qF ': stalled graph flag' <<<"$foreign_pr_out"
+
+# -- the per-family marker contract, on this family (#293 D4) ---------------
+# The board stub records a posted comment in its edit log and not in the
+# comment thread the next sweep reads, so the standing marker is seeded by
+# hand exactly as the deep family's own fixture seeds it.
+stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
+stall_chain claimed
+first_word_out="$(board_run)"
+check "the shape speaks once" 0 "1" flag_count stalled "$first_word_out"
+stalled_display='≥3:#801 > #802 > #803'
+stalled_identity='nodes=#801,#802,#803;edges=#801>#802,#802>#803'
+# `created_at` is not decoration here: #801 is `claimed` and assigned, so the
+# claim clock reads this thread, and a comment without a date skips the issue
+# on an unreadable fact — which would make the silence below the sweep never
+# reaching the flag rather than the marker suppressing it.
+jq -n --arg at "$(iso_at "$INOW")" \
+  --arg b "<!-- issueflow:$(state_marker graph-stalled "$(graph_marker_state "$stalled_display" "$stalled_identity")") -->
+said already" \
+  '[{"user": {"login": "sweep-bot"}, "created_at": $at, "body": $b}]' \
+  >"$BOARD/repos_owner_repo_issues_801_comments.json"
+board_assemble_keep 801 802 803
+persisting_out="$(board_run)"
+check "a persisting stalled shape is silent after its first word" 1 "" \
+  grep -qF 'issueflow: #801: stalled graph flag' <<<"$persisting_out"
+board_issue 804 blocked 'delta-stall.sh — a newly extended tail' 'Blocked by #803.'
+printf '[]\n' >"$BOARD/repos_owner_repo_issues_804_comments.json"
+board_assemble_keep 801 802 803 804
+extended_out="$(board_run)"
+check "extending the stalled chain changes its marker and speaks" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$extended_out"
 
 # -- today's board draws nothing (the post-ruling shape, live) --------------
 # #249 the `blocked` sink, this issue `claimed` with no open PR and a gate
