@@ -3523,6 +3523,23 @@ check "...while the same rollup under another workflow name fires" 0 \
   'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
   printf '%s\n' "$other_workflow_out"
 
+# A check name is free text, and the ROLLUP record carries JSON text beside
+# a tab. Emitted through @tsv that text was escaped a SECOND time, so a name
+# carrying a quote reached the classifier unparseable: the head landed on the
+# empty string — not FAILURE, so silent, and silent for a reason no caller of
+# checks_state could name. The fixture goes through the real query jq in the
+# stub rather than a hand-written record, or it would be testing this file's
+# escaping instead of the sweep's. The name carries a quote and a backslash
+# at once, and the head under it is genuinely red.
+stall_open_pr 900 801 "[$(stall_ck 'say "hi"\back' FAILURE)]"
+stall_chain claimed
+quoted_name_out="$(board_run)"
+check "a check name carrying a quote still reaches the classifier" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$quoted_name_out"
+check "...and no record reached jq malformed" 1 "" \
+  grep -qF 'parse error' <<<"$quoted_name_out"
+
 # -- the four states that are not FAILURE, one fixture apiece (D4) ----------
 # Each case runs in the file's own shell rather than a `bash -c` subshell:
 # the fixture builders above are shell functions, and a subshell that cannot

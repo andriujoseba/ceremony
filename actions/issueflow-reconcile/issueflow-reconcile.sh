@@ -1829,7 +1829,14 @@ main() {
                                  (.checkSuite.workflowRun.workflow.name // "") }
                        | del(.checkSuite) ] } | tojson
             end
-          | ["ROLLUP", .] | @tsv),
+          # Concatenated where its neighbours use @tsv, because this field
+          # is JSON TEXT and @tsv escapes backslashes a second time: a check
+          # named `say "hi"` arrives as `\\"`, jq refuses it, and the head
+          # lands on the empty string — the sixth state again, by a second
+          # route. tojson has already escaped every tab and newline inside
+          # the value, so the record is still exactly two tab-separated
+          # fields and nothing downstream changes.
+          | "ROLLUP\t" + .),
         (.closingIssuesReferences.nodes[].number
           | ["CLOSING", tostring] | @tsv),
         ((.body // "") | split("\n")[] | ["BODY", .] | @tsv)' \
