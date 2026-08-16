@@ -3544,7 +3544,7 @@ check "...and no record reached jq malformed" 1 "" \
 # Each case runs in the file's own shell rather than a `bash -c` subshell:
 # the fixture builders above are shell functions, and a subshell that cannot
 # see them fails, produces no flag, and satisfies a must-not-fire assertion
-# without ever reaching the sweep. Every must-not-fire case below therefore
+# without ever reaching the sweep. So every must-not-fire case in this family
 # carries a companion asserting the board was really swept: a silence a dead
 # sweep also produces is not evidence of the term it stands for — that is
 # exactly how a broken #208 fixture passed behind a green suite here (#440).
