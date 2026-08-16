@@ -116,6 +116,15 @@ check "only FAILURE is a red head — PENDING, NONE and UNREADABLE are not" 0 ""
   test "$(SELF_WORKFLOW="" issues_with_failing_head <<< $'5\tFAILURE\n6\tPENDING\n7\tNONE\n8\tUNREADABLE\n9\tSUCCESS')" = "5"
 check "a second open PR on the same issue counts when either head is red" 0 "" \
   test "$(issues_with_failing_head <<< $'5\tSUCCESS\n5\tFAILURE')" = "5"
+# A ROLLUP record with an empty value is malformed, not absent, and it must
+# still land on a value the classifier defines. Written with a brace default
+# this classified as the empty string — jq refusing `\{}` as a parse error —
+# which is a sixth state no caller of checks_state knows how to read.
+check "a malformed empty ROLLUP record still classifies UNREADABLE" 0 "" \
+  test "$(open_pr_issues <<< $'ROLLUP\t\nCLOSING\t42')" = $'42\tUNREADABLE'
+malformed_rollup_stderr="$(open_pr_issues <<< $'ROLLUP\t\nCLOSING\t42' 2>&1 >/dev/null)"
+check "...and it reaches that verdict without jq complaining" 1 "" \
+  grep -q 'parse error' <<<"$malformed_rollup_stderr"
 check "the membership test reads field one, not the whole record" 0 "" \
   issue_has_open_pr 5 <<< $'5\tFAILURE'
 check "...and does not match an issue named only by another record's state" 1 "" \

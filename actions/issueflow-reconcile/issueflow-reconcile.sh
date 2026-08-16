@@ -270,7 +270,11 @@ open_pr_issues() { # records on stdin: ROLLUP|CLOSING|BODY<TAB>value -> issue<TA
       case "$kind" in
         ROLLUP)
           open_pr_issues_record "$rollup" "$numbers"
-          rollup="${value:-\{\}}"
+          # Assigned by branch and not by `${value:-...}`: a brace default
+          # there needs escaping, and the escaped form expands to a literal
+          # backslash — which reaches jq as a parse error and leaves the head
+          # state EMPTY, a sixth value no caller of this classifier knows.
+          if [ -n "$value" ]; then rollup="$value"; else rollup='{}'; fi
           numbers='' ;;
         CLOSING)
           [ -n "$value" ] && numbers="$numbers$value"$'\n' ;;
