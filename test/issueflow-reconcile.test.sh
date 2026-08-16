@@ -3270,9 +3270,9 @@ for head_state in epic needs-triage ''; do
   fi
 done
 
-# With no zero-indegree node, only the source cycle is actionable. A tail fed
-# by that cycle must not receive the idle comment as if every blocked member
-# were a carrier.
+# With no zero-indegree node, the actionable carriers are the blocked cycle
+# members, whichever component each sits in. A tail fed by that cycle must
+# not receive the idle comment as if every blocked member were a carrier.
 board_issue 560 blocked 'uniform.sh — first source-cycle member' 'Blocked by #562.'
 board_issue 561 blocked 'victor.sh — second source-cycle member' 'Blocked by #560.'
 board_issue 562 blocked 'whiskey.sh — third source-cycle member' 'Blocked by #561.'
@@ -3287,6 +3287,50 @@ check "the cycle tail receives no idle carrier comment" 1 "" \
   grep -qE 'issueflow: #(563|564): idle graph flag' <<<"$cycle_tail_out"
 check "an off-graph issue does not suppress or carry headless-cycle idle" 1 "" \
   grep -qF 'issueflow: #570: idle graph flag' <<<"$cycle_tail_out"
+
+# The same headless shape with two cycle components: an upstream cycle
+# feeding a downstream one. The case above holds a single cycle, so "the
+# upstream one" and "every one of them" name the same set there — which is how
+# two comments describing this carrier set drifted in opposite directions with
+# the suite green. The guard is the missing head, so both components carry,
+# and the count is asserted rather than one member spot-checked (#444).
+board_issue 580 blocked 'alpha.sh — first upstream-cycle member' 'Blocked by #582.'
+board_issue 581 blocked 'bravo.sh — second upstream-cycle member' 'Blocked by #580.'
+board_issue 582 blocked 'charlie.sh — third upstream-cycle member' 'Blocked by #581.'
+board_issue 583 blocked 'delta.sh — downstream cycle, fed by the upstream one' 'Blocked by #582, #584.'
+board_issue 584 blocked 'echo.sh — second downstream-cycle member' 'Blocked by #583.'
+board_assemble 580 581 582 583 584
+two_cycle_out="$(board_run)"
+check "a two-component headless board carries idle on all five blocked members" 0 "5" \
+  flag_count idle "$two_cycle_out"
+check "the downstream cycle is a carrier and not merely something fed by one" 0 \
+  'issueflow: #584: idle graph flag — 5:#580,#581,#582,#583,#584:' \
+  printf '%s\n' "$two_cycle_out"
+check "the upstream cycle renders as its own component" 0 \
+  'issueflow: #580: cycle graph flag — #580,#581,#582' printf '%s\n' "$two_cycle_out"
+check "the downstream cycle renders as a second, distinct component" 0 \
+  'issueflow: #583: cycle graph flag — #583,#584' printf '%s\n' "$two_cycle_out"
+
+# The fallback predicate is a conjunction — blocked AND cyclic — and every
+# case above breaks only its head term. This one breaks the other: a cycle
+# whose members are not blocked, feeding a blocked acyclic tail. The full
+# board path cannot build that shape, because an edge is derived only from a
+# blocked dependent, so an unblocked node can never hold indegree there; the
+# function is driven directly for that reason alone. The cycle flags are
+# asserted beside the silence, so an empty run cannot pass as a verdict.
+conjunction_records=$'630\t\tunblocked cycle member\n631\t\tsecond unblocked cycle member\n632\tblocked\tblocked acyclic tail'
+conjunction_edges=$'630\t631\n631\t630\n631\t632'
+# shellcheck disable=SC2016 # expansions belong to the isolated bash process
+conjunction_out="$(env CONJUNCTION_RECORDS="$conjunction_records" \
+  CONJUNCTION_EDGES="$conjunction_edges" \
+  bash -c 'source "$1"; board_shape_flags 4 "$CONJUNCTION_EDGES" "" 3 "" <<<"$CONJUNCTION_RECORDS"' \
+  _ "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh")"
+check "an unblocked cycle carries no idle flag even with no head" 1 "" \
+  grep -qF $'\tidle\t' <<<"$conjunction_out"
+check "...and that board really was the headless-cycle shape" 0 \
+  $'630\tcycle\t#630,#631' printf '%s\n' "$conjunction_out"
+check "...while the blocked acyclic tail carries nothing either" 1 "" \
+  grep -qF '632' <<<"$conjunction_out"
 
 # The explicit quiet case from the issue: two ready issues and a two-deep
 # chain. Distinct deliverables keep the older collision flag out too, so any

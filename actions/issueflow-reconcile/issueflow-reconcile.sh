@@ -884,8 +884,11 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing, $4 stall depth, $5
       }
 
       # Idle is a board fact, but lands on each chain head where action can
-      # change it. A graph made only of cycles has no head, so its blocked
-      # members are the only actionable carriers and receive the same fact.
+      # change it. With no head at all the fallback is every blocked cycle
+      # member — upstream component or downstream one — and never a blocked
+      # node outside a cycle, however long the tail it sits on. The guard is
+      # the missing head, which a graph carrying acyclic tails satisfies just
+      # as a graph of nothing but cycles does (#444).
       if (blocked_count > 0 && movable_count == 0 && releasing == "") {
         head_count = 0
         blocked_list = ""
