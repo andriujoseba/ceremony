@@ -872,13 +872,16 @@ conf.** A consumer whose `.github/labels.conf` names none of the identities
 that set the label gets a refusal at gate 1 every time — the happy path above,
 where the builder sets the label with its evidence comment and the rerun
 starts, does not happen until the conf names that builder by one of the fields
-the gate reads. That is the state the **governed repositories** are in today:
-`ceremony`, `crew` and `incubator` each carry a `panel=` line of review bots
-and a `triage-actors=` line, and no builder in any field. It is **not** the
-state of the skeleton in `.github/labels.conf`'s own section above: that file
-carries a `panel[example-builder]=` row, and a bracketed login is a fleet
-identity on its own, so an adopter who copies it unchanged has a builder in the
-roster and is **admitted**. The precondition bites the repository that drops
+the gate reads. So read your own file, and ask of it the question the gate
+will: does it name whoever will actually set `rerun-owed` here? Gate 1 reads
+three fields, listed with the gates above — the `panel=` line, a
+`panel[<login>]=` row (its bracketed login as much as the reviewers it lists),
+and the `triage-actors=` line — and a conf whose roster is review bots alone
+answers **no** for every builder who is not also a reviewer. The skeleton in
+`.github/labels.conf`'s own section above is the other way round: it carries a
+`panel[example-builder]=` row, and a bracketed login is a fleet identity on
+its own, so an adopter who copies it unchanged has a builder in the roster and
+is **admitted**. The precondition bites the repository that drops
 that row, or never writes one, and then has a builder set `rerun-owed`. Who
 belongs in that roster is the repository's own call and is not something this
 workflow decides: it reads the file and refuses anyone absent from it, and the
