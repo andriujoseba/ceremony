@@ -3642,6 +3642,11 @@ board_assemble_keep 801 802 803
 persisting_out="$(board_run)"
 check "a persisting stalled shape is silent after its first word" 1 "" \
   grep -qF 'issueflow: #801: stalled graph flag' <<<"$persisting_out"
+# The comment above names the reason this guard belongs here more than
+# anywhere: this silence is the one most easily produced by the sweep
+# skipping the issue rather than by the marker suppressing the word.
+check "...and the persisting-shape board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$persisting_out"
 board_issue 804 blocked 'delta-stall.sh — a newly extended tail' 'Blocked by #803.'
 printf '[]\n' >"$BOARD/repos_owner_repo_issues_804_comments.json"
 board_assemble_keep 801 802 803 804
