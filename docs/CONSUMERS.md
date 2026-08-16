@@ -536,6 +536,18 @@ together at the same pin:
 The consumer keeps its path mapping in `.github/labeler.yml` and its
 review panel plus scope taxonomy in `.github/labels.conf`.
 
+**unreleased** (#441) — the sweep also diagnoses three board shapes:
+`idle`, `deep` and `cycle`. These diagnostics are comment-only: they add no
+label, change no queue state and re-point no dependency edge. `deep` posts on
+each chain head. `idle` does too when the graph has a head; when an idle graph
+has none, it posts on each blocked cycle member instead. `cycle` posts on every
+member because a cycle has no head. Deduplication is per family and keyed to
+the shape, so an unchanged shape does not re-post and a changed one does. The
+`deep` threshold is a constant in the shared automation, not a consumer setting
+in `.github/labels.conf`; a different threshold belongs in that shared
+implementation. The comments themselves carry their current wording and
+remedies rather than duplicating them here.
+
 **Additive means additive** (available at `0.3.0` and later — #130): the
 scope job's only label
 write is `POST /issues/{n}/labels`, which adds the derived scopes and removes
