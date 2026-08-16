@@ -3337,7 +3337,7 @@ check "the stalled comment carries its own marker family" 0 "" \
 check "a fired stalled tripwire writes no label or queue state" 1 "" \
   grep -qF 'issue edit' "$BOARD/edits"
 check "...and the only line it wrote to the log is its own comment" 0 "1" \
-  bash -c 'grep -c "^issue comment 801" "$1"' _ "$BOARD/edits"
+  grep -c '^issue comment 801' "$BOARD/edits"
 # The three-deep chain is below the deep threshold on purpose: the two
 # tripwires must be separable, or the new one could be the old one misread.
 check "a three-deep chain draws no deep flag" 1 "" \
@@ -3420,21 +3420,37 @@ check "a rollup of only the sweep's own runs is no red head, per #208" 1 "" \
   grep -qF ': stalled graph flag' <<<"$self_only_out"
 
 # -- the four states that are not FAILURE, one fixture apiece (D4) ----------
+# Each case runs in the file's own shell rather than a `bash -c` subshell:
+# the fixture builders above are shell functions, and a subshell that cannot
+# see them fails, produces no flag, and satisfies a must-not-fire assertion
+# without ever reaching the sweep.
+stall_open_pr 900 801 "[$(stall_ck test SUCCESS)]"
+stall_chain claimed
+green_head_out="$(board_run)"
 check "a green head is silent" 1 "" \
-  bash -c 'stall_open_pr 900 801 "[$(stall_ck test SUCCESS)]"; stall_chain claimed
-    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+  grep -qF ': stalled graph flag' <<<"$green_head_out"
+check "...and the green-head board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$green_head_out"
+stall_open_pr 900 801 "[$(stall_ck test QUEUED)]"
+stall_chain claimed
+pending_head_out="$(board_run)"
 check "a pending head is silent" 1 "" \
-  bash -c 'stall_open_pr 900 801 "[$(stall_ck test QUEUED)]"; stall_chain claimed
-    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+  grep -qF ': stalled graph flag' <<<"$pending_head_out"
+stall_open_pr 900 801 "[]"
+stall_chain claimed
+none_head_out="$(board_run)"
 check "a head with no checks at all (NONE) is silent" 1 "" \
-  bash -c 'stall_open_pr 900 801 "[]"; stall_chain claimed
-    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+  grep -qF ': stalled graph flag' <<<"$none_head_out"
 # UNREADABLE in its own case, and it is the one that is easiest to get wrong:
 # a failed read is not a failed check, and #101 D1 forbids the sweep
 # recomputing on facts it did not read. The PR arrives with no commit node.
+stall_open_pr 900 801 NOCOMMIT
+stall_chain claimed
+unreadable_head_out="$(board_run)"
 check "an unreadable head is silent — a failed read is not a failed check" 1 "" \
-  bash -c 'stall_open_pr 900 801 NOCOMMIT; stall_chain claimed
-    grep -qF ": stalled graph flag" <<<"$(board_run)"'
+  grep -qF ': stalled graph flag' <<<"$unreadable_head_out"
+check "...and the unreadable-head board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$unreadable_head_out"
 
 # -- the remaining terms of the conjunction, each broken alone --------------
 stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
