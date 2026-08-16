@@ -26,6 +26,16 @@ TRIAGE_ACTORS=()
 # Four issues in one blocker chain can occupy only one builder at a time and
 # therefore provably under-employ this fleet's two builders (#426 D2).
 GRAPH_DEEP_THRESHOLD=4
+# Three issues in one blocker chain whose head cannot move is already harmful,
+# which is a DIFFERENT question from the one above and therefore a different
+# number (#440 D1). `deep` asks whether a chain serializes the fleet; `stalled`
+# asks whether a chain is parked behind a head nothing can advance, and one
+# stuck head with two issues queued on it is the shape incubator#204 held for
+# days.
+# The two constants must never be spelled in terms of each other: writing
+# this as GRAPH_DEEP_THRESHOLD - 1 would make one operator's answer to the
+# staffing question silently move the stall tripwire.
+GRAPH_STALLED_THRESHOLD=3
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -37,6 +47,17 @@ GRAPH_DEEP_THRESHOLD=4
 # both surfaces.
 # shellcheck source=lib/read.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/read.sh"
+# The workflow whose runs checks_state must never grade — its own (#208).
+# Set here for the same reason labels-reconcile sets it: the lib defaults
+# nothing, so each caller names ITSELF, and this sweep's own displaced runs
+# never become a red head it then reports (#440 D2).
+SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
+# The rollup classifier (#136, #139, #208) — the fleet's definition of red at
+# a head, and the instrument the stalled-head tripwire grades with rather
+# than GraphQL's one-enum rollup state, which carries none of its three
+# repairs (#440 D2).
+# shellcheck source=lib/checks.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../lib/checks.sh"
 
 # The status a per-issue subshell exits with when it walked away from an
 # unreadable fact (#247 D4). Distinguished from every other non-zero status so
@@ -219,14 +240,73 @@ refs_references() { # PR body on stdin -> local issue numbers named by Refs
     | awk -F '\t' '$1 == "LOCAL" { print $2 }' | sort -nu
 }
 
-open_pr_issues() { # records on stdin: CLOSING|BODY<TAB>value -> issue numbers
-  local kind value
-  while IFS=$'\t' read -r kind value; do
-    case "$kind" in
-      CLOSING) [ -n "$value" ] && printf '%s\n' "$value" ;;
-      BODY) refs_references <<<"$value" ;;
-    esac
-  done | sort -nu
+open_pr_issues_record() { # $1 rollup JSON, $2 issue numbers -> issue<TAB>state rows
+  # One classification per PR, not per issue: a PR with four Refs has one
+  # head, and grading it four times would be four jq invocations reaching the
+  # same verdict. Called with no issues it emits nothing, so a PR linked to
+  # nothing costs a `[ -n ]` and no process at all.
+  local rollup="$1" numbers="$2" state n
+  [ -n "$numbers" ] || return 0
+  state="$(checks_state <<<"$rollup")"
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    printf '%s\t%s\n' "$n" "$state"
+  done < <(sort -nu <<<"$numbers")
+}
+
+open_pr_issues() { # records on stdin: ROLLUP|CLOSING|BODY<TAB>value -> issue<TAB>state
+  # The records arrive PR by PR and a ROLLUP record OPENS each PR's group, so
+  # the accumulator flushes on the next ROLLUP and once at end of input. That
+  # ordering is the query's (#440 D2), and it is why this stays a stream: the
+  # alternative is holding every open PR's rollup in memory to join afterwards.
+  #
+  # A group that arrives with NO rollup record classifies UNREADABLE — the
+  # honest answer, and the one D4 keeps silent. That is not a defensive
+  # default: a caller that stopped selecting the sub-query would otherwise
+  # have its PRs graded on a `{}` this function invented, and #101 D1's rule
+  # is that the sweep never recomputes on facts it did not read.
+  local kind value rollup='{}' numbers='' refs
+  {
+    while IFS=$'\t' read -r kind value; do
+      case "$kind" in
+        ROLLUP)
+          open_pr_issues_record "$rollup" "$numbers"
+          # Assigned by branch and not by `${value:-...}`: a brace default
+          # there needs escaping, and the escaped form expands to a literal
+          # backslash — which reaches jq as a parse error and leaves the head
+          # state EMPTY, a sixth value no caller of this classifier knows.
+          if [ -n "$value" ]; then rollup="$value"; else rollup='{}'; fi
+          numbers='' ;;
+        CLOSING)
+          [ -n "$value" ] && numbers="$numbers$value"$'\n' ;;
+        BODY)
+          refs="$(refs_references <<<"$value")"
+          [ -n "$refs" ] && numbers="$numbers$refs"$'\n' ;;
+      esac
+    done
+    open_pr_issues_record "$rollup" "$numbers"
+    # Deduped on the PAIR and never on the number alone: `-u` compares only
+    # the key fields, so `-k1,1n` by itself would make two open PRs on one
+    # issue duplicates whatever their heads say, and the survivor would be
+    # whichever GitHub happened to page first. An issue cited by a chatty
+    # green PR is exactly the issue whose own red PR would go missing, and a
+    # stalled chain head is exactly the issue other PRs cite. Both readers
+    # below already take several rows per issue.
+  } | sort -t $'\t' -k1,1n -k2,2 -u
+}
+
+issue_has_open_pr() { # $1 issue; open-PR records on stdin
+  # Field 1, never the whole line: the records carry the head state beside the
+  # number now, and a line match would silently stop finding anything.
+  awk -F '\t' -v n="$1" '$1 == n { found = 1 } END { exit !found }'
+}
+
+issues_with_failing_head() { # open-PR records on stdin -> issue numbers, deduped
+  # FAILURE alone (#440 D4). PENDING, NONE and UNREADABLE are each a different
+  # sentence from "this head is red", and UNREADABLE most of all: a failed
+  # read is not a failed check. An issue with two open PRs, one red, counts —
+  # its head cannot move until that PR does.
+  awk -F '\t' '$2 == "FAILURE" { print $1 }' | sort -nu
 }
 
 unchecked_criteria() { # issue body on stdin -> unchecked task-list lines verbatim
@@ -675,15 +755,23 @@ blocker_graph_releasing_issues() { # $1 open numbers; board JSON on stdin -> num
     | .number' <<<"$board_json")
 }
 
-board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on stdin
+board_shape_flags() { # $1 threshold, $2 edges, $3 releasing, $4 stall depth, $5 red heads
   # Emits carrier<TAB>family<TAB>state. The graph is blocker -> dependent, so
   # a zero-indegree node is the chain head whose movement can release the
   # shape. Reachability remembers every visited vertex for one query, and the
   # deep walk stops at the configured threshold. Both costs are therefore
   # polynomial even on a branching graph, while malformed cycles terminate
   # instead of hanging the hourly sweep (#426 D1-D2).
+  #
+  # $4 and $5 are the stalled-head tripwire's inputs (#440): its own depth,
+  # kept separate from $1 because the two thresholds answer different
+  # questions, and the newline-separated issue numbers whose open PR head
+  # classifies FAILURE. The classification happened upstream, in the one
+  # place that reads a rollup; this function is still pure over its arguments.
   local threshold="$1" edges="$2" releasing="$3"
-  awk -F '\t' -v threshold="$threshold" -v edges="$edges" -v releasing="$releasing" '
+  local stall_threshold="$4" red_heads="$5"
+  awk -F '\t' -v threshold="$threshold" -v edges="$edges" -v releasing="$releasing" \
+    -v stall_threshold="$stall_threshold" -v red_heads="$red_heads" '
     function has_label(labels, label) {
       return ("," labels "," ~ "," label ",")
     }
@@ -697,8 +785,13 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       }
       return 0
     }
-    function threshold_path(cur, depth, path,    e,nxt) {
-      if (depth >= threshold) {
+    # The limit is a parameter rather than the global it reads from, because
+    # #440 gave this walk a second caller with a different depth. `deep`
+    # passes `threshold` at its own call site below and is unchanged by that;
+    # a copied walker would have been the alternative, and a copy of a
+    # recursive bound is how the two answers drift apart.
+    function threshold_path(cur, depth, path, limit,    e,nxt) {
+      if (depth >= limit) {
         found_path = path
         return 1
       }
@@ -706,7 +799,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       for (e = 1; e <= edge_count; e++) {
         if (edge_from[e] != cur) continue
         nxt = edge_to[e]
-        if (!path_seen[nxt] && threshold_path(nxt, depth + 1, path " > #" nxt)) {
+        if (!path_seen[nxt] && threshold_path(nxt, depth + 1, path " > #" nxt, limit)) {
           delete path_seen[cur]
           return 1
         }
@@ -740,6 +833,9 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       return "nodes=" node_list ";edges=" edge_list
     }
     BEGIN {
+      red_count = split(red_heads, red_lines, "\n")
+      for (i = 1; i <= red_count; i++)
+        if (red_lines[i] != "") red_head[red_lines[i]] = 1
       count = split(edges, lines, "\n")
       for (i = 1; i <= count; i++) {
         split(lines[i], fields, "\t")
@@ -822,7 +918,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
         if (indegree[n]) continue
         found_path = ""
         delete path_seen
-        if (threshold_path(n, 1, "#" n))
+        if (threshold_path(n, 1, "#" n, threshold))
           print n "\tdeep\t≥" threshold ":" found_path "\t" reachable_shape(n)
       }
 
@@ -843,6 +939,27 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
           if (forward && backward) component = component (component ? "," : "") "#" m
         }
         print n "\tcycle\t" component
+      }
+
+      # The stalled head (#440 D1): a chain deep enough to be worth queueing,
+      # whose head is claimed, and whose head cannot move because its own PR
+      # is red. Each of the three terms is load-bearing and none implies
+      # another — a deep chain behind a green head is ordinary work, and a red
+      # head with nothing behind it costs one builder an afternoon. The
+      # conjunction is what a human found by hand on incubator#204.
+      #
+      # Head means zero indegree, as `deep` means it: the one issue whose
+      # movement changes the shape, and the only place D8 posts. A member of a
+      # cycle has no such head, and the `cycle` family reports it.
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (indegree[n]) continue
+        if (!has_label(labels[n], "claimed")) continue
+        if (!red_head[n]) continue
+        found_path = ""
+        delete path_seen
+        if (threshold_path(n, 1, "#" n, stall_threshold))
+          print n "\tstalled\t≥" stall_threshold ":" found_path "\t" reachable_shape(n)
       }
     }
   '
@@ -1245,7 +1362,7 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
     for (i in labels) if (labels[i] ~ /^(needs-triage|epic|ready|claimed|blocked|post-merge)$/) print labels[i]
   }' <<<"${BOARD_RECORDS:-}")"
   [ "$snapshot_state" = "$2" ] || return 0
-  for family in idle deep cycle; do
+  for family in idle deep cycle stalled; do
     state="$(shape_flag_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
     [ -n "$state" ] || continue
     identity="$(shape_flag_identity_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
@@ -1271,6 +1388,22 @@ at the front before preserving this order." ;;
 
 Nothing in this set can ever release another member. The set is dead until
 triage or an operator breaks the cycle by hand." ;;
+      stalled)
+        count="${state%%:*}"
+        path="${state#*:}"
+        message="This issue is \`claimed\`, its open PR head is failing, and it heads a
+blocker chain $count issues deep: $path.
+
+The configured stalled-chain threshold is **$GRAPH_STALLED_THRESHOLD**. At or
+above that depth a red head stops being one builder's fix round and becomes
+the whole chain's, because nothing behind it can be claimed until this head
+moves. Service this head's red — through \`rerun-owed\` where no fleet
+identity holds the right to rerun it (#423) — or re-order the chain per
+#425; waiting is the one move that changes nothing.
+
+The head is read with the same classifier that decides \`blocker:ci-red\`, so
+this flag and that label never disagree. \`rerun-owed\` does not exempt a head
+from it: that label says the builder owes nothing, not that the board does." ;;
     esac
     run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 $message
@@ -1306,7 +1439,7 @@ reconcile_issue() {
 
   if has_issue_label claimed; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
-    grep -qxF "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
+    issue_has_open_pr "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
     # Under a pending ruling, the ruling clock is read at the top of the
     # branch, before anything either arm below can post — the derived
     # transition comment, the reclaim notice and the claimed-unassigned flag
@@ -1652,16 +1785,60 @@ main() {
   # crew#321 released a live claim because the open side read only closing
   # links while the merged side parsed Refs bodies. One parser now supplies
   # the local body references on both sides, so transition and reclaim agree.
+  # The head's check state rides this query rather than a second one (#440
+  # D2): the sub-selection below adds no request, and every open PR is
+  # already paged through here for the PR->issue mapping. What it selects is
+  # the CONTEXTS array and never `statusCheckRollup { state }`, which is a
+  # different classifier — one enum, without #136's newest-entry collapse,
+  # #139's CANCELLED carve-out or #208's self-workflow exclusion. The tripwire
+  # must not contradict the board it reads, so it grades with the same
+  # lib/checks.sh that decides blocker:ci-red.
+  #
+  # `commits(last: 1)` is the PR head and never a merge commit (D5) — the
+  # commit blocker:ci-red is decided at, and the only one a builder can act
+  # on. The jq below renames GraphQL's nested workflow name to the flat
+  # `workflowName` that gh's own rollup emits, because the classifier's input
+  # contract is that shape and moving the classifier to a lib did not change
+  # it. An absent commit reaches the classifier as `{}`, i.e. UNREADABLE.
   OPEN_PR_ISSUES="$(gh api graphql --paginate -f owner="$owner" -f name="$name" -f query='
     query($owner: String!, $name: String!, $endCursor: String) {
       repository(owner: $owner, name: $name) {
         pullRequests(first: 100, states: OPEN, after: $endCursor) {
-          nodes { body closingIssuesReferences(first: 100) { nodes { number } } }
+          nodes {
+            body
+            closingIssuesReferences(first: 100) { nodes { number } }
+            commits(last: 1) { nodes { commit { statusCheckRollup {
+              contexts(first: 100) { nodes {
+                __typename
+                ... on CheckRun {
+                  name status conclusion startedAt completedAt
+                  checkSuite { workflowRun { workflow { name } } }
+                }
+                ... on StatusContext { context state createdAt }
+              } }
+            } } } }
+          }
           pageInfo { hasNextPage endCursor }
         }
       }
     }' --jq '.data.repository.pullRequests.nodes[]
-      | (.closingIssuesReferences.nodes[].number
+      | ((.commits.nodes[0].commit // null) as $commit
+          | if $commit == null then "{}"
+            else { statusCheckRollup:
+                     [ ($commit.statusCheckRollup.contexts.nodes // [])[]
+                       | . + { workflowName:
+                                 (.checkSuite.workflowRun.workflow.name // "") }
+                       | del(.checkSuite) ] } | tojson
+            end
+          # Concatenated where its neighbours use @tsv, because this field
+          # is JSON TEXT and @tsv escapes backslashes a second time: a check
+          # named `say "hi"` arrives as `\\"`, jq refuses it, and the head
+          # lands on the empty string — the sixth state again, by a second
+          # route. tojson has already escaped every tab and newline inside
+          # the value, so the record is still exactly two tab-separated
+          # fields and nothing downstream changes.
+          | "ROLLUP\t" + .),
+        (.closingIssuesReferences.nodes[].number
           | ["CLOSING", tostring] | @tsv),
         ((.body // "") | split("\n")[] | ["BODY", .] | @tsv)' \
     | open_pr_issues)"
@@ -1692,6 +1869,7 @@ main() {
 
   local n tail_line issue_numbers board_json release_numbers rn window_records
   local rc release_body window_rendered="" blocker_graph graph_releasing shape_board_records
+  local graph_red_heads
   # The pre-loop region NAMES THE STAGE IT DIED IN before the status
   # propagates (#364 D8). Both runs of the 2026-08-10T04:24Z class emitted
   # `jq: error: writing output failed: Broken pipe` and an exit code after 61
@@ -1823,7 +2001,15 @@ main() {
     return "$rc"
   }
   shape_board_records="$(sort -t $'\t' -k1,1n <<<"$BOARD_RECORDS")"
+  # The red-head set is derived from the open-PR records this pass already
+  # holds — no read of its own (#440 D2).
+  graph_red_heads="$(issues_with_failing_head <<<"${OPEN_PR_ISSUES:-}")" || {
+    rc=$?
+    log "could not compute the board flags: the failing open PR heads"
+    return "$rc"
+  }
   SHAPE_FLAGS="$(board_shape_flags "$GRAPH_DEEP_THRESHOLD" "$blocker_graph" "$graph_releasing" \
+    "$GRAPH_STALLED_THRESHOLD" "$graph_red_heads" \
     <<<"$shape_board_records")" || {
     rc=$?
     log "could not compute the board flags: the graph shapes"

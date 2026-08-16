@@ -104,6 +104,7 @@ scope:labels:
           - lib/read.sh
           - lib/ruling.sh
           - lib/attention.sh
+          - lib/checks.sh
           - LABELS.md
           - test/issueflow-reconcile.test.sh
           - test/labels.test.sh
@@ -114,6 +115,7 @@ scope:labels:
           # actually locates (#302 D3)
           - test/attention.test.sh
           - test/ruling.test.sh
+          - test/checks.test.sh
           - test/labels-triggers.test.sh
 scope:docs:
   - changed-files:
