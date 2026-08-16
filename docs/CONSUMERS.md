@@ -540,7 +540,7 @@ review panel plus scope taxonomy in `.github/labels.conf`.
 `idle`, `deep` and `cycle`. These diagnostics are comment-only: they add no
 label, change no queue state and re-point no dependency edge. `deep` posts on
 each chain head. `idle` does too when the graph has a head; when an idle graph
-has none, it posts on each source-cycle member instead. `cycle` posts on every
+has none, it posts on each blocked cycle member instead. `cycle` posts on every
 member because a cycle has no head. Deduplication is per family and keyed to
 the shape, so an unchanged shape does not re-post and a changed one does. The
 `deep` threshold is a constant in the shared automation, not a consumer setting
