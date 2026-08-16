@@ -2809,7 +2809,7 @@ flag_count() { # $1 = collision|window|idle|deep|cycle, $2 = sweep output
   esac
 }
 
-board_run() {
+board_run() { # $1 optional: the workflow name the sweep runs under (#208)
   : >"$BOARD/edits"
   # GITHUB_WORKFLOW is unset rather than overridden, because the script reads
   # it through `${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}` and `:-` treats an
@@ -2819,10 +2819,22 @@ board_run() {
   # have its entries dropped by #208's exclusion and the verdict would flip
   # between a laptop and a runner. Unset means the exclusion filters nothing,
   # which is what every fixture below assumes.
-  env -u GITHUB_WORKFLOW -u SELF_WORKFLOW \
-    PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$BOARD" ISSUEFLOW_NOW="$INOW" \
-    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
-    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+  #
+  # The one fixture that needs the exclusion ARMED passes the name here, and
+  # not as a scoped assignment at the call site: this `env -u` would strip
+  # that before the sweep ever started, and the case would test nothing while
+  # reporting a pass. The two forms stay in one place so that cannot recur.
+  if [ -n "${1:-}" ]; then
+    env -u GITHUB_WORKFLOW SELF_WORKFLOW="$1" \
+      PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$BOARD" ISSUEFLOW_NOW="$INOW" \
+      REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+      bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+  else
+    env -u GITHUB_WORKFLOW -u SELF_WORKFLOW \
+      PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$BOARD" ISSUEFLOW_NOW="$INOW" \
+      REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
+      bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+  fi
 }
 
 # The morning shape, as the board actually stood at the 10:28:54Z mint:
@@ -3486,12 +3498,30 @@ check "an all-cancelled context is a red head, per #139" 0 \
   'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
   printf '%s\n' "$cancelled_out"
 # #208's half: a rollup of only the sweep's own runs classifies NONE, and a
-# self-only rollup must never manufacture a red head.
+# self-only rollup must never manufacture a red head. The workflow name goes
+# through board_run's argument, because a scoped assignment at this call site
+# is stripped by its `env -u` and `env SELF_WORKFLOW=... board_run` cannot run
+# a shell function at all — that spelling failed with `No such file or
+# directory`, left stdout empty, and satisfied the must-not-fire assertion
+# below without the sweep ever running.
 stall_open_pr 900 801 "[$(stall_ck reconcile CANCELLED 2026-08-16T10:00:00Z labels-sweep)]"
 stall_chain claimed
-self_only_out="$(env SELF_WORKFLOW=labels-sweep board_run)"
+self_only_out="$(board_run labels-sweep)"
 check "a rollup of only the sweep's own runs is no red head, per #208" 1 "" \
   grep -qF ': stalled graph flag' <<<"$self_only_out"
+check "...and that board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$self_only_out"
+# The positive control, and the reason the silence above is evidence: the
+# SAME rollup with the sweep running under any other name is an all-cancelled
+# context, so #139 makes it a red head and the flag fires. One of this pair
+# reds whichever direction the exclusion breaks in — dropped, and the first
+# fires; widened to everything, and the second goes silent.
+stall_open_pr 900 801 "[$(stall_ck reconcile CANCELLED 2026-08-16T10:00:00Z labels-sweep)]"
+stall_chain claimed
+other_workflow_out="$(board_run some-other-workflow)"
+check "...while the same rollup under another workflow name fires" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$other_workflow_out"
 
 # -- the four states that are not FAILURE, one fixture apiece (D4) ----------
 # Each case runs in the file's own shell rather than a `bash -c` subshell:
