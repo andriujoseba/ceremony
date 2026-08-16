@@ -536,17 +536,32 @@ together at the same pin:
 The consumer keeps its path mapping in `.github/labeler.yml` and its
 review panel plus scope taxonomy in `.github/labels.conf`.
 
-`0.7.4` (#441) — the sweep also diagnoses three board shapes:
-`idle`, `deep` and `cycle`. These diagnostics are comment-only: they add no
-label, change no queue state and re-point no dependency edge. `deep` posts on
-each chain head. `idle` does too when the graph has a head; when an idle graph
-has none, it posts on each blocked cycle member instead. `cycle` posts on every
-member because a cycle has no head. Deduplication is per family and keyed to
+`0.7.4` (#441) — the sweep also diagnoses four board shapes:
+`idle`, `deep`, `cycle` and `stalled`. These diagnostics are comment-only: they
+add no label, change no queue state and re-point no dependency edge. `deep`
+posts on each chain head. `idle` does too when the graph has a head; when an
+idle graph has none, it posts on each blocked cycle member instead. `cycle`
+posts on every member because a cycle has no head. `stalled` posts on the head
+alone — head meaning zero indegree, exactly as `deep` means it — so a cycle
+member never carries it and the `cycle` family reports that set instead. It
+fires only where three terms hold together, none of which implies another: the
+head is `claimed`; the head has an open PR whose check rollup concludes
+`FAILURE` (that alone — pending, absent or unreadable is a different sentence
+from "this head is red"); and the chain it heads is at or above the stalled
+threshold, counting the head itself. So a chain deep enough to trip `deep`
+behind a `claimed` head whose PR is green is silent here, and so is a `claimed`
+red head with nothing queued behind it — the first is ordinary work and the
+second is one builder's fix round, and only the conjunction is the whole
+chain's problem. That red-head term is graded with the same classifier that
+decides `blocker:ci-red`, so the flag and that label cannot disagree, and
+`rerun-owed` does not exempt a head from the flag: that label says the builder
+owes nothing, not that the board does. Deduplication is per family and keyed to
 the shape, so an unchanged shape does not re-post and a changed one does. The
-`deep` threshold is a constant in the shared automation, not a consumer setting
-in `.github/labels.conf`; a different threshold belongs in that shared
-implementation. The comments themselves carry their current wording and
-remedies rather than duplicating them here.
+`deep` and `stalled` thresholds are each a constant in the shared automation,
+not a consumer setting in `.github/labels.conf`, and neither is derived from
+the other — they answer different questions; a different threshold belongs in
+that shared implementation. The comments themselves carry their current wording
+and remedies rather than duplicating them here.
 
 **Additive means additive** (available at `0.3.0` and later — #130): the
 scope job's only label
