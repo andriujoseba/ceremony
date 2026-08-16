@@ -284,7 +284,14 @@ open_pr_issues() { # records on stdin: ROLLUP|CLOSING|BODY<TAB>value -> issue<TA
       esac
     done
     open_pr_issues_record "$rollup" "$numbers"
-  } | sort -t $'\t' -k1,1n -u
+    # Deduped on the PAIR and never on the number alone: `-u` compares only
+    # the key fields, so `-k1,1n` by itself would make two open PRs on one
+    # issue duplicates whatever their heads say, and the survivor would be
+    # whichever GitHub happened to page first. An issue cited by a chatty
+    # green PR is exactly the issue whose own red PR would go missing, and a
+    # stalled chain head is exactly the issue other PRs cite. Both readers
+    # below already take several rows per issue.
+  } | sort -t $'\t' -k1,1n -k2,2 -u
 }
 
 issue_has_open_pr() { # $1 issue; open-PR records on stdin

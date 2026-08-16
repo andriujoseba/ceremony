@@ -116,6 +116,30 @@ check "only FAILURE is a red head — PENDING, NONE and UNREADABLE are not" 0 ""
   test "$(SELF_WORKFLOW="" issues_with_failing_head <<< $'5\tFAILURE\n6\tPENDING\n7\tNONE\n8\tUNREADABLE\n9\tSUCCESS')" = "5"
 check "a second open PR on the same issue counts when either head is red" 0 "" \
   test "$(issues_with_failing_head <<< $'5\tSUCCESS\n5\tFAILURE')" = "5"
+# ...and the same claim where the pipeline can actually break it. The line
+# above enters BELOW the dedup, on an input `open_pr_issues` would have to
+# produce first, so it passed for months of nothing while a `-u` keyed on the
+# number alone deleted one of the two rows upstream. Deduping on the pair is
+# what these assert, and the property is order-independence rather than either
+# verdict: `-u` keeps whichever row sorted first, so the green-first order is
+# the one that hid the red head and both orders must agree.
+two_pr_green_first=$'ROLLUP\t{"statusCheckRollup":[{"workflowName":"ci","name":"test","conclusion":"SUCCESS","completedAt":"2026-08-16T10:00:00Z"}]}\nCLOSING\t5\nROLLUP\t{"statusCheckRollup":[{"workflowName":"ci","name":"test","conclusion":"FAILURE","completedAt":"2026-08-16T10:00:00Z"}]}\nCLOSING\t5'
+two_pr_red_first=$'ROLLUP\t{"statusCheckRollup":[{"workflowName":"ci","name":"test","conclusion":"FAILURE","completedAt":"2026-08-16T10:00:00Z"}]}\nCLOSING\t5\nROLLUP\t{"statusCheckRollup":[{"workflowName":"ci","name":"test","conclusion":"SUCCESS","completedAt":"2026-08-16T10:00:00Z"}]}\nCLOSING\t5'
+check "two open PRs on one issue both survive the dedup" 0 "" \
+  test "$(SELF_WORKFLOW="" open_pr_issues <<<"$two_pr_green_first")" = $'5\tFAILURE\n5\tSUCCESS'
+check "...whichever order the query paged them in" 0 "" \
+  test "$(SELF_WORKFLOW="" open_pr_issues <<<"$two_pr_red_first")" = $'5\tFAILURE\n5\tSUCCESS'
+check "...so the red head reaches the tripwire with the green PR paged first" 0 "" \
+  test "$(SELF_WORKFLOW="" open_pr_issues <<<"$two_pr_green_first" \
+    | issues_with_failing_head)" = "5"
+check "...and with it paged second" 0 "" \
+  test "$(SELF_WORKFLOW="" open_pr_issues <<<"$two_pr_red_first" \
+    | issues_with_failing_head)" = "5"
+# Two PRs on one issue at the SAME state is still one row: the pair key
+# dedupes, it does not simply stop deduping.
+check "two open PRs agreeing on the state still collapse to one row" 0 "" \
+  test "$(SELF_WORKFLOW="" open_pr_issues <<<"${two_pr_green_first/FAILURE/SUCCESS}")" \
+    = $'5\tSUCCESS'
 # A ROLLUP record with an empty value is malformed, not absent, and it must
 # still land on a value the classifier defines. Written with a brace default
 # this classified as the empty string — jq refusing `\{}` as a parse error —
