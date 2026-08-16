@@ -3544,7 +3544,10 @@ check "...and no record reached jq malformed" 1 "" \
 # Each case runs in the file's own shell rather than a `bash -c` subshell:
 # the fixture builders above are shell functions, and a subshell that cannot
 # see them fails, produces no flag, and satisfies a must-not-fire assertion
-# without ever reaching the sweep.
+# without ever reaching the sweep. Every must-not-fire case below therefore
+# carries a companion asserting the board was really swept: a silence a dead
+# sweep also produces is not evidence of the term it stands for — that is
+# exactly how a broken #208 fixture passed behind a green suite here (#440).
 stall_open_pr 900 801 "[$(stall_ck test SUCCESS)]"
 stall_chain claimed
 green_head_out="$(board_run)"
@@ -3557,11 +3560,15 @@ stall_chain claimed
 pending_head_out="$(board_run)"
 check "a pending head is silent" 1 "" \
   grep -qF ': stalled graph flag' <<<"$pending_head_out"
+check "...and the pending-head board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$pending_head_out"
 stall_open_pr 900 801 "[]"
 stall_chain claimed
 none_head_out="$(board_run)"
 check "a head with no checks at all (NONE) is silent" 1 "" \
   grep -qF ': stalled graph flag' <<<"$none_head_out"
+check "...and the no-checks board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$none_head_out"
 # UNREADABLE in its own case, and it is the one that is easiest to get wrong:
 # a failed read is not a failed check, and #101 D1 forbids the sweep
 # recomputing on facts it did not read. The PR arrives with no commit node.
@@ -3581,12 +3588,16 @@ board_assemble 801 802
 shallow_out="$(board_run)"
 check "a two-deep chain behind the same red claimed head is silent" 1 "" \
   grep -qF ': stalled graph flag' <<<"$shallow_out"
+check "...and the two-deep board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$shallow_out"
 for head_state in ready blocked; do
   stall_open_pr 900 801 "[$(stall_ck test FAILURE)]"
   stall_chain "$head_state"
   head_state_out="$(board_run)"
   check "a three-deep chain whose head is $head_state is silent" 1 "" \
     grep -qF ': stalled graph flag' <<<"$head_state_out"
+  check "...and the $head_state-head board was really swept" 0 "" \
+    grep -qF 'issueflow: reconciled.' <<<"$head_state_out"
 done
 # A claimed red head with nothing queued behind it is one builder's fix round
 # and no board's business — the depth term carrying its own weight at zero.
@@ -3596,6 +3607,8 @@ board_assemble 801
 lone_out="$(board_run)"
 check "a claimed red head with nothing behind it is silent" 1 "" \
   grep -qF ': stalled graph flag' <<<"$lone_out"
+check "...and the lone-head board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$lone_out"
 # The head is claimed and three-deep, but its open PR belongs to another
 # issue: the red head must be THIS head's, never any red PR on the board.
 stall_open_pr 900 803 "[$(stall_ck test FAILURE)]"
@@ -3603,6 +3616,8 @@ stall_chain claimed
 foreign_pr_out="$(board_run)"
 check "a red PR belonging to another issue in the chain is not this head's" 1 "" \
   grep -qF ': stalled graph flag' <<<"$foreign_pr_out"
+check "...and the foreign-PR board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$foreign_pr_out"
 
 # -- the per-family marker contract, on this family (#293 D4) ---------------
 # The board stub records a posted comment in its edit log and not in the
