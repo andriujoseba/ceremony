@@ -743,15 +743,23 @@ blocker_graph_releasing_issues() { # $1 open numbers; board JSON on stdin -> num
     | .number' <<<"$board_json")
 }
 
-board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on stdin
+board_shape_flags() { # $1 threshold, $2 edges, $3 releasing, $4 stall depth, $5 red heads
   # Emits carrier<TAB>family<TAB>state. The graph is blocker -> dependent, so
   # a zero-indegree node is the chain head whose movement can release the
   # shape. Reachability remembers every visited vertex for one query, and the
   # deep walk stops at the configured threshold. Both costs are therefore
   # polynomial even on a branching graph, while malformed cycles terminate
   # instead of hanging the hourly sweep (#426 D1-D2).
+  #
+  # $4 and $5 are the stalled-head tripwire's inputs (#440): its own depth,
+  # kept separate from $1 because the two thresholds answer different
+  # questions, and the newline-separated issue numbers whose open PR head
+  # classifies FAILURE. The classification happened upstream, in the one
+  # place that reads a rollup; this function is still pure over its arguments.
   local threshold="$1" edges="$2" releasing="$3"
-  awk -F '\t' -v threshold="$threshold" -v edges="$edges" -v releasing="$releasing" '
+  local stall_threshold="$4" red_heads="$5"
+  awk -F '\t' -v threshold="$threshold" -v edges="$edges" -v releasing="$releasing" \
+    -v stall_threshold="$stall_threshold" -v red_heads="$red_heads" '
     function has_label(labels, label) {
       return ("," labels "," ~ "," label ",")
     }
@@ -765,8 +773,13 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       }
       return 0
     }
-    function threshold_path(cur, depth, path,    e,nxt) {
-      if (depth >= threshold) {
+    # The limit is a parameter rather than the global it reads from, because
+    # #440 gave this walk a second caller with a different depth. `deep`
+    # passes `threshold` at its own call site below and is unchanged by that;
+    # a copied walker would have been the alternative, and a copy of a
+    # recursive bound is how the two answers drift apart.
+    function threshold_path(cur, depth, path, limit,    e,nxt) {
+      if (depth >= limit) {
         found_path = path
         return 1
       }
@@ -774,7 +787,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       for (e = 1; e <= edge_count; e++) {
         if (edge_from[e] != cur) continue
         nxt = edge_to[e]
-        if (!path_seen[nxt] && threshold_path(nxt, depth + 1, path " > #" nxt)) {
+        if (!path_seen[nxt] && threshold_path(nxt, depth + 1, path " > #" nxt, limit)) {
           delete path_seen[cur]
           return 1
         }
@@ -808,6 +821,9 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
       return "nodes=" node_list ";edges=" edge_list
     }
     BEGIN {
+      red_count = split(red_heads, red_lines, "\n")
+      for (i = 1; i <= red_count; i++)
+        if (red_lines[i] != "") red_head[red_lines[i]] = 1
       count = split(edges, lines, "\n")
       for (i = 1; i <= count; i++) {
         split(lines[i], fields, "\t")
@@ -890,7 +906,7 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
         if (indegree[n]) continue
         found_path = ""
         delete path_seen
-        if (threshold_path(n, 1, "#" n))
+        if (threshold_path(n, 1, "#" n, threshold))
           print n "\tdeep\t≥" threshold ":" found_path "\t" reachable_shape(n)
       }
 
@@ -911,6 +927,27 @@ board_shape_flags() { # $1 threshold, $2 edges, $3 releasing issues; records on 
           if (forward && backward) component = component (component ? "," : "") "#" m
         }
         print n "\tcycle\t" component
+      }
+
+      # The stalled head (#440 D1): a chain deep enough to be worth queueing,
+      # whose head is claimed, and whose head cannot move because its own PR
+      # is red. Each of the three terms is load-bearing and none implies
+      # another — a deep chain behind a green head is ordinary work, and a red
+      # head with nothing behind it costs one builder an afternoon. The
+      # conjunction is what a human found by hand on incubator#204.
+      #
+      # Head means zero indegree, as `deep` means it: the one issue whose
+      # movement changes the shape, and the only place D8 posts. A member of a
+      # cycle has no such head, and the `cycle` family reports it.
+      for (i = 1; i <= node_count; i++) {
+        n = node_order[i]
+        if (indegree[n]) continue
+        if (!has_label(labels[n], "claimed")) continue
+        if (!red_head[n]) continue
+        found_path = ""
+        delete path_seen
+        if (threshold_path(n, 1, "#" n, stall_threshold))
+          print n "\tstalled\t≥" stall_threshold ":" found_path "\t" reachable_shape(n)
       }
     }
   '
@@ -1313,7 +1350,7 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
     for (i in labels) if (labels[i] ~ /^(needs-triage|epic|ready|claimed|blocked|post-merge)$/) print labels[i]
   }' <<<"${BOARD_RECORDS:-}")"
   [ "$snapshot_state" = "$2" ] || return 0
-  for family in idle deep cycle; do
+  for family in idle deep cycle stalled; do
     state="$(shape_flag_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
     [ -n "$state" ] || continue
     identity="$(shape_flag_identity_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"
@@ -1339,6 +1376,22 @@ at the front before preserving this order." ;;
 
 Nothing in this set can ever release another member. The set is dead until
 triage or an operator breaks the cycle by hand." ;;
+      stalled)
+        count="${state%%:*}"
+        path="${state#*:}"
+        message="This issue is \`claimed\`, its open PR head is failing, and $count issues
+queue behind it: $path.
+
+The configured stalled-chain threshold is **$GRAPH_STALLED_THRESHOLD**. At or
+above that depth a red head stops being one builder's fix round and starts
+being the whole chain's, because nothing behind it can be claimed until this
+head moves. Service this head's red — through \`rerun-owed\` where no fleet
+identity holds the right to rerun it (#423) — or re-order the chain per
+#425; waiting is the one move that changes nothing.
+
+The head is read with the same classifier that decides \`blocker:ci-red\`, so
+this flag and that label never disagree. \`rerun-owed\` does not exempt a head
+from it: that label says the builder owes nothing, not that the board does." ;;
     esac
     run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 $message
@@ -1797,6 +1850,7 @@ main() {
 
   local n tail_line issue_numbers board_json release_numbers rn window_records
   local rc release_body window_rendered="" blocker_graph graph_releasing shape_board_records
+  local graph_red_heads
   # The pre-loop region NAMES THE STAGE IT DIED IN before the status
   # propagates (#364 D8). Both runs of the 2026-08-10T04:24Z class emitted
   # `jq: error: writing output failed: Broken pipe` and an exit code after 61
@@ -1928,7 +1982,15 @@ main() {
     return "$rc"
   }
   shape_board_records="$(sort -t $'\t' -k1,1n <<<"$BOARD_RECORDS")"
+  # The red-head set is derived from the open-PR records this pass already
+  # holds — no read of its own (#440 D2).
+  graph_red_heads="$(issues_with_failing_head <<<"${OPEN_PR_ISSUES:-}")" || {
+    rc=$?
+    log "could not compute the board flags: the failing open PR heads"
+    return "$rc"
+  }
   SHAPE_FLAGS="$(board_shape_flags "$GRAPH_DEEP_THRESHOLD" "$blocker_graph" "$graph_releasing" \
+    "$GRAPH_STALLED_THRESHOLD" "$graph_red_heads" \
     <<<"$shape_board_records")" || {
     rc=$?
     log "could not compute the board flags: the graph shapes"
