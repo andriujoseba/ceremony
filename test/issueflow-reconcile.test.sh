@@ -3344,6 +3344,26 @@ stall_open_pr() { # $1 PR, $2 issue it closes, $3 contexts JSON array | NOCOMMIT
        pageInfo: {hasNextPage: false, endCursor: null}}}}}' \
     >"$BOARD/graphql-open.json"
 }
+stall_cited_pr() { # $1 issue, $2 the citing PR's contexts, $3 the issue's own PR's
+  # Two open PRs on one issue, the one that merely CITES it paged first. That
+  # is the order that hid the red head while the dedup keyed on the number
+  # alone, and it is not a corner: open_pr_issues has read local `Refs` bodies
+  # from every open PR since crew#321, and an issue at the head of a stalled
+  # chain is exactly the issue other PRs cite.
+  local citing owner
+  citing="$(jq -nc --argjson c "$2" --argjson issue "$1" \
+    '{body: ("Refs #" + ($issue | tostring)),
+      closingIssuesReferences: {nodes: []},
+      commits: {nodes: [{commit: {statusCheckRollup: {contexts: {nodes: $c}}}}]}}')"
+  owner="$(jq -nc --argjson c "$3" --argjson issue "$1" \
+    '{body: ("Refs #" + ($issue | tostring)),
+      closingIssuesReferences: {nodes: [{number: $issue}]},
+      commits: {nodes: [{commit: {statusCheckRollup: {contexts: {nodes: $c}}}}]}}')"
+  jq -nc --argjson citing "$citing" --argjson owner "$owner" \
+    '{data: {repository: {pullRequests: {nodes: [$citing, $owner],
+       pageInfo: {hasNextPage: false, endCursor: null}}}}}' \
+    >"$BOARD/graphql-open.json"
+}
 stall_chain() { # $1 head labels; the three-deep chain the fixtures share
   board_issue 801 "$1" 'alpha-stall.sh — the claimed chain head' '' 1
   board_issue 802 blocked 'bravo-stall.sh — second in the chain' 'Blocked by #801.'
@@ -3377,6 +3397,27 @@ check "a three-deep chain draws no deep flag" 1 "" \
   grep -qF ': deep graph flag' <<<"$stalled_out"
 check "a board with a claimed head draws no idle flag" 1 "" \
   grep -qF ': idle graph flag' <<<"$stalled_out"
+
+# The same firing shape with a SECOND open PR on the head, green, paged
+# first — the whole pipeline rather than issues_with_failing_head alone. A
+# dedup keyed on the issue number keeps the green row here and the flag goes
+# silent, so this is the end-to-end half of that unit pair.
+stall_cited_pr 801 "[$(stall_ck test SUCCESS)]" "[$(stall_ck test FAILURE)]"
+stall_chain claimed
+cited_out="$(board_run)"
+check "a green PR citing the head never hides the head's own red PR" 0 \
+  'issueflow: #801: stalled graph flag — ≥3:#801 > #802 > #803' \
+  printf '%s\n' "$cited_out"
+check "...and the flag is still the head's alone" 0 "1" flag_count stalled "$cited_out"
+# The mirror: two open PRs both green is a green head and stays silent, so
+# the case above is the red row surviving and not the dedup being abandoned.
+stall_cited_pr 801 "[$(stall_ck test SUCCESS)]" "[$(stall_ck test SUCCESS)]"
+stall_chain claimed
+cited_green_out="$(board_run)"
+check "two green open PRs on the head are silent" 1 "" \
+  grep -qF ': stalled graph flag' <<<"$cited_green_out"
+check "...and that board was really swept" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$cited_green_out"
 
 # The two constants are separate numbers for separate questions, and neither
 # is spelled in terms of the other — writing 3 as GRAPH_DEEP_THRESHOLD - 1
