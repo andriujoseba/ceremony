@@ -3288,16 +3288,16 @@ check "the cycle tail receives no idle carrier comment" 1 "" \
 check "an off-graph issue does not suppress or carry headless-cycle idle" 1 "" \
   grep -qF 'issueflow: #570: idle graph flag' <<<"$cycle_tail_out"
 
-# The same headless shape with two cycle components: a source cycle feeding a
-# downstream one. The case above has a single cycle, so "the source cycle" and
-# "every cycle" are one set on it — which is how two comments describing this
-# carrier set drifted in opposite directions with the suite green. The guard
-# is the missing head, so both components carry, and the count is asserted
-# rather than a member spot-checked (#444).
-board_issue 580 blocked 'alpha.sh — first source-cycle member' 'Blocked by #582.'
-board_issue 581 blocked 'bravo.sh — second source-cycle member' 'Blocked by #580.'
-board_issue 582 blocked 'charlie.sh — third source-cycle member' 'Blocked by #581.'
-board_issue 583 blocked 'delta.sh — downstream cycle, fed by the source' 'Blocked by #582, #584.'
+# The same headless shape with two cycle components: an upstream cycle
+# feeding a downstream one. The case above holds a single cycle, so "the
+# upstream one" and "every one of them" name the same set there — which is how
+# two comments describing this carrier set drifted in opposite directions with
+# the suite green. The guard is the missing head, so both components carry,
+# and the count is asserted rather than one member spot-checked (#444).
+board_issue 580 blocked 'alpha.sh — first upstream-cycle member' 'Blocked by #582.'
+board_issue 581 blocked 'bravo.sh — second upstream-cycle member' 'Blocked by #580.'
+board_issue 582 blocked 'charlie.sh — third upstream-cycle member' 'Blocked by #581.'
+board_issue 583 blocked 'delta.sh — downstream cycle, fed by the upstream one' 'Blocked by #582, #584.'
 board_issue 584 blocked 'echo.sh — second downstream-cycle member' 'Blocked by #583.'
 board_assemble 580 581 582 583 584
 two_cycle_out="$(board_run)"
@@ -3306,7 +3306,7 @@ check "a two-component headless board carries idle on all five blocked members" 
 check "the downstream cycle is a carrier and not merely something fed by one" 0 \
   'issueflow: #584: idle graph flag — 5:#580,#581,#582,#583,#584:' \
   printf '%s\n' "$two_cycle_out"
-check "the source cycle renders as its own component" 0 \
+check "the upstream cycle renders as its own component" 0 \
   'issueflow: #580: cycle graph flag — #580,#581,#582' printf '%s\n' "$two_cycle_out"
 check "the downstream cycle renders as a second, distinct component" 0 \
   'issueflow: #583: cycle graph flag — #583,#584' printf '%s\n' "$two_cycle_out"
