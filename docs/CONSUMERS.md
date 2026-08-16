@@ -536,7 +536,7 @@ together at the same pin:
 The consumer keeps its path mapping in `.github/labeler.yml` and its
 review panel plus scope taxonomy in `.github/labels.conf`.
 
-**unreleased** (#441) — the sweep also diagnoses three board shapes:
+`0.7.4` (#441) — the sweep also diagnoses three board shapes:
 `idle`, `deep` and `cycle`. These diagnostics are comment-only: they add no
 label, change no queue state and re-point no dependency edge. `deep` posts on
 each chain head. `idle` does too when the graph has a head; when an idle graph
@@ -805,7 +805,7 @@ when the pinned taxonomy declares a core label the repository lacks.
 
 ## Rerun servicing
 
-**unreleased** (#424) — one more caller, adopted at the same pin as the two
+`0.7.4` (#424) — one more caller, adopted at the same pin as the two
 above and independent of them.
 
 A fork PR's `pull_request` run lives in the **base** repository, and rerunning
