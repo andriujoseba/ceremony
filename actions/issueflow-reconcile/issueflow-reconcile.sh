@@ -1379,13 +1379,13 @@ triage or an operator breaks the cycle by hand." ;;
       stalled)
         count="${state%%:*}"
         path="${state#*:}"
-        message="This issue is \`claimed\`, its open PR head is failing, and $count issues
-queue behind it: $path.
+        message="This issue is \`claimed\`, its open PR head is failing, and it heads a
+blocker chain $count issues deep: $path.
 
 The configured stalled-chain threshold is **$GRAPH_STALLED_THRESHOLD**. At or
-above that depth a red head stops being one builder's fix round and starts
-being the whole chain's, because nothing behind it can be claimed until this
-head moves. Service this head's red — through \`rerun-owed\` where no fleet
+above that depth a red head stops being one builder's fix round and becomes
+the whole chain's, because nothing behind it can be claimed until this head
+moves. Service this head's red — through \`rerun-owed\` where no fleet
 identity holds the right to rerun it (#423) — or re-order the chain per
 #425; waiting is the one move that changes nothing.
 
