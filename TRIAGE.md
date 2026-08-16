@@ -94,10 +94,50 @@ Every issue you mint carries, in this order:
   repository qualified (`Blocked by repo#N` or `owner/repo#N`); the sweep
   cannot resolve it, so triage verifies it and flips the issue by hand.
   When a deliverable is already carried by an open `ready`, `claimed`, or
-  `blocked` issue, the newer issue must declare an unconditional collision
-  edge with `Blocked by #N`, naming the newest open carrier; there is no
-  alternative for disjoint regions. This keeps every `ready` issue
-  concurrently claimable and makes each close release one successor (#288).
+  `blocked` issue, the carriers get an unconditional collision edge;
+  disjoint regions never excuse it. Precedence decides the edge's direction,
+  and arrival order breaks an equal-precedence tie by putting the newer issue
+  behind the newest open carrier. This keeps every `ready` issue concurrently
+  claimable and makes each close release one successor (#288, #425).
+
+  Precedence has exactly two classes. **Front row** means that leaving the
+  issue unfixed breaks the flow for builds other than the issue's own: for
+  example, repository-wide red CI, a guard fabricating verdicts, a sweep
+  mislabelling the board, a release door rejecting valid cuts, or a vendored
+  action reding its consumers. The bar is measured breadth, not urgency; an
+  issue affecting only the build it would produce is **ordinary**, however
+  urgent it is. Everything not proven front row is ordinary. Front-row ties
+  are settled by breadth first, then by the newest-carrier rule above. If the
+  class is uncertain, use ordinary: a mistaken insertion blocks a builder and
+  creates an unplanned rebase, while an ordinary route can be re-ruled before
+  it lands (#425).
+
+  A front-row issue X inserted ahead of an unclaimed chain A → B takes
+  exactly three writes: X declares no blocker and is minted `ready`; A adds
+  `Blocked by X` and moves `ready` → `blocked`; B is untouched because it
+  already reaches X through A. Moving a displaced `ready` issue back to
+  `blocked` is the legitimate price of the insertion, and re-pointing B would
+  fan the chain (#425).
+
+  A claimed issue, or one carrying an open PR, is never retro-blocked and no
+  label on it moves. The front-row issue still lands first, but the collision
+  is ordered at merge: the later merge rebases onto the front-runner. Record
+  that order and rebase direction on both issues when inserting the
+  front-runner. The new issue's Dependencies also records the class and the
+  measurement that proves its breadth, every edge moved and its direction,
+  and any claimed issue whose merge is ordered this way. A claim of urgency
+  without measurements remains ordinary (#425).
+
+  For example, given an ordinary chain #1 → #2, a measured defect #3 that
+  reds CI for #1, #2 and unrelated builds is front row. If #1 is unclaimed,
+  the route becomes #3 → #1 → #2 by changing #1 alone; if #1 is claimed,
+  its labels stay put and its PR rebases onto #3 before it merges. This is the
+  governed-repository CI failure that produced the rule (#425).
+
+  Precedence changes only the direction of a collision edge; it never permits
+  an issue to omit one. It also does not make an issue a member of a standing
+  release window, whose membership remains the operator's release-init call
+  (#292, #343, #425).
   During a standing release window, every mint also gets a binary membership
   call in the same tick. A non-member names the release issue as its blocker
   in its own Dependencies. A member is placed with three writes: the new issue
