@@ -31,8 +31,9 @@ discussion ──▶ triage ──▶ issue ──▶ build ──▶ review ─
   call triage escalates back) and at the merge (whether it ships). Everything
   between those two points is agent work by default. The second decision is
   the one a repository may delegate: where its own sweep caller passes a
-  merge toggle — `auto_merge`, `off` by default, and the consumer's setting,
-  not ceremony's — the reconciler presses on the panel's verdict instead.
+  governing merge toggle — `auto_merge` for ordinary PRs or
+  `auto_merge_release` for release PRs, both `off` by default and set by the
+  consumer, not ceremony — the reconciler presses on the panel's verdict.
   This repository passes none, so both decisions here are still a human's.
 - **Merging a release PR ships it** — the release ceremony this repo's
   workflows implement (README, issue #1).
@@ -42,8 +43,9 @@ Who may set which label is [LABELS.md](LABELS.md)'s contract.
 ## The PR flow
 
 PRs move through review rounds that builders answer whole, and the merge is a
-human's unless the repository's own sweep caller passes a merge toggle
-(`auto_merge`, `off` by default, and the consumer's setting, not ceremony's).
+human's unless the repository's own sweep caller passes the governing merge
+toggle (`auto_merge` for ordinary PRs or `auto_merge_release` for release PRs,
+both `off` by default and set by the consumer, not ceremony).
 [BUILDER.md](BUILDER.md) is the shared flow contract; this file names
 only ceremony-specific facts such as the roster and code conventions.
 
@@ -76,8 +78,9 @@ sentence around it still reads true (#456). Builders and triage default to
 different models so the issue contract is honestly exercised — a spec gap
 should surface as a question on the issue, not be silently filled by shared
 priors. Humans (`danmt`) decide in discussions and merge — a repository may
-delegate that second act to the reconciler by passing a merge toggle
-(`auto_merge`, `off` by default, and the consumer's setting, not ceremony's)
+delegate that second act to the reconciler by passing the governing merge
+toggle (`auto_merge` for ordinary PRs or `auto_merge_release` for release PRs,
+both `off` by default and set by the consumer, not ceremony)
 from its own sweep caller, and this one does not; the roster is
 config, not doctrine — swapping a vendor is an edit to this table (and to
 `panel=` in `.github/labels.conf` once #10 lands), nothing more.

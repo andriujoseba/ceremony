@@ -84,6 +84,7 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # workflow and composite action boundaries (#459). #459 observed the verdict;
 # #460 acts on it, at the end of reconcile_pr and through run().
 AUTO_MERGE="${AUTO_MERGE-off}"
+AUTO_MERGE_RELEASE="${AUTO_MERGE_RELEASE-off}"
 # What the success comment opens with (#460 D6). A marker in the shape this
 # file's other machine comments use — but NOT an idempotency guard, and no
 # ensure_comment reads it: the sweep enumerates OPEN pull requests only
@@ -99,6 +100,7 @@ AUTO_MERGED_MARKER='<!-- ceremony:auto-merged -->'
 # `gh workflow run` already answers by failing, and a second implementation of
 # GitHub's own checks is a guess this script cannot keep current.
 POST_MERGE_WORKFLOW="${POST_MERGE_WORKFLOW-}"
+RELEASE_WORKFLOW="${RELEASE_WORKFLOW-}"
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -312,10 +314,23 @@ is_fleet_login() { # $1 = login → membership in every roster-bearing conf row 
   return 1
 }
 
-auto_merge_verdict() { # $1 = this pass's decide_state conclusion (#459)
-  [ "$AUTO_MERGE" != off ] || { echo SKIP:off; return; }
+auto_merge_method() { # release is a selector: every PR belongs to one toggle (#468 D2)
+  if has_label release; then
+    printf '%s\n' "$AUTO_MERGE_RELEASE"
+  else
+    printf '%s\n' "$AUTO_MERGE"
+  fi
+}
+
+auto_merge_verdict() { # $1 = this pass's decide_state conclusion (#459, #468)
+  local method
+  method="$(auto_merge_method)"
+  [ "$method" != off ] || { echo SKIP:off; return; }
   [ "$1" = state:needs-human ] || { echo SKIP:state; return; }
-  ! has_label release || { echo SKIP:release; return; }
+  if has_label release && [ -z "$RELEASE_WORKFLOW" ]; then
+    echo SKIP:no-release-dispatch
+    return
+  fi
   is_fleet_login "$AUTHOR" || { echo SKIP:author; return; }
   [ "$MERGEABLE" = MERGEABLE ] || { echo SKIP:mergeable; return; }
   echo MERGE
@@ -325,6 +340,10 @@ validate_auto_merge() {
   case "$AUTO_MERGE" in
     off | merge | squash | rebase) ;;
     *) echo "auto_merge must be one of: off, merge, squash, rebase" >&2; return 2 ;;
+  esac
+  case "$AUTO_MERGE_RELEASE" in
+    off | merge | squash | rebase) ;;
+    *) echo "auto_merge_release must be one of: off, merge, squash, rebase" >&2; return 2 ;;
   esac
 }
 
@@ -998,7 +1017,7 @@ auto_merge_confirm() { # $1 = PR number → the refusal reason, empty when confi
   # helper's header states it has no labels-side caller, and lib/read.sh is
   # outside this issue's scope fence, so a caller here would ship a comment
   # this PR may not correct.
-  local n="$1" pr err err_file state head
+  local n="$1" pr err err_file state head graded_release current_release
   err_file="$(mktemp)"
   if ! pr="$(gh api "repos/$REPO/pulls/$n" 2>"$err_file")"; then
     err="$(cat "$err_file")"
@@ -1019,12 +1038,15 @@ auto_merge_confirm() { # $1 = PR number → the refusal reason, empty when confi
   [ "$head" = "$HEAD_SHA" ] ||
     { printf 'the head moved since this pass graded it (graded %s, now %s)\n' \
       "$HEAD_SHA" "$head"; return 0; }
-  # `release` is auto_merge_verdict's own refusal (#459), so its presence on
-  # the re-read is by construction one that appeared since the grading.
-  if jq -e '.labels[]? | select(.name == "release")' <<<"$pr" >/dev/null; then
-    printf 'release appeared on the PR since this pass graded it\n'
+  graded_release=no
+  has_label release && graded_release=yes
+  current_release=no
+  jq -e '.labels[]? | select(.name == "release")' <<<"$pr" >/dev/null && current_release=yes
+  [ "$graded_release" = "$current_release" ] || {
+    printf 'release %s on the PR since this pass graded it\n' \
+      "$([ "$current_release" = yes ] && printf appeared || printf disappeared)"
     return 0
-  fi
+  }
 }
 
 reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclusion (#460), $3 = whether THIS pass requested the human (#461 D7)
@@ -1034,9 +1056,17 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   # (#459) owns the refusal set, and this function owns the act alone. A second
   # draft or blocker check here would be a refusal no fixture can reach (#458 E7).
   local n="$1" desired="$2" human_requested="$3" verdict reason err err_file
-  [ "$AUTO_MERGE" != off ] || return 0
+  local method path
+  [ "$AUTO_MERGE" != off ] || [ "$AUTO_MERGE_RELEASE" != off ] || return 0
+  method="$(auto_merge_method)"
+  path=ordinary
+  has_label release && path=release
   verdict="$(auto_merge_verdict "$desired")"
-  log "#$n: auto-merge: $verdict"
+  if [ "$path" = release ]; then
+    log "#$n: auto-merge[release]: $verdict"
+  else
+    log "#$n: auto-merge[ordinary]: $verdict"
+  fi
   [ "$verdict" = MERGE ] || return 0
 
   reason="$(auto_merge_confirm "$n")"
@@ -1058,7 +1088,7 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   # the redirect two lines below captures into err_file for D5's reason and
   # discards when the merge succeeds.
   err_file="$(mktemp)"
-  if ! run gh pr merge "$n" -R "$REPO" "--$AUTO_MERGE" \
+  if ! run gh pr merge "$n" -R "$REPO" "--$method" \
     --match-head-commit "$HEAD_SHA" 2>"$err_file"; then
     err="$(cat "$err_file")"
     rm -f "$err_file"
@@ -1097,6 +1127,26 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   nothing and would then also ask nobody."
   fi
 
+  # #468 D6/D7 — a release merge opens the ship door with the exact head this
+  # pass graded and pinned. Dispatch stays after the successful merge gate;
+  # failure is loud but cannot undo the merge or stop the sweep.
+  local release_dispatch_line=""
+  if [ "$path" = release ]; then
+    local release_err release_err_file
+    release_err_file="$(mktemp)"
+    release_dispatch_line="
+- **Release dispatch:** attempted \`$RELEASE_WORKFLOW\` with \`merged-sha=$HEAD_SHA\`."
+    if run gh workflow run "$RELEASE_WORKFLOW" -R "$REPO" \
+      -f "merged-sha=$HEAD_SHA" 2>"$release_err_file"; then
+      rm -f "$release_err_file"
+      log "#$n: dispatched release workflow $RELEASE_WORKFLOW at $HEAD_SHA"
+    else
+      release_err="$(cat "$release_err_file")"
+      rm -f "$release_err_file"
+      log "#$n: WARNING: release dispatch of $RELEASE_WORKFLOW failed: $(read_failure_reason "$release_err") — the merge stands"
+    fi
+  fi
+
   # D6/D7 — the provenance. Under this toggle the merge commit is authored by
   # `github-actions[bot]` in an organization whose doctrine has said for its
   # whole life that only humans merge; a run log nobody opens is exactly the
@@ -1108,20 +1158,20 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
 
 - **Head merged:** \`$HEAD_SHA\` — the commit this pass graded, and the one
   the merge call was pinned to.
-- **Method:** \`$AUTO_MERGE\`.
-- **Authorised by:** \`auto_merge=$AUTO_MERGE\` on this repository's labels
+- **Method:** \`$method\`.
+- **Authorised by:** \`$([ "$path" = release ] && printf auto_merge_release || printf auto_merge)=$method\` on this repository's labels
   caller. The toggle is closed by default; this repository opted in.
 - **Trigger:** this sweep's own \`decide_state\` conclusion —
   \`state:needs-human\`, re-derived from the round, the blockers and the
   checks in this pass — and *not* the \`state:needs-human\` label, which the
-  same pass validates rather than trusts.$human_line
+  same pass validates rather than trusts.$release_dispatch_line$human_line
 
 The head was re-read immediately before the merge and matched.
 *Only humans merge* remains this organization's default: this repository
 turned that default off deliberately (heavy-duty/ceremony#458)."; then
-    log "#$n: auto-merged $HEAD_SHA ($AUTO_MERGE) — commented"
+    log "#$n: auto-merged $HEAD_SHA ($method) — commented"
   else
-    log "#$n: WARNING: auto-merged $HEAD_SHA ($AUTO_MERGE) but the provenance comment failed to post — the merge stands and is NOT re-attempted"
+    log "#$n: WARNING: auto-merged $HEAD_SHA ($method) but the provenance comment failed to post — the merge stands and is NOT re-attempted"
   fi
 
   # #461 D2/D3 — the post-merge wake. GitHub creates no workflow runs from

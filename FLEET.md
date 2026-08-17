@@ -33,8 +33,8 @@ holds the triage role, not write), not as convention. That sentence is about
 from the merge toggle, and their rights remain `"push": false`. What can press
 the button beside a human is a **workflow token** — the class that already
 writes to `main` on every release — and only where that repository's own sweep
-caller passes `auto_merge`, `off` by default and the consumer's setting, not
-ceremony's.
+caller passes the governing `auto_merge` or `auto_merge_release` toggle, each
+`off` by default and the consumer's setting, not ceremony's.
 
 ## Anatomy of a duty loop
 

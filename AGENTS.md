@@ -40,9 +40,10 @@ Two rules bind every role:
 - **Only triage mints issues.** Found work? Open or extend a discussion.
 - **Only humans merge, unless a repo opted in.** Convergence still ends at
   `state:needs-human`, never at a merge button; the press after it is a
-  human's unless that repository's own sweep caller passes a merge toggle —
-  `auto_merge`, `off` by default, and the consumer's setting, not
-  ceremony's — at which point the reconciler presses it on that verdict.
+  human's unless that repository's own sweep caller passes the governing
+  merge toggle — `auto_merge` for ordinary PRs or `auto_merge_release` for
+  release PRs, both `off` by default and set by the consumer, not ceremony —
+  at which point the reconciler presses it on that verdict.
 
 ## Repo specifics
 

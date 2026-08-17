@@ -257,8 +257,9 @@ the machinery at all:
 
 From there the flow is the doctrine: ordinary PRs write their fragment,
 the ceremony PR makes
-[the three stamps](../README.md#what-a-release-is), a human merges, the
-machine transcribes.
+[the three stamps](../README.md#what-a-release-is), and the merge ships it:
+a human presses by default, or an opted-in sweep presses and dispatches the
+release caller with that exact merged head. The machine then transcribes.
 
 ## Convert an existing repo
 
@@ -826,19 +827,20 @@ subsection is the whole of what that costs. It is a diff you apply
 deliberately: the stubs above pass no auto-merge input and grant no write,
 so a repository that copies them is unaffected by everything below.
 
-**1. The two inputs.** Both live on the **sweep** caller, and both default
-to the inert value, so naming neither is identical to naming both at their
-defaults:
+**1. The four inputs.** All live on the **sweep** caller and default inert.
+The merge toggles govern disjoint sets: `auto_merge` selects ordinary PRs and
+`auto_merge_release` selects `release`-labelled PRs.
 
 | input | accepted | default | what it does |
 |---|---|---|---|
-| `auto_merge` | `off`, `merge`, `squash`, `rebase` | `off` | `off` merges nothing; the other three name the merge method the sweep uses |
+| `auto_merge` | `off`, `merge`, `squash`, `rebase` | `off` | governs ordinary PRs; the non-`off` value is their merge method |
+| `auto_merge_release` | `off`, `merge`, `squash`, `rebase` | `off` | governs release PRs; the non-`off` value is their merge method |
 | `post_merge_workflow` | a workflow filename or name in this repository | *(empty)* | dispatched once after a merge this sweep performed; empty dispatches nothing |
+| `release_workflow` | the release caller's filename or name | *(empty)* | dispatched with `merged-sha` after a release merge; empty prevents release auto-merges |
 
-Any other `auto_merge` value fails the run loudly rather than being read as
-`off`. `post_merge_workflow` is never validated here: whether the workflow
-exists, declares `workflow_dispatch:` and is dispatchable by this token are
-three questions `gh workflow run` already answers by failing.
+Any other merge-toggle value fails loudly rather than being read as `off`.
+Workflow names are not validated here: existence, a `workflow_dispatch:`
+entrance and token access are questions `gh workflow run` answers by failing.
 
 ```yaml
 jobs:
@@ -846,7 +848,9 @@ jobs:
     uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@<pinned-tag>
     with:
       auto_merge: squash            # off | merge | squash | rebase
+      auto_merge_release: merge     # independent; omit to keep releases human
       post_merge_workflow: ci.yml   # omit to dispatch nothing
+      release_workflow: release.yml # required when auto-merging releases
 ```
 
 Add those under the sweep caller's existing `with:` key alongside
@@ -857,16 +861,17 @@ raise what its caller grants (box#97, as at
 [Release workflow](#release-workflow) above), so these go on **your**
 `labels-sweep.yml` and nowhere else. Change the sweep caller's `contents:
 read` to `contents: write` — the merge is a write to `main` — and its
-`actions: read` to `actions: write`, which `gh workflow run` needs for the
-dispatch. Take `actions: write` only if you set `post_merge_workflow`;
-`contents: write` only if you set `auto_merge`. **A consumer that changes
+`actions: read` to `actions: write`, which `gh workflow run` needs for either
+dispatch. Take `actions: write` only if you set a workflow input;
+`contents: write` only if you set a merge toggle. **A consumer that changes
 neither permission is unaffected by this whole feature**, inputs included:
 without `contents: write` the merge simply fails and is logged.
 
 **3. What the reconciler refuses to merge**, in the order it asks, and it
 merges only when all five pass:
 
-1. **Not opted in** — `auto_merge` is `off`.
+1. **Not opted in** — the governing toggle is `off` (`auto_merge_release` for
+   a release PR, `auto_merge` for every other PR).
 2. **Not this pass's own `state:needs-human` verdict.** The trigger is the
    conclusion this sweep just computed from the PR's blockers, draft state
    and current-head approvals — **never the `state:needs-human` label**,
@@ -875,8 +880,8 @@ merges only when all five pass:
    scratch every pass, so a hand-set label that the facts do not support is
    corrected rather than obeyed. The label being writable by anyone is
    exactly why it is not the trigger.
-3. **`release`-labelled** — the ceremony PR is refused under every value of
-   `auto_merge`.
+3. **Release dispatch absent** — a release PR is refused when
+   `release_workflow` is empty, even if `auto_merge_release` is on.
 4. **Not authored by a fleet login** — the author must appear in this
    repository's `.github/labels.conf`, in `panel=`, in any
    `panel[<login>]=` row, or in `triage-actors=`. A human's PR and an
@@ -888,7 +893,8 @@ Two locks, not one: the head is re-read immediately before the merge and
 the merge itself is pinned to that SHA, so a push arriving in the seconds
 between the grading and the press loses the race rather than the review.
 Every merge the sweep performs posts a provenance comment on the PR naming
-the head, the method and the setting that authorised it.
+the head, the method and the setting that authorised it. A release-label
+change in either direction during confirmation refuses rather than reselecting.
 
 **4. The push-run cost — read this before opting in.** A commit merged with
 the workflow's own `GITHUB_TOKEN` raises **no `push` event**, so a `push`-
@@ -902,6 +908,28 @@ both:
 
 A failed dispatch is logged and non-fatal: the merge has already happened
 and stands.
+
+For a release auto-merge, overlay this entrance and pass-through on the
+consumer release caller from [Release workflow](#release-workflow), then name
+that caller in `release_workflow`:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      merged-sha:
+        description: Full release-PR head SHA already merged to main
+        required: true
+        type: string
+jobs:
+  release:
+    with:
+      merged-sha: ${{ inputs.merged-sha }}
+```
+
+The sweep dispatches it only after the release merge, using the exact head it
+graded and pinned. A failed release dispatch is loud and non-fatal because the
+merge already stands.
 
 **5. The approval-latency note.** The event-facing labels caller carries no
 `pull_request_review` trigger, so the round's final approval wakes nothing
