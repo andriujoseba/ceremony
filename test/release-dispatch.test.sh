@@ -24,9 +24,31 @@ job_block() { # $1 = file, $2 = job name
 input_block() { # $1 = file, $2 = input name
   awk -v input="^      $2:\$" '
     $0 ~ input { found = 1 }
-    found && $0 !~ input && /^      [a-zA-Z0-9_-]+:$/ { exit }
+    found && $0 !~ input && /[^ ]/ {
+      match($0, /^ */)
+      if (RLENGTH <= 6) exit
+    }
     found { print }
   ' "$1"
+}
+
+folded_if() {
+  awk '
+    $0 == "    if: >-" { found = 1 }
+    found && $0 != "    if: >-" && /^    [a-zA-Z0-9_-]+:/ { exit }
+    found { print }
+  '
+}
+
+assert_exact_gate() { # $1 = extracted gate
+  [ "$1" = "$EXPECTED_GATE" ]
+}
+
+assert_phrase_bites() { # $1 = input block, $2 = phrase
+  block="$1"
+  phrase="$2"
+  block=${block/"$phrase"/}
+  ! grep -qF "$phrase" <<<"$block"
 }
 
 step_body() { # $1 = file, $2 = exact step name
@@ -42,23 +64,22 @@ MERGE_JOB="$(job_block "$RELEASE_WORKFLOW" release-on-merge)"
 TAG_JOB="$(job_block "$RELEASE_WORKFLOW" release-on-tag)"
 CALL_JOB="$(job_block "$EXERCISE_WORKFLOW" call)"
 MERGED_SHA_INPUT="$(input_block "$RELEASE_WORKFLOW" merged-sha)"
+MERGE_GATE="$(printf '%s\n' "$MERGE_JOB" | folded_if)"
+EXPECTED_GATE=$'    if: >-\n      (github.event_name == \'push\' && github.ref == \'refs/heads/main\')\n      || (github.event_name == \'workflow_dispatch\' && inputs.merged-sha != \'\')'
 
 check "merged-sha is an optional string input" 0 $'type: string\n        required: false\n        default: ""' \
   printf '%s\n' "$MERGED_SHA_INPUT"
 for phrase in workflow_dispatch '40-character lowercase commit SHA' 'empty value keeps the merge door shut'; do
   check "merged-sha description states '$phrase'" 0 "$phrase" \
     printf '%s\n' "$MERGED_SHA_INPUT"
+  check "description check for '$phrase' bites inside the input block" 0 "" \
+    assert_phrase_bites "$MERGED_SHA_INPUT" "$phrase"
 done
 
-check "merge door keeps the push+main entrance" 0 \
-  "(github.event_name == 'push' && github.ref == 'refs/heads/main')" \
-  printf '%s\n' "$MERGE_JOB"
-check "merge door adds only dispatch+non-empty merged-sha" 0 \
-  "(github.event_name == 'workflow_dispatch' && inputs.merged-sha != '')" \
-  printf '%s\n' "$MERGE_JOB"
-# shellcheck disable=SC2016 # $1 belongs to the nested shell
-check "merge door has exactly two event-name forms" 0 "2" bash -c \
-  'printf "%s\n" "$1" | grep -o "github.event_name" | wc -l | tr -d " "' _ "$MERGE_JOB"
+check "merge door is exactly the push+main and dispatch+SHA forms" 0 "" \
+  assert_exact_gate "$MERGE_GATE"
+check "merge-door assertion refuses a third live form" 1 "" \
+  assert_exact_gate "$MERGE_GATE"$'\n      || github.ref == \'refs/heads/release-probe\''
 check "tag door remains push-only" 1 "" \
   grep -F 'workflow_dispatch' <<<"$TAG_JOB"
 
