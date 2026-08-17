@@ -815,9 +815,13 @@ Ceremony dogfoods the callers under the filenames `self-labels.yml` and
 `self-labels-sweep.yml`, so the equivalent command in this repository
 substitutes that filename. Scheduled and trigger-driven runs only
 reconcile; they do not repeatedly upsert the taxonomy (the trigger's
-dispatch carries `bootstrap=no`). When a ceremony pin bump adds a core
-label, bump the pin first and then re-dispatch; the scheduled sweep warns
-when the pinned taxonomy declares a core label the repository lacks.
+dispatch carries `bootstrap=no`). **The taxonomy changes only on a
+bootstrap dispatch** — the reconciler's one gate is that `bootstrap`
+input, so no board event and no cadence can install, rename or retire a
+label. When a ceremony pin bump adds a core label, bump the pin first and
+then re-dispatch: the label arrives on that dispatch and on no earlier
+run. The scheduled sweep warns when the pinned taxonomy declares a core
+label the repository lacks, which is the nag in the meantime (#472).
 
 ### Letting the sweep merge a converged PR
 

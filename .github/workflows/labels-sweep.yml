@@ -134,11 +134,20 @@ jobs:
       #
       # bootstrap: every trigger-driven wake arrives as workflow_dispatch
       # too (that is how `gh workflow run` wakes the caller), so the event
-      # name alone no longer separates the operator's manual full-board
+      # name alone cannot separate the operator's manual full-board
       # bootstrap from an event-woken sweep — the caller's `bootstrap`
       # dispatch input does: the trigger passes "no", a bare manual
       # dispatch defaults to "yes". A caller reached on any other event
       # (the cron) has no input and stays "no".
+      #
+      # This value is the WHOLE gate, and the line below is where it is
+      # decided (#472). The reconciler reads BOOTSTRAP and nothing else:
+      # until #472 it gated on GITHUB_EVENT_NAME, which the composite
+      # exported on "yes" and could not un-export on "no" — so "no" was
+      # unobeyable and every board event re-upserted ~28 labels. Deleting
+      # the pass-through below is legal YAML and invisible to actionlint;
+      # it silently means never bootstrap, the manual dispatch included,
+      # which is why test/labels-reconcile.test.sh counts both copies.
       - name: reconcile state + stale
         if: github.repository != 'heavy-duty/ceremony'
         uses: ./.ceremony-src/actions/labels-reconcile
