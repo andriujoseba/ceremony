@@ -47,6 +47,65 @@ expect() { # $1 = description, $2 = want, $3 = got
   fi
 }
 
+# ---------------------------------------------------------------------------
+# The inert auto-merge reader (#459). The fleet is the union already encoded
+# in labels.conf, and the verdict consumes decide_state's result rather than
+# trusting the hand-set label that the same pass is about to validate.
+# ---------------------------------------------------------------------------
+load_config .github/labels.conf
+for fleet_login in \
+  claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl \
+  cndgrr andriujoseba dan-claude-bot; do
+  expect "the shipped fleet admits $fleet_login" fleet \
+    "$(is_fleet_login "$fleet_login" && echo fleet || echo outside)"
+done
+for outside_login in danmt "" cndgr dan-claude; do
+  expect "the shipped fleet refuses ${outside_login:-an empty login}" outside \
+    "$(is_fleet_login "$outside_login" && echo fleet || echo outside)"
+done
+
+MALFORMED_FLEET_CONF="$RTMP/malformed-fleet.conf"
+printf '%s\n' \
+  'panel=fixture-reviewer' \
+  'triage-actors=ok-bot bad!login' \
+  >"$MALFORMED_FLEET_CONF"
+load_config "$MALFORMED_FLEET_CONF" 2>"$RTMP/malformed-fleet.warning"
+malformed_fleet_warning="$(cat "$RTMP/malformed-fleet.warning")"
+expect "a malformed triage actor does not fail config loading" fleet \
+  "$(is_fleet_login ok-bot && echo fleet || echo outside)"
+expect "a malformed triage actor is skipped" outside \
+  "$(is_fleet_login 'bad!login' && echo fleet || echo outside)"
+expect "the malformed triage actor warning names its config file" yes \
+  "$(grep -qF "$MALFORMED_FLEET_CONF" <<<"$malformed_fleet_warning" && echo yes || echo no)"
+
+AUTO_MERGE=merge AUTHOR=fixture-reviewer LABELS="" MERGEABLE=MERGEABLE
+expect "an eligible fleet PR returns MERGE" MERGE \
+  "$(auto_merge_verdict state:needs-human)"
+AUTO_MERGE=off
+expect "off is the first refusal" SKIP:off \
+  "$(auto_merge_verdict state:addressing)"
+AUTO_MERGE=merge
+expect "a non-handoff pass verdict is refused" SKIP:state \
+  "$(auto_merge_verdict state:addressing)"
+LABELS=$'state:needs-human\nrelease'
+expect "a release PR is refused" SKIP:release \
+  "$(auto_merge_verdict state:needs-human)"
+LABELS="" AUTHOR=outside-author
+expect "a non-fleet author is refused" SKIP:author \
+  "$(auto_merge_verdict state:needs-human)"
+AUTHOR=fixture-reviewer MERGEABLE=UNKNOWN
+expect "unknown mergeability is refused" SKIP:mergeable \
+  "$(auto_merge_verdict state:needs-human)"
+LABELS=state:needs-human MERGEABLE=MERGEABLE
+expect "the pass verdict outranks a standing needs-human label" SKIP:state \
+  "$(auto_merge_verdict state:addressing)"
+
+# Restore the fixture roster and common defaults for the pre-existing state
+# machine assertions below.
+load_config "$FIXTURE_CONF"
+set_required_bots "$FIXTURE_AUTHOR"
+AUTO_MERGE=off AUTHOR="$FIXTURE_AUTHOR" LABELS="" MERGEABLE=MERGEABLE
+
 rev() { # $1=login $2=state $3=commit $4=body $5=submitted_at → one review object
   jq -n --arg u "$1" --arg s "$2" --arg c "$3" --arg b "$4" --arg t "$5" \
     '{user: {login: $u}, state: $s, commit_id: $c, body: $b, submitted_at: $t}'
@@ -409,9 +468,10 @@ DRAFT=false MERGEABLE=MERGEABLE CHECKS=SUCCESS REQUESTED="" REVIEWS_JSON='[]'
 # taxonomy, and stranding them reintroduced the false-invitation bug (a
 # `merge-next` claim surviving on a PR the board had moved to the agent).
 # ---------------------------------------------------------------------------
-reconcile_probe() { # $1 = REPO_LABELS content → the log lines reconcile_pr emits
+reconcile_probe() { # $1 = REPO_LABELS content, $2 = AUTO_MERGE (optional)
   (
     REPO_LABELS="$1" REPO=owner/repo NOW="$(date +%s)"
+    AUTO_MERGE="${2:-off}" AUTHOR="$FIXTURE_AUTHOR"
     LABELS="merge-next"                      # the PR carries a queue claim
     DRAFT=false HEAD_SHA=head1 REQUESTED="" REVIEWS_JSON='[]'
     MERGEABLE=MERGEABLE CHECKS=SUCCESS
@@ -433,6 +493,11 @@ expect "...while warning that the state label is missing" \
 warm="$(reconcile_probe "$(printf 'state:addressing\nmerge-next\nstale\nblocker:unrequested')")"
 expect "a bootstrapped repo converges the state as well" \
   yes "$(grep -q 'state -> state:addressing' <<<"$warm" && echo yes || echo no)"
+expect "toggle off emits no auto-merge line" no \
+  "$(grep -q 'auto-merge:' <<<"$warm" && echo yes || echo no)"
+shadow="$(reconcile_probe "$(printf 'state:addressing\nmerge-next\nstale\nblocker:unrequested')" merge)"
+expect "toggle on logs the pure verdict after attention reconciliation" yes \
+  "$(grep -q '#777: auto-merge: SKIP:state' <<<"$shadow" && echo yes || echo no)"
 
 # ---------------------------------------------------------------------------
 # needs-ruling (#51): a pending human decision. Hand-set intent the machine

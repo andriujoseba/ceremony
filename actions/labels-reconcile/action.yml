@@ -5,6 +5,10 @@ inputs:
     description: Whether to bootstrap labels before reconciling (yes or no)
     required: true
     default: "no"
+  auto_merge:
+    description: Auto-merge verdict mode (off, merge, squash, or rebase)
+    required: false
+    default: "off"
 runs:
   using: composite
   steps:
@@ -17,10 +21,20 @@ runs:
           yes | no) ;;
           *) echo "bootstrap must be 'yes' or 'no'" >&2; exit 2 ;;
         esac
+    - name: validate auto_merge input
+      shell: bash
+      env:
+        AUTO_MERGE: ${{ inputs.auto_merge }}
+      run: |
+        case "$AUTO_MERGE" in
+          off | merge | squash | rebase) ;;
+          *) echo "auto_merge must be one of: off, merge, squash, rebase" >&2; exit 2 ;;
+        esac
     - name: reconcile labels
       shell: bash
       env:
         BOOTSTRAP: ${{ inputs.bootstrap }}
+        AUTO_MERGE: ${{ inputs.auto_merge }}
         LABELS_CONF: ${{ github.workspace }}/.github/labels.conf
       run: |
         if [ "$BOOTSTRAP" = yes ]; then
