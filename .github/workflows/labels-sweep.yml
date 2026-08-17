@@ -29,7 +29,8 @@ name: labels-sweep
 # This cannot loop: reconciler writes use GITHUB_TOKEN, and GitHub does not
 # create workflow runs from GITHUB_TOKEN-raised events (the trigger's
 # workflow_dispatch is one of the two documented exemptions; this workflow
-# dispatches nothing). Agent writes use a PAT and therefore do trigger —
+# dispatches nothing unless post_merge_workflow or release_workflow is set,
+# which no caller in this repository sets). Agent writes use a PAT and therefore do trigger —
 # exactly the asymmetry wanted.
 on:
   workflow_call:
@@ -60,6 +61,13 @@ on:
         type: string
         required: false
         default: "off"
+      auto_merge_release:
+        description: >-
+          Release auto-merge mode: off, merge, squash, or rebase. This governs
+          only release-labelled pull requests; off leaves them for a human.
+        type: string
+        required: false
+        default: "off"
       post_merge_workflow:
         description: >-
           A workflow in the calling repository to dispatch after the
@@ -71,6 +79,15 @@ on:
           the caller needs actions: write; and it fires only after an
           auto-merge, never on a hand merge, which GitHub still runs
           normally.
+        type: string
+        required: false
+        default: ""
+      release_workflow:
+        description: >-
+          The consumer release caller to dispatch after an auto-merged release.
+          It must declare workflow_dispatch with a merged-sha input and pass it
+          to the reusable release workflow; the labels caller needs actions:
+          write. Empty means release pull requests are never auto-merged.
         type: string
         required: false
         default: ""
@@ -128,7 +145,9 @@ jobs:
         with:
           bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
           auto_merge: ${{ inputs.auto_merge }}
+          auto_merge_release: ${{ inputs.auto_merge_release }}
           post_merge_workflow: ${{ inputs.post_merge_workflow }}
+          release_workflow: ${{ inputs.release_workflow }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -139,7 +158,9 @@ jobs:
         with:
           bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
           auto_merge: ${{ inputs.auto_merge }}
+          auto_merge_release: ${{ inputs.auto_merge_release }}
           post_merge_workflow: ${{ inputs.post_merge_workflow }}
+          release_workflow: ${{ inputs.release_workflow }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

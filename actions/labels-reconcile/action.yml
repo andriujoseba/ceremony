@@ -9,12 +9,23 @@ inputs:
     description: Auto-merge verdict mode (off, merge, squash, or rebase)
     required: false
     default: "off"
+  auto_merge_release:
+    description: Release auto-merge mode (off, merge, squash, or rebase)
+    required: false
+    default: "off"
   post_merge_workflow:
     description: >-
       A workflow in this repository to dispatch after an auto-merge, restoring
       the push-triggered run a GITHUB_TOKEN merge does not raise. Empty (the
       default) dispatches nothing. The named workflow must declare
       workflow_dispatch:, and the caller needs actions: write.
+    required: false
+    default: ""
+  release_workflow:
+    description: >-
+      The release caller to dispatch after an auto-merged release. It must
+      accept workflow_dispatch merged-sha; the labels caller needs actions:
+      write. Empty prevents release auto-merges.
     required: false
     default: ""
 runs:
@@ -38,17 +49,28 @@ runs:
           off | merge | squash | rebase) ;;
           *) echo "auto_merge must be one of: off, merge, squash, rebase" >&2; exit 2 ;;
         esac
+    - name: validate auto_merge_release input
+      shell: bash
+      env:
+        AUTO_MERGE_RELEASE: ${{ inputs.auto_merge_release }}
+      run: |
+        case "$AUTO_MERGE_RELEASE" in
+          off | merge | squash | rebase) ;;
+          *) echo "auto_merge_release must be one of: off, merge, squash, rebase" >&2; exit 2 ;;
+        esac
     - name: reconcile labels
       shell: bash
       env:
         BOOTSTRAP: ${{ inputs.bootstrap }}
         AUTO_MERGE: ${{ inputs.auto_merge }}
+        AUTO_MERGE_RELEASE: ${{ inputs.auto_merge_release }}
         # No validation step, deliberately (#461 D4): whether the workflow
         # exists, declares workflow_dispatch: and is dispatchable by this token
         # are three questions `gh workflow run` already answers by failing, and
         # the reconciler prints the answer. Unlike auto_merge, whose accepted
         # set is closed and knowable here.
         POST_MERGE_WORKFLOW: ${{ inputs.post_merge_workflow }}
+        RELEASE_WORKFLOW: ${{ inputs.release_workflow }}
         LABELS_CONF: ${{ github.workspace }}/.github/labels.conf
       run: |
         if [ "$BOOTSTRAP" = yes ]; then

@@ -84,6 +84,7 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # workflow and composite action boundaries (#459). #459 observed the verdict;
 # #460 acts on it, at the end of reconcile_pr and through run().
 AUTO_MERGE="${AUTO_MERGE-off}"
+AUTO_MERGE_RELEASE="${AUTO_MERGE_RELEASE-off}"
 # What the success comment opens with (#460 D6). A marker in the shape this
 # file's other machine comments use — but NOT an idempotency guard, and no
 # ensure_comment reads it: the sweep enumerates OPEN pull requests only
@@ -99,6 +100,7 @@ AUTO_MERGED_MARKER='<!-- ceremony:auto-merged -->'
 # `gh workflow run` already answers by failing, and a second implementation of
 # GitHub's own checks is a guess this script cannot keep current.
 POST_MERGE_WORKFLOW="${POST_MERGE_WORKFLOW-}"
+RELEASE_WORKFLOW="${RELEASE_WORKFLOW-}"
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -325,6 +327,10 @@ validate_auto_merge() {
   case "$AUTO_MERGE" in
     off | merge | squash | rebase) ;;
     *) echo "auto_merge must be one of: off, merge, squash, rebase" >&2; return 2 ;;
+  esac
+  case "$AUTO_MERGE_RELEASE" in
+    off | merge | squash | rebase) ;;
+    *) echo "auto_merge_release must be one of: off, merge, squash, rebase" >&2; return 2 ;;
   esac
 }
 
