@@ -13,13 +13,17 @@ export LC_ALL=C
 cd "$(dirname "$0")/.."
 # shellcheck source=actions/labels-reconcile/labels-reconcile.sh
 unset AUTO_MERGE
+unset AUTO_MERGE_RELEASE
 unset POST_MERGE_WORKFLOW
+unset RELEASE_WORKFLOW
 . actions/labels-reconcile/labels-reconcile.sh
 SCRIPT_AUTO_MERGE_DEFAULT="${AUTO_MERGE-<unset>}"
+SCRIPT_AUTO_MERGE_RELEASE_DEFAULT="${AUTO_MERGE_RELEASE-<unset>}"
 # Captured the same way and for the same reason: the sourced defaults are what
 # a direct-script caller gets, and `<unset>` here would mean the script left
 # the variable undefined and `set -u` would abort the sweep at the first read.
 SCRIPT_POST_MERGE_DEFAULT="${POST_MERGE_WORKFLOW-<unset>}"
+SCRIPT_RELEASE_WORKFLOW_DEFAULT="${RELEASE_WORKFLOW-<unset>}"
 
 RTMP="$(mktemp -d)"
 trap 'rm -rf "$RTMP"' EXIT
@@ -67,6 +71,14 @@ expect "the reusable workflow defaults auto_merge to off" 1 \
 expect "the composite action defaults auto_merge to off" 1 \
   "$(awk '/^  auto_merge:/{seen=1} seen && /default: "off"/{print 1; exit}' \
     actions/labels-reconcile/action.yml)"
+expect "the direct script defaults auto_merge_release to off when unset" off \
+  "$SCRIPT_AUTO_MERGE_RELEASE_DEFAULT"
+expect "the reusable workflow defaults auto_merge_release to off" 1 \
+  "$(awk '/^      auto_merge_release:/{seen=1} seen && /default: "off"/{print 1; exit}' \
+    .github/workflows/labels-sweep.yml)"
+expect "the composite action defaults auto_merge_release to off" 1 \
+  "$(awk '/^  auto_merge_release:/{seen=1} seen && /default: "off"/{print 1; exit}' \
+    actions/labels-reconcile/action.yml)"
 
 # ---------------------------------------------------------------------------
 # The post-merge dispatch's default (#461 D1). Empty at all three boundaries,
@@ -83,6 +95,30 @@ expect "the reusable workflow defaults post_merge_workflow to empty" 1 \
 expect "the composite action defaults post_merge_workflow to empty" 1 \
   "$(awk '/^  post_merge_workflow:/{seen=1} seen && /default: ""/{print 1; exit}' \
     actions/labels-reconcile/action.yml)"
+expect "the direct script defaults release_workflow to empty when unset" "" \
+  "$SCRIPT_RELEASE_WORKFLOW_DEFAULT"
+expect "the reusable workflow defaults release_workflow to empty" 1 \
+  "$(awk '/^      release_workflow:/{seen=1} seen && /default: ""/{print 1; exit}' \
+    .github/workflows/labels-sweep.yml)"
+expect "the composite action defaults release_workflow to empty" 1 \
+  "$(awk '/^  release_workflow:/{seen=1} seen && /default: ""/{print 1; exit}' \
+    actions/labels-reconcile/action.yml)"
+release_desc="$(awk '/^      release_workflow:/{seen=1; next}
+                      seen && /^        type:/{exit} seen{print}' \
+  .github/workflows/labels-sweep.yml)"
+expect "the release input description names merged-sha" yes \
+  "$(grep -q 'merged-sha' <<<"$release_desc" && echo yes || echo no)"
+expect "...the actions: write the caller needs" yes \
+  "$(grep -q 'actions:' <<<"$release_desc" && grep -q 'write' <<<"$release_desc" && echo yes || echo no)"
+expect "...and that empty prevents release auto-merges" yes \
+  "$(grep -q 'Empty means release pull requests are never auto-merged' <<<"$release_desc" && echo yes || echo no)"
+
+# D14 — both reusable action sites carry the whole four-input family. Counting
+# each literal twice makes deleting any one line from either block red.
+for pass_input in auto_merge post_merge_workflow auto_merge_release release_workflow; do
+  expect "both reusable with blocks pass $pass_input" 2 \
+    "$(grep -c "^          $pass_input:.*inputs.$pass_input" .github/workflows/labels-sweep.yml)"
+done
 # The action's description carries the three facts a consumer needs; the
 # reusable workflow's carries them in full. Asserted on the reusable, which is
 # the surface a consumer reads.
@@ -203,7 +239,7 @@ expect "a malformed triage actor is skipped" outside \
 expect "the malformed triage actor warning names its config file" yes \
   "$(grep -qF "$MALFORMED_FLEET_CONF" <<<"$malformed_fleet_warning" && echo yes || echo no)"
 
-AUTO_MERGE=merge AUTHOR=fixture-reviewer LABELS="" MERGEABLE=MERGEABLE
+AUTO_MERGE=merge AUTO_MERGE_RELEASE=off RELEASE_WORKFLOW="" AUTHOR=fixture-reviewer LABELS="" MERGEABLE=MERGEABLE
 expect "an eligible fleet PR returns MERGE" MERGE \
   "$(auto_merge_verdict state:needs-human)"
 AUTO_MERGE=off
@@ -212,11 +248,14 @@ expect "off is the first refusal" SKIP:off \
 AUTO_MERGE=merge
 expect "a non-handoff pass verdict is refused" SKIP:state \
   "$(auto_merge_verdict state:addressing)"
-LABELS=release
-expect "the state refusal precedes the release refusal" SKIP:state \
+LABELS=release AUTO_MERGE_RELEASE=merge RELEASE_WORKFLOW=""
+expect "the state refusal precedes the missing-release-dispatch refusal" SKIP:state \
   "$(auto_merge_verdict state:addressing)"
 LABELS=$'state:needs-human\nrelease'
-expect "a release PR is refused" SKIP:release \
+expect "a release PR with no dispatch is refused" SKIP:no-release-dispatch \
+  "$(auto_merge_verdict state:needs-human)"
+RELEASE_WORKFLOW=release.yml
+expect "a configured release PR is eligible" MERGE \
   "$(auto_merge_verdict state:needs-human)"
 LABELS="" AUTHOR=outside-author
 expect "a non-fleet author is refused" SKIP:author \
@@ -232,7 +271,7 @@ expect "the pass verdict outranks a standing needs-human label" SKIP:state \
 # machine assertions below.
 load_config "$FIXTURE_CONF"
 set_required_bots "$FIXTURE_AUTHOR"
-AUTO_MERGE=off AUTHOR="$FIXTURE_AUTHOR" LABELS="" MERGEABLE=MERGEABLE
+AUTO_MERGE=off AUTO_MERGE_RELEASE=off RELEASE_WORKFLOW="" AUTHOR="$FIXTURE_AUTHOR" LABELS="" MERGEABLE=MERGEABLE
 
 rev() { # $1=login $2=state $3=commit $4=body $5=submitted_at → one review object
   jq -n --arg u "$1" --arg s "$2" --arg c "$3" --arg b "$4" --arg t "$5" \
@@ -2215,6 +2254,8 @@ am_probe() { # $1 PR, $2 AUTO_MERGE, $3 confirmed head, $4 confirmed state, $5 c
              # $9 dispatch rc, ${10} REQUESTED, ${11} round shape —
              # "block" swaps one approval for a change-request, which is how a
              # SKIP:state pass is BOUGHT from decide_state rather than asserted.
+             # #468 adds $12 AUTO_MERGE_RELEASE, $13 RELEASE_WORKFLOW and
+             # $14 the labels graded by this pass.
   (
     local n="$1" at
     at="$(iso_at $((RNOW - 3600)))"
@@ -2222,12 +2263,14 @@ am_probe() { # $1 PR, $2 AUTO_MERGE, $3 confirmed head, $4 confirmed state, $5 c
       merge-next stale needs-ruling blocked)"
     REPO=owner/repo NOW="$RNOW"
     AUTO_MERGE="$2"
+    AUTO_MERGE_RELEASE="${12:-off}"
+    RELEASE_WORKFLOW="${13:-}"
     # A fleet login, so #459's author refusal is not what is being measured.
     AUTHOR="$FIXTURE_AUTHOR"
     # The needs-human fixture: three head-current approvals, mergeable, green,
     # nothing excluded. decide_state's conclusion is the trigger (D2), so the
     # fixture buys it honestly rather than hand-setting the label.
-    LABELS="" DRAFT=false HEAD_SHA=amhead1 REQUESTED="${10:-}"
+    LABELS="${14:-}" DRAFT=false HEAD_SHA=amhead1 REQUESTED="${10:-}"
     MERGEABLE=MERGEABLE CHECKS=SUCCESS HEAD_COMMIT_AT="$at"
     if [ "${11:-}" = block ]; then
       REVIEWS_JSON="$(reviews \
@@ -2394,6 +2437,49 @@ expect "a release label arriving after the grading records no merge" 0 "$(am_mer
 expect "...naming what appeared" yes \
   "$(grep -q '#906: auto-merge refused: release appeared on the PR since this pass graded it' \
     <<<"$am_release" && echo yes || echo no)"
+
+# -- #468's disjoint selector. The four corners differ only in the two toggle
+# values and the graded release label; every merging argv is asserted.
+am_corner_normal="$(am_probe 960 merge amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" off "" "")"
+expect "auto_merge on / release toggle off merges a non-release PR" \
+  "pr merge 960 -R owner/repo --merge --match-head-commit amhead1" \
+  "$(cat "$AM/merges-960")"
+am_corner_release_off="$(am_probe 961 merge amhead1 open '[{"name":"release"}]' 0 "" "" 0 "" "" off release.yml release)"
+expect "auto_merge on / release toggle off refuses a release PR" 0 "$(am_merges 961)"
+expect "...on the release-labelled log path" yes \
+  "$(grep -q '#961: auto-merge\[release\]: SKIP:off' <<<"$am_corner_release_off" && echo yes || echo no)"
+am_corner_normal_off="$(am_probe 962 off amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" merge release.yml "")"
+expect "auto_merge off / release toggle on refuses a non-release PR" 0 "$(am_merges 962)"
+am_corner_release="$(am_probe 963 off amhead1 open '[{"name":"release"}]' 0 "" "" 0 "" "" merge release.yml release)"
+expect "auto_merge off / release toggle on merges a release PR" \
+  "pr merge 963 -R owner/repo --merge --match-head-commit amhead1" \
+  "$(cat "$AM/merges-963")"
+expect "...and dispatches the release caller with the graded head" \
+  "workflow run release.yml -R owner/repo -f merged-sha=amhead1" \
+  "$(cat "$AM/dispatch-963")"
+expect "...and its provenance names the release toggle and dispatch input" yes \
+  "$(grep -qF 'auto_merge_release=merge' "$AM/posted-963" \
+    && grep -qF 'release.yml' "$AM/posted-963" \
+    && grep -qF 'merged-sha=amhead1' "$AM/posted-963" && echo yes || echo no)"
+
+am_release_no_dispatch="$(am_probe 964 off amhead1 open '[{"name":"release"}]' 0 "" "" 0 "" "" merge "" release)"
+expect "a release toggle with no dispatch configured records no merge" 0 "$(am_merges 964)"
+expect "...and logs the dedicated refusal" yes \
+  "$(grep -q '#964: auto-merge\[release\]: SKIP:no-release-dispatch' <<<"$am_release_no_dispatch" && echo yes || echo no)"
+
+am_release_disappeared="$(am_probe 965 off amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" squash release.yml release)"
+expect "a release label disappearing after grading records no merge" 0 "$(am_merges 965)"
+expect "...and names the symmetric confirmation refusal" yes \
+  "$(grep -q '#965: auto-merge refused: release disappeared on the PR since this pass graded it' \
+    <<<"$am_release_disappeared" && echo yes || echo no)"
+
+am_release_dry="$(am_probe 966 off amhead1 open '[{"name":"release"}]' 0 dry "" 0 "" "" rebase release.yml release)"
+expect "a release DRY_RUN mutates neither merge nor dispatch" "0 0" \
+  "$(am_merges 966) $([ -f "$AM/dispatch-966" ] && wc -l <"$AM/dispatch-966" | tr -d ' ' || echo 0)"
+expect "...and narrates both exact mutations" yes \
+  "$(grep -q 'DRY_RUN: gh pr merge 966 -R owner/repo --rebase --match-head-commit amhead1' <<<"$am_release_dry" \
+    && grep -q 'DRY_RUN: gh workflow run release.yml -R owner/repo -f merged-sha=amhead1' <<<"$am_release_dry" \
+    && echo yes || echo no)"
 
 # -- a refused merge is loud, local and non-fatal (D5)
 am_fail="$(am_probe 907 merge amhead1 open "$NO_LABELS" 1)"
@@ -2688,8 +2774,8 @@ expect "the act re-derives no draft check" no \
 expect "the act re-derives no blocker check" no \
   "$(grep -qF 'BLOCKERS' <<<"$am_body" || grep -qF '(blockers)' <<<"$am_body" \
     && echo yes || echo no)"
-expect "the act re-reads no labels of its own" no \
-  "$(grep -q 'has_label' <<<"$am_body" && echo yes || echo no)"
+expect "the act reads the graded labels once, only to select the governing toggle" 1 \
+  "$(grep -c 'has_label release' <<<"$am_body")"
 # ...and the confirmation re-reads rather than recomputing: a confirmation
 # built from the values this pass already holds is a comment, not a lock.
 am_confirm_body="$(awk '/^auto_merge_confirm\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
@@ -2832,7 +2918,7 @@ am_pm_body="$(awk '/^reconcile_auto_merge\(\)/{inside=1} inside{print} inside &&
   actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#' || true)"
 expect "the dispatch goes through run(), like every mutation in the file" yes \
   "$(grep -q 'run gh workflow run' <<<"$am_pm_body" && echo yes || echo no)"
-expect "...and is the only gh workflow call in the function" 1 \
+expect "the generic and release dispatches are the only gh workflow calls in the function" 2 \
   "$(grep -c 'gh workflow run' <<<"$am_pm_body")"
 expect "...after the provenance comment, in source order" yes \
   "$(awk '/gh issue comment/{c=NR} /run gh workflow run/{d=NR}
