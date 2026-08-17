@@ -1041,9 +1041,15 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   # auto-merge — option A, needing branch protection nobody has. Never
   # `--delete-branch`: every PR in this family arrives from a fork and the
   # branch is not ours to delete.
+  # stdout is NOT sent to /dev/null, unlike this file's other mutations, and
+  # the difference is load-bearing: `>/dev/null` on a `run` invocation
+  # discards run()'s OWN `DRY_RUN:` narration along with the command's output,
+  # so the rehearsal would fall silent about the one act it exists to preview.
+  # What comes through instead is gh's one-line confirmation, which is
+  # provenance the run log should carry anyway.
   err_file="$(mktemp)"
   if ! run gh pr merge "$n" -R "$REPO" "--$AUTO_MERGE" \
-    --match-head-commit "$HEAD_SHA" >/dev/null 2>"$err_file"; then
+    --match-head-commit "$HEAD_SHA" 2>"$err_file"; then
     err="$(cat "$err_file")"
     rm -f "$err_file"
     # Loud, local and non-fatal (D5): the PR is exactly as it was, nothing is
@@ -1077,7 +1083,7 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
 
 The head was re-read immediately before the merge and matched.
 *Only humans merge* remains this organization's default: this repository
-turned that default off deliberately (heavy-duty/ceremony#458)." >/dev/null; then
+turned that default off deliberately (heavy-duty/ceremony#458)."; then
     log "#$n: auto-merged $HEAD_SHA ($AUTO_MERGE) — commented"
   else
     log "#$n: WARNING: auto-merged $HEAD_SHA ($AUTO_MERGE) but the provenance comment failed to post — the merge stands and is NOT re-attempted"
