@@ -2524,18 +2524,27 @@ am_sweep_probe() { # $1 = the first PR's merge rc; the second always succeeds
                    # $3 the FIRST PR's dispatch rc — the second always
                    # dispatches cleanly, which is what makes the continuation
                    # after a failed dispatch visible.
+                   # #468 adds $4=mixed: PR 920 is a release governed by
+                   # auto_merge_release=squash and PR 921 is ordinary/merge.
   (
     GITHUB_EVENT_NAME=schedule
     REPO=owner/repo
     LABELS_CONF="$FIXTURE_CONF"
     AUTO_MERGE=merge
+    AUTO_MERGE_RELEASE=off
+    RELEASE_WORKFLOW=""
     AM_FIRST_RC="$1"
     POST_MERGE_WORKFLOW="${2:-}"
     AM_FIRST_DISPATCH_RC="${3:-0}"
+    AM_MIXED="${4:-0}"
+    if [ "$AM_MIXED" = mixed ]; then
+      AUTO_MERGE_RELEASE=squash
+      RELEASE_WORKFLOW=release.yml
+    fi
     AM_SWEEP_PR=none
     # the recordings are per-run: this probe is driven several times and an
     # appended file would let a later run answer an earlier run's assertions
-    AM_RUN="rc$1${2:+-pm}${3:+-d$3}"
+    AM_RUN="rc$1${2:+-pm}${3:+-d$3}${4:+-mixed}"
     # main sets NOW from the real clock, so the fixture's own dates are
     # relative to it rather than to this file's fixed RNOW.
     local at
@@ -2608,9 +2617,13 @@ am_sweep_probe() { # $1 = the first PR's merge rc; the second always succeeds
         */commits/*)
           jq -n --arg at "$at" '{commit:{committer:{date:$at}}}' | jq -r "${jqexpr:-.}" ;;
         */pulls/92[01]) # main's own fetch AND the confirmation read (D3)
-          jq -n --arg at "$at" --arg author "$FIXTURE_AUTHOR" \
+          local fixture_labels='[]'
+          if [ "$AM_MIXED" = mixed ] && [[ "$endpoint" = */pulls/920 ]]; then
+            fixture_labels='[{"name":"release"}]'
+          fi
+          jq -n --arg at "$at" --arg author "$FIXTURE_AUTHOR" --argjson labels "$fixture_labels" \
             '{state:"open",draft:false,user:{login:$author},head:{sha:"amhead1"},
-              base:{sha:"basesha"},labels:[],requested_reviewers:[],
+              base:{sha:"basesha"},labels:$labels,requested_reviewers:[],
               created_at:$at,assignees:[]}' | jq -r "${jqexpr:-.}" ;;
         *) printf '[]\n' | jq -r "${jqexpr:-.}" ;;
       esac
@@ -2691,6 +2704,29 @@ expect "the same sweep with both dispatches accepted dispatches twice" 2 \
   "$(grep -c 'dispatched ci.yml after the merge' <<<"$am_pmsweep_ok")"
 expect "...and warns about none of them" 0 \
   "$(grep -c 'post-merge dispatch of' <<<"$am_pmsweep_ok")"
+
+# -- #468's mixed pass: one sweep proves the governing method is selected per
+# PR, and a failed release dispatch cannot strand the ordinary PR behind it.
+am_mixed_rc=0
+am_mixed="$(am_sweep_probe 0 "" 1 mixed)" || am_mixed_rc=$?
+expect "a sweep whose release dispatch fails still exits 0" 0 "$am_mixed_rc"
+expect "the release PR uses auto_merge_release's squash method" \
+  "pr merge 920 -R owner/repo --squash --match-head-commit amhead1" \
+  "$(cat "$AM/sweep-rc0-d1-mixed-merges-920")"
+expect "the ordinary PR in that same sweep uses auto_merge's merge method" \
+  "pr merge 921 -R owner/repo --merge --match-head-commit amhead1" \
+  "$(cat "$AM/sweep-rc0-d1-mixed-merges-921")"
+expect "the release dispatch carries the exact graded head" \
+  "workflow run release.yml -R owner/repo -f merged-sha=amhead1" \
+  "$(cat "$AM/sweep-rc0-d1-mixed-dispatch-920")"
+expect "the failed release dispatch is loud and names PR and workflow" yes \
+  "$(grep -q '^labels: #920: WARNING: release dispatch of release.yml failed: could not find any workflows named release.yml HTTP 404: Not Found — the merge stands$' \
+    <<<"$am_mixed" && echo yes || echo no)"
+expect "the next PR in the same sweep is still reconciled and merged" yes \
+  "$(grep -q '#921: auto-merged amhead1 (merge) — commented' <<<"$am_mixed" \
+    && echo yes || echo no)"
+expect "the ordinary merge fires no release dispatch" no \
+  "$([ -e "$AM/sweep-rc0-d1-mixed-dispatch-921" ] && echo yes || echo no)"
 # ...and the same sweep with the input UNSET dispatches for neither, which is
 # every consumer today: the criterion's "exactly the invocations #460 ships".
 expect "the same sweep with post_merge_workflow unset dispatches nothing" no \
