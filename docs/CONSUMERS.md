@@ -448,12 +448,6 @@ on:
     tags: ["**"]      # every tag — a wrong tag must FAIL the assert loudly,
                       # never be skipped by a shape filter that didn't match
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      merged-sha:
-        description: Full release-PR head SHA already merged to main
-        required: true
-        type: string
 permissions:
   contents: write       # tag ref create + release create + the bump push
   pull-requests: write  # decide's label read; the bump-fallback `gh pr create`
@@ -463,7 +457,6 @@ jobs:
     uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>
     with:
       version-source: file   # or: package-json
-      merged-sha: ${{ inputs.merged-sha }}
 ```
 
 To route this caller, add one of these lines under its existing `with:` key:
@@ -916,12 +909,27 @@ both:
 A failed dispatch is logged and non-fatal: the merge has already happened
 and stands.
 
-For a release auto-merge, the consumer's release caller must also declare the
-`workflow_dispatch.merged-sha` entrance shown in [Release workflow](#release-workflow),
-pass that input through to the reusable workflow, and be named in
-`release_workflow`. The sweep dispatches it only after the release merge,
-using the exact head it graded and pinned. A failed release dispatch is loud
-and non-fatal because the merge already stands.
+For a release auto-merge, overlay this entrance and pass-through on the
+consumer release caller from [Release workflow](#release-workflow), then name
+that caller in `release_workflow`:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      merged-sha:
+        description: Full release-PR head SHA already merged to main
+        required: true
+        type: string
+jobs:
+  release:
+    with:
+      merged-sha: ${{ inputs.merged-sha }}
+```
+
+The sweep dispatches it only after the release merge, using the exact head it
+graded and pinned. A failed release dispatch is loud and non-fatal because the
+merge already stands.
 
 **5. The approval-latency note.** The event-facing labels caller carries no
 `pull_request_review` trigger, so the round's final approval wakes nothing

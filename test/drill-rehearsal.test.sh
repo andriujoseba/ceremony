@@ -599,23 +599,10 @@ awk '/^The consumer.s \*\*entire\*\* `release\.yml`:$/ { armed = 1; next }
      /^```$/ { if (inblock) exit }
      inblock' \
   "$ROOT/docs/CONSUMERS.md" |
-  # #468 adds a workflow_dispatch entrance and one pass-through to the
-  # consumer guide while its fence deliberately leaves release.yml untouched.
-  # Compare the shared caller shape after removing exactly those additions;
-  # the assertions below defend the additions themselves.
-  awk '/^  workflow_dispatch:$/ { dispatch = 1; next }
-       dispatch && /^permissions:$/ { dispatch = 0 }
-       dispatch { next }
-       /merged-sha: \$\{\{ inputs\.merged-sha \}\}/ { next }
-       { print }' |
   sed "s#^    uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>\$#    uses: $FORK/.github/workflows/release.yml@$FORK_REF#" \
     >"$TMP/caller.expected"
-check "the caller stub is CONSUMERS.md's unchanged base shape, verbatim but for the pin" 0 "" \
+check "the caller stub is CONSUMERS.md's block, verbatim but for the pin" 0 "" \
   diff -u "$TMP/caller.expected" "$TMP/stub/.github/workflows/release.yml"
-check "the consumer release caller documents the merged-sha dispatch entrance" 0 "" \
-  grep -q '^  workflow_dispatch:$' "$ROOT/docs/CONSUMERS.md"
-check "the consumer release caller passes merged-sha to the reusable" 0 "" \
-  grep -qF 'merged-sha: ${{ inputs.merged-sha }}' "$ROOT/docs/CONSUMERS.md"
 
 check "the caller refuses to land on a tree with no armed fixture" 1 \
   "is missing the armed fixture: VERSION" ordering_probe "$UNSEEDED"
