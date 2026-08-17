@@ -2440,7 +2440,7 @@ expect "...naming what appeared" yes \
 
 # -- #468's disjoint selector. The four corners differ only in the two toggle
 # values and the graded release label; every merging argv is asserted.
-am_corner_normal="$(am_probe 960 merge amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" off "" "")"
+am_probe 960 merge amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" off "" "" >/dev/null
 expect "auto_merge on / release toggle off merges a non-release PR" \
   "pr merge 960 -R owner/repo --merge --match-head-commit amhead1" \
   "$(cat "$AM/merges-960")"
@@ -2448,9 +2448,9 @@ am_corner_release_off="$(am_probe 961 merge amhead1 open '[{"name":"release"}]' 
 expect "auto_merge on / release toggle off refuses a release PR" 0 "$(am_merges 961)"
 expect "...on the release-labelled log path" yes \
   "$(grep -q '#961: auto-merge\[release\]: SKIP:off' <<<"$am_corner_release_off" && echo yes || echo no)"
-am_corner_normal_off="$(am_probe 962 off amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" merge release.yml "")"
+am_probe 962 off amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" merge release.yml "" >/dev/null
 expect "auto_merge off / release toggle on refuses a non-release PR" 0 "$(am_merges 962)"
-am_corner_release="$(am_probe 963 off amhead1 open '[{"name":"release"}]' 0 "" "" 0 "" "" merge release.yml release)"
+am_probe 963 off amhead1 open '[{"name":"release"}]' 0 "" "" 0 "" "" merge release.yml release >/dev/null
 expect "auto_merge off / release toggle on merges a release PR" \
   "pr merge 963 -R owner/repo --merge --match-head-commit amhead1" \
   "$(cat "$AM/merges-963")"
