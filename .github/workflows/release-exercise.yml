@@ -44,6 +44,11 @@ jobs:
 
   step-replay:
     runs-on: ubuntu-latest
+    env:
+      # release.yml selects inputs.merged-sha or github.sha. This scratch
+      # caller deliberately passes no merged-sha, so its selected head is the
+      # run head and the copied early steps exercise that dry shape.
+      MERGE_SHA: ${{ github.sha }}
     strategy:
       matrix:
         # release.yml keys its bypass on `github.repository ==
@@ -52,11 +57,26 @@ jobs:
         # take the consumer branch for real, and vice versa.
         shape: [dogfood, consumer]
     steps:
+      - name: assert a dispatched head is a full lowercase commit SHA
+        # release.yml gates this copied step on a non-empty merged-sha. The
+        # replay supplies its selected run head so the same body executes.
+        env:
+          MERGED_SHA: ${{ env.MERGE_SHA }}
+        run: |
+          case "$MERGED_SHA" in
+            *[!0-9a-f]*|'') invalid=true ;;
+            ????????????????????????????????????????) invalid=false ;;
+            *) invalid=true ;;
+          esac
+          if [ "$invalid" = true ]; then
+            echo "merged-sha must be a full 40-character lowercase commit SHA" >&2
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # release.yml's first checkout, verbatim: the pushed head and its
+          # release.yml's first checkout, verbatim: the selected head and its
           # first parent.
-          ref: ${{ github.sha }}
+          ref: ${{ env.MERGE_SHA }}
           fetch-depth: 2
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         # release.yml's second checkout — the consumer path's pinned
