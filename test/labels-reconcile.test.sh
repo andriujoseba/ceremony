@@ -12,7 +12,9 @@ export LC_ALL=C
 
 cd "$(dirname "$0")/.."
 # shellcheck source=actions/labels-reconcile/labels-reconcile.sh
+unset AUTO_MERGE
 . actions/labels-reconcile/labels-reconcile.sh
+SCRIPT_AUTO_MERGE_DEFAULT="${AUTO_MERGE-<unset>}"
 
 RTMP="$(mktemp -d)"
 trap 'rm -rf "$RTMP"' EXIT
@@ -46,6 +48,113 @@ expect() { # $1 = description, $2 = want, $3 = got
     printf 'FAIL: %s — want %s, got %s\n' "$1" "$2" "$3"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# The inert auto-merge reader (#459). The fleet is the union already encoded
+# in labels.conf, and the verdict consumes decide_state's result rather than
+# trusting the hand-set label that the same pass is about to validate.
+# ---------------------------------------------------------------------------
+expect "the direct script defaults auto_merge to off when unset" off \
+  "$SCRIPT_AUTO_MERGE_DEFAULT"
+expect "the reusable workflow defaults auto_merge to off" 1 \
+  "$(awk '/^      auto_merge:/{seen=1} seen && /default: "off"/{print 1; exit}' \
+    .github/workflows/labels-sweep.yml)"
+expect "the composite action defaults auto_merge to off" 1 \
+  "$(awk '/^  auto_merge:/{seen=1} seen && /default: "off"/{print 1; exit}' \
+    actions/labels-reconcile/action.yml)"
+
+AUTO_MERGE=sometimes validation_rc=0
+validation_output="$(validate_auto_merge 2>&1)" || validation_rc=$?
+expect "the direct-script validator rejects an unknown mode with rc 2" 2 \
+  "$validation_rc"
+expect "the direct-script validator names the input and accepted set" \
+  "auto_merge must be one of: off, merge, squash, rebase" "$validation_output"
+empty_validation_rc=0
+empty_validation_output="$(AUTO_MERGE='' bash actions/labels-reconcile/labels-reconcile.sh 2>&1)" \
+  || empty_validation_rc=$?
+expect "the direct-script boundary rejects an explicitly empty mode with rc 2" 2 \
+  "$empty_validation_rc"
+expect "the direct-script empty-mode diagnostic names the accepted set" \
+  "$validation_output" "$empty_validation_output"
+action_validation_body="$(awk '
+  /- name: validate auto_merge input/ { found=1 }
+  found && /^      run: \|/ { body=1; next }
+  body && /^    - name:/ { exit }
+  body { sub(/^        /, ""); print }
+' actions/labels-reconcile/action.yml)"
+action_validation_rc=0
+action_validation_output="$(AUTO_MERGE=sometimes bash -c "$action_validation_body" 2>&1)" \
+  || action_validation_rc=$?
+expect "the action-boundary validator rejects an unknown mode with rc 2" 2 \
+  "$action_validation_rc"
+expect "the action-boundary validator uses the direct script's diagnostic" \
+  "$validation_output" "$action_validation_output"
+
+load_config .github/labels.conf
+for fleet_login in \
+  claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl \
+  cndgrr andriujoseba dan-claude-bot; do
+  expect "the shipped fleet admits $fleet_login" fleet \
+    "$(is_fleet_login "$fleet_login" && echo fleet || echo outside)"
+done
+for outside_login in danmt "" cndgr dan-claude; do
+  expect "the shipped fleet refuses ${outside_login:-an empty login}" outside \
+    "$(is_fleet_login "$outside_login" && echo fleet || echo outside)"
+done
+
+ROW_REVIEWER_CONF="$RTMP/row-reviewer.conf"
+printf '%s\n' \
+  'panel=base-reviewer' \
+  'panel[row-author]=row-only-reviewer' \
+  >"$ROW_REVIEWER_CONF"
+load_config "$ROW_REVIEWER_CONF"
+expect "a per-author panel row reviewer is fleet" fleet \
+  "$(is_fleet_login row-only-reviewer && echo fleet || echo outside)"
+
+MALFORMED_FLEET_CONF="$RTMP/malformed-fleet.conf"
+printf '%s\n' \
+  'panel=fixture-reviewer' \
+  'triage-actors=ok-bot bad!login' \
+  >"$MALFORMED_FLEET_CONF"
+load_config "$MALFORMED_FLEET_CONF" 2>"$RTMP/malformed-fleet.warning"
+malformed_fleet_warning="$(cat "$RTMP/malformed-fleet.warning")"
+expect "a malformed triage actor does not fail config loading" fleet \
+  "$(is_fleet_login ok-bot && echo fleet || echo outside)"
+expect "a malformed triage actor is skipped" outside \
+  "$(is_fleet_login 'bad!login' && echo fleet || echo outside)"
+expect "the malformed triage actor warning names its config file" yes \
+  "$(grep -qF "$MALFORMED_FLEET_CONF" <<<"$malformed_fleet_warning" && echo yes || echo no)"
+
+AUTO_MERGE=merge AUTHOR=fixture-reviewer LABELS="" MERGEABLE=MERGEABLE
+expect "an eligible fleet PR returns MERGE" MERGE \
+  "$(auto_merge_verdict state:needs-human)"
+AUTO_MERGE=off
+expect "off is the first refusal" SKIP:off \
+  "$(auto_merge_verdict state:addressing)"
+AUTO_MERGE=merge
+expect "a non-handoff pass verdict is refused" SKIP:state \
+  "$(auto_merge_verdict state:addressing)"
+LABELS=release
+expect "the state refusal precedes the release refusal" SKIP:state \
+  "$(auto_merge_verdict state:addressing)"
+LABELS=$'state:needs-human\nrelease'
+expect "a release PR is refused" SKIP:release \
+  "$(auto_merge_verdict state:needs-human)"
+LABELS="" AUTHOR=outside-author
+expect "a non-fleet author is refused" SKIP:author \
+  "$(auto_merge_verdict state:needs-human)"
+AUTHOR=fixture-reviewer MERGEABLE=UNKNOWN
+expect "unknown mergeability is refused" SKIP:mergeable \
+  "$(auto_merge_verdict state:needs-human)"
+LABELS=state:needs-human MERGEABLE=MERGEABLE
+expect "the pass verdict outranks a standing needs-human label" SKIP:state \
+  "$(auto_merge_verdict state:addressing)"
+
+# Restore the fixture roster and common defaults for the pre-existing state
+# machine assertions below.
+load_config "$FIXTURE_CONF"
+set_required_bots "$FIXTURE_AUTHOR"
+AUTO_MERGE=off AUTHOR="$FIXTURE_AUTHOR" LABELS="" MERGEABLE=MERGEABLE
 
 rev() { # $1=login $2=state $3=commit $4=body $5=submitted_at → one review object
   jq -n --arg u "$1" --arg s "$2" --arg c "$3" --arg b "$4" --arg t "$5" \
@@ -409,9 +518,10 @@ DRAFT=false MERGEABLE=MERGEABLE CHECKS=SUCCESS REQUESTED="" REVIEWS_JSON='[]'
 # taxonomy, and stranding them reintroduced the false-invitation bug (a
 # `merge-next` claim surviving on a PR the board had moved to the agent).
 # ---------------------------------------------------------------------------
-reconcile_probe() { # $1 = REPO_LABELS content → the log lines reconcile_pr emits
+reconcile_probe() { # $1 = REPO_LABELS content, $2 = AUTO_MERGE (optional)
   (
     REPO_LABELS="$1" REPO=owner/repo NOW="$(date +%s)"
+    AUTO_MERGE="${2:-off}" AUTHOR="$FIXTURE_AUTHOR"
     LABELS="merge-next"                      # the PR carries a queue claim
     DRAFT=false HEAD_SHA=head1 REQUESTED="" REVIEWS_JSON='[]'
     MERGEABLE=MERGEABLE CHECKS=SUCCESS
@@ -433,6 +543,11 @@ expect "...while warning that the state label is missing" \
 warm="$(reconcile_probe "$(printf 'state:addressing\nmerge-next\nstale\nblocker:unrequested')")"
 expect "a bootstrapped repo converges the state as well" \
   yes "$(grep -q 'state -> state:addressing' <<<"$warm" && echo yes || echo no)"
+expect "toggle off emits no auto-merge line" no \
+  "$(grep -q 'auto-merge:' <<<"$warm" && echo yes || echo no)"
+shadow="$(reconcile_probe "$(printf 'state:addressing\nmerge-next\nstale\nblocker:unrequested')" merge)"
+expect "toggle on logs the pure verdict after attention reconciliation" yes \
+  "$(grep -q '#777: auto-merge: SKIP:state' <<<"$shadow" && echo yes || echo no)"
 
 # ---------------------------------------------------------------------------
 # needs-ruling (#51): a pending human decision. Hand-set intent the machine

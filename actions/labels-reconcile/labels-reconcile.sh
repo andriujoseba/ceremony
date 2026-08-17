@@ -43,6 +43,7 @@ BOTS=()
 # space-joined reviewer set at the same index.
 PANEL_AUTHORS=()
 PANEL_ROWS=()
+TRIAGE_ACTORS=()
 REQUIRED_BOTS=()
 STATES=(state:building state:bots-reviewing state:addressing state:needs-human)
 BLOCKERS=(blocker:conflict blocker:ci-red blocker:unrequested)
@@ -79,6 +80,10 @@ RECONCILE_UNREQUESTED_GRACE="${RECONCILE_UNREQUESTED_GRACE:-300}"
 # runs inside it. Empty means "filter nothing" — a caller outside Actions
 # (a local rehearsal, an older pin) must not silently start dropping entries.
 SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
+# Closed by default at the direct-script boundary as well as the reusable
+# workflow and composite action boundaries (#459). This issue only observes
+# the verdict; a later child owns the write.
+AUTO_MERGE="${AUTO_MERGE-off}"
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -137,7 +142,8 @@ missing_core_labels_warning() { # $1 = declared rows, $2 = repo label names
 }
 
 load_config() { # $1 = consumer labels.conf; panel is mandatory, scopes optional
-  local conf="$1" line panel_seen=false
+  local conf="$1" line panel_seen=false login
+  local -a row=()
   [ -f "$conf" ] || {
     echo "labels: missing config: $conf (a panel= line is required)" >&2
     return 1
@@ -145,6 +151,7 @@ load_config() { # $1 = consumer labels.conf; panel is mandatory, scopes optional
   BOTS=()
   PANEL_AUTHORS=()
   PANEL_ROWS=()
+  TRIAGE_ACTORS=()
   # shellcheck disable=SC2094 # parse_panel_author_row takes $conf for its
   # error messages only — nothing in this loop writes the file it reads
   while IFS= read -r line || [ -n "$line" ]; do
@@ -167,7 +174,17 @@ load_config() { # $1 = consumer labels.conf; panel is mandatory, scopes optional
         }
         ;;
       "panel["*) parse_panel_author_row "$line" "$conf" || return ;;
-      triage-actors=*) ;;
+      triage-actors=*)
+        read -r -a row <<<"${line#triage-actors=}"
+        for login in ${row[@]+"${row[@]}"}; do
+          case "$login" in
+            "" | *[!A-Za-z0-9-]*)
+              echo "::warning::labels: malformed triage-actors login '$login' in $conf — skipped" >&2
+              ;;
+            *) TRIAGE_ACTORS+=("$login") ;;
+          esac
+        done
+        ;;
       *) parse_label_row "$line" >/dev/null || return ;;
     esac
   done <"$conf"
@@ -262,6 +279,38 @@ panel_for_author() { # $1 = author → the effective panel, space-joined (#224 D
     fi
   done
   printf '%s\n' "${BOTS[*]}"
+}
+
+is_fleet_login() { # $1 = login → membership in every roster-bearing conf row (#459)
+  local login="$1" identity row_login
+  [ -n "$login" ] || return 1
+  for identity in ${BOTS[@]+"${BOTS[@]}"} \
+    ${PANEL_AUTHORS[@]+"${PANEL_AUTHORS[@]}"} \
+    ${TRIAGE_ACTORS[@]+"${TRIAGE_ACTORS[@]}"}; do
+    [ "$identity" = "$login" ] && return 0
+  done
+  for identity in ${PANEL_ROWS[@]+"${PANEL_ROWS[@]}"}; do
+    for row_login in $identity; do
+      [ "$row_login" = "$login" ] && return 0
+    done
+  done
+  return 1
+}
+
+auto_merge_verdict() { # $1 = this pass's decide_state conclusion (#459)
+  [ "$AUTO_MERGE" != off ] || { echo SKIP:off; return; }
+  [ "$1" = state:needs-human ] || { echo SKIP:state; return; }
+  ! has_label release || { echo SKIP:release; return; }
+  is_fleet_login "$AUTHOR" || { echo SKIP:author; return; }
+  [ "$MERGEABLE" = MERGEABLE ] || { echo SKIP:mergeable; return; }
+  echo MERGE
+}
+
+validate_auto_merge() {
+  case "$AUTO_MERGE" in
+    off | merge | squash | rebase) ;;
+    *) echo "auto_merge must be one of: off, merge, squash, rebase" >&2; return 2 ;;
+  esac
 }
 
 set_required_bots() { # the PR author is recused by construction
@@ -1086,9 +1135,14 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   if has_label attention; then
     reconcile_attention "$n" pr "$(jq '.assignees | length' <<<"$PR_JSON")" ""
   fi
+
+  if [ "$AUTO_MERGE" != off ]; then
+    log "#$n: auto-merge: $(auto_merge_verdict "$desired")"
+  fi
 }
 
 main() {
+  validate_auto_merge || return $?
   REPO="${REPO:?set REPO to owner/name}"
   LABELS_CONF="${LABELS_CONF:-.github/labels.conf}"
   load_config "$LABELS_CONF"
