@@ -43,7 +43,7 @@ only ceremony-specific facts such as the roster and code conventions.
 
 ### Roster
 
-Five identities share the work (org team `agents`), each living in its own
+Four identities share the work (org team `agents`), each living in its own
 [box](https://github.com/heavy-duty/box) — one box per credential, because
 the box is the blast-radius boundary; roles are what a session is told, and
 [AGENTS.md](AGENTS.md) routes from there:
@@ -53,13 +53,21 @@ the box is the blast-radius boundary; roles are what a session is told, and
 | `dan-claude-bot` | `triage` (claude-box) | **triage** — the only door issues come through; this identity mints issues and nothing else writes them (#18's `triage-actors`) |
 | `claude-bot-andresmgsl` | claude-box | build (release-flow and guards machinery) + review |
 | `codex-bot-andresmgsl` | codex-box | build (scaffolding, conversions) + review |
-| `grok-bot-andresmgsl` | grok-box | review |
 | `kimi-bot-andresmgsl` | kimi-box | review — builder trial on a small mechanical issue once its verdicts have a track record |
+
+**The bench is the review identities in that table** — every row whose
+standing work includes *review*. `dan-claude-bot`'s standing work is triage
+alone, so it is not on the bench: it is never a required verdict, and a
+review request sitting on it is a PR that can never converge.
 
 **The review panel for any PR is every bench identity except its author** —
 recusal by construction, enforced by the reconciler (#10): the required
-verdicts are the panel minus the PR's author, so convergence always means
-three cross-vendor approvals of the current head. Builders and triage
+verdicts are the bench minus the PR's author. An author who is not on the
+bench at all — triage, a human, a builder identity that does not review —
+recuses nobody and owes every bench verdict. The rule states no count on
+purpose: how many verdicts it comes to is a fact about today's roster, and a
+number written into the rule goes false at the next bench change while the
+sentence around it still reads true (#456). Builders and triage
 default to different models so the issue contract is honestly exercised —
 a spec gap should surface as a question on the issue, not be silently filled
 by shared priors. Humans (`danmt`) decide in discussions and merge; the
