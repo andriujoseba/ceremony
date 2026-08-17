@@ -101,8 +101,8 @@ expect "the action adds no post_merge_workflow validation step" no \
   "$(grep -q 'validate post_merge_workflow' actions/labels-reconcile/action.yml \
     && echo yes || echo no)"
 expect "...and plumbs it to the script as POST_MERGE_WORKFLOW" yes \
-  "$(grep -q 'POST_MERGE_WORKFLOW: ${{ inputs.post_merge_workflow }}' \
-    actions/labels-reconcile/action.yml && echo yes || echo no)"
+  "$(awk '/POST_MERGE_WORKFLOW:/ && /inputs.post_merge_workflow/{print "yes"; exit}' \
+    actions/labels-reconcile/action.yml)"
 # D5 — this arc opts nobody in, here least of all: no workflow file in this
 # repository GAINS a trigger, `ci.yml` above all. The whole trigger map is
 # pinned rather than `workflow_dispatch` merely being grepped for, because two
@@ -2268,7 +2268,7 @@ am_probe() { # $1 PR, $2 AUTO_MERGE, $3 confirmed head, $4 confirmed state, $5 c
         [ "$AM_DISPATCH_RC" = 0 ] || {
           # multi-line, like the merge stub: read_failure_reason's collapse is
           # what stops one PR's dispatch error forging another PR's log line
-          printf 'could not find any workflows named %s\nTry `gh workflow list` to see available workflows\n' "$3" >&2
+          printf 'could not find any workflows named %s\nHTTP 404: Not Found\n' "$3" >&2
           return "$AM_DISPATCH_RC"
         }
         return 0
@@ -2485,7 +2485,7 @@ am_sweep_probe() { # $1 = the first PR's merge rc; the second always succeeds
         # keyed off the reconcile in flight via $AM_SWEEP_PR.
         printf '%s\n' "$*" >>"$AM/sweep-$AM_RUN-dispatch-$AM_SWEEP_PR"
         if [ "$AM_SWEEP_PR" = 920 ] && [ "$AM_FIRST_DISPATCH_RC" != 0 ]; then
-          printf 'could not find any workflows named %s\nTry `gh workflow list` to see available workflows\n' "$3" >&2
+          printf 'could not find any workflows named %s\nHTTP 404: Not Found\n' "$3" >&2
           return "$AM_FIRST_DISPATCH_RC"
         fi
         return 0
@@ -2583,7 +2583,7 @@ expect "...merging both PRs regardless" 2 \
 expect "...attempting the refused dispatch exactly once" 1 \
   "$(wc -l <"$AM/sweep-rc0-pm-d1-dispatch-920" | tr -d ' ')"
 expect "...logging its reason on one line, naming that PR and the workflow" 1 \
-  "$(grep -c '^labels: #920: WARNING: post-merge dispatch of ci.yml failed: could not find any workflows named ci.yml Try `gh workflow list` to see available workflows — the merge stands$' \
+  "$(grep -c '^labels: #920: WARNING: post-merge dispatch of ci.yml failed: could not find any workflows named ci.yml HTTP 404: Not Found — the merge stands$' \
     <<<"$am_pmsweep")"
 expect "...and never reporting it as a failed reconcile" no \
   "$(grep -q 'reconcile failed' <<<"$am_pmsweep" && echo yes || echo no)"
@@ -2738,6 +2738,8 @@ expect "an explicitly empty post_merge_workflow still merges" 1 "$(am_merges 940
 expect "...and still dispatches nothing" 0 "$(am_dispatches 940)"
 expect "...and never invents a default workflow name" no \
   "$(grep -q 'workflow run' "$AM/calls-940" && echo yes || echo no)"
+expect "...while the pass it rode converged as usual (control)" yes \
+  "$(grep -q 'state -> state:needs-human' <<<"$am_pm_empty" && echo yes || echo no)"
 
 # -- set plus a successful merge: exactly one dispatch, naming the configured
 #    workflow and this repository, with NO --ref. gh targets the default
@@ -2790,6 +2792,9 @@ expect "...and its refusal is what the log says" yes \
 am_pm_moved="$(am_probe 945 merge amhead2 open "$NO_LABELS" 0 "" ci.yml)"
 expect "a head that moved since the grading records no dispatch" 0 \
   "$(am_dispatches 945)"
+expect "...because the confirmation refused, not because the input was unset" yes \
+  "$(grep -q '#945: auto-merge refused: the head moved since this pass graded it' \
+    <<<"$am_pm_moved" && echo yes || echo no)"
 
 # -- DRY_RUN=1 narrates the dispatch and invokes nothing. This is the case that
 #    protects THIS repository: drill/rehearsal.sh runs the reconciler here that
@@ -2813,7 +2818,7 @@ expect "a failed dispatch never fails the PR's reconcile" 0 "$am_pm_fail_rc"
 expect "...is attempted exactly once, never retried in the same pass" 1 \
   "$(am_dispatches 947)"
 expect "...logs its reason on exactly one line, naming PR and workflow" 1 \
-  "$(grep -c '^labels: #947: WARNING: post-merge dispatch of no-such.yml failed: could not find any workflows named no-such.yml Try `gh workflow list` to see available workflows — the merge stands$' \
+  "$(grep -c '^labels: #947: WARNING: post-merge dispatch of no-such.yml failed: could not find any workflows named no-such.yml HTTP 404: Not Found — the merge stands$' \
     <<<"$am_pm_fail")"
 expect "...and the merge it follows still stands and is still reported" yes \
   "$(grep -q '#947: auto-merged amhead1 (merge) — commented' <<<"$am_pm_fail" \
@@ -2834,7 +2839,7 @@ expect "...after the provenance comment, in source order" yes \
           END{print (c && d && c < d) ? "yes" : "no"}' <<<"$am_pm_body")"
 # D4 — the name is never validated here: three questions gh answers by failing.
 expect "the act validates no workflow name of its own" no \
-  "$(grep -qE 'workflow_dispatch|gh workflow list|gh api "repos/\$REPO/actions/workflows' \
+  "$(grep -qE 'workflow_dispatch|gh workflow list|actions/workflows' \
     <<<"$am_pm_body" && echo yes || echo no)"
 
 # ---------------------------------------------------------------------------
@@ -2904,7 +2909,7 @@ expect "the act re-reads no requested_reviewers of its own" no \
 expect "...and re-evaluates no human_request_needed" no \
   "$(grep -q 'human_request_needed' <<<"$am_pm_body" && echo yes || echo no)"
 expect "...and takes the fact as its third argument" yes \
-  "$(grep -q 'human_requested="\$3"' <<<"$am_pm_body" && echo yes || echo no)"
+  "$(grep -q "human_requested=\"\\\$3\"" <<<"$am_pm_body" && echo yes || echo no)"
 # The caller half of the same contract: reconcile_pr records it at the request
 # site, which is the only place it is knowable.
 am_pr_body="$(awk '/^reconcile_pr\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
@@ -2912,8 +2917,8 @@ am_pr_body="$(awk '/^reconcile_pr\(\)/{inside=1} inside{print} inside && /^}/{ex
 expect "reconcile_pr evaluates human_request_needed exactly once" 1 \
   "$(grep -c 'human_request_needed' <<<"$am_pr_body")"
 expect "...and passes the recorded fact into the act" yes \
-  "$(grep -q 'reconcile_auto_merge "\$n" "\$desired" "\$human_requested"' <<<"$am_pr_body" \
-    && echo yes || echo no)"
+  "$(grep -q "reconcile_auto_merge \"\\\$n\" \"\\\$desired\" \"\\\$human_requested\"" \
+    <<<"$am_pr_body" && echo yes || echo no)"
 
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
