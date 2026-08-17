@@ -59,7 +59,7 @@ on:
           requires contents: write on the caller.
         type: string
         required: false
-        default: off
+        default: "off"
 
 env:
   # A called workflow arrives without its repository. Keep this literal pin

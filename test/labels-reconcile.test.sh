@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 # shellcheck source=actions/labels-reconcile/labels-reconcile.sh
 unset AUTO_MERGE
 . actions/labels-reconcile/labels-reconcile.sh
-SCRIPT_AUTO_MERGE_DEFAULT="$AUTO_MERGE"
+SCRIPT_AUTO_MERGE_DEFAULT="${AUTO_MERGE-<unset>}"
 
 RTMP="$(mktemp -d)"
 trap 'rm -rf "$RTMP"' EXIT
@@ -57,7 +57,7 @@ expect() { # $1 = description, $2 = want, $3 = got
 expect "the direct script defaults auto_merge to off when unset" off \
   "$SCRIPT_AUTO_MERGE_DEFAULT"
 expect "the reusable workflow defaults auto_merge to off" 1 \
-  "$(awk '/^      auto_merge:/{seen=1} seen && /default: off/{print 1; exit}' \
+  "$(awk '/^      auto_merge:/{seen=1} seen && /default: "off"/{print 1; exit}' \
     .github/workflows/labels-sweep.yml)"
 expect "the composite action defaults auto_merge to off" 1 \
   "$(awk '/^  auto_merge:/{seen=1} seen && /default: "off"/{print 1; exit}' \
@@ -69,6 +69,13 @@ expect "the direct-script validator rejects an unknown mode with rc 2" 2 \
   "$validation_rc"
 expect "the direct-script validator names the input and accepted set" \
   "auto_merge must be one of: off, merge, squash, rebase" "$validation_output"
+empty_validation_rc=0
+empty_validation_output="$(AUTO_MERGE= bash actions/labels-reconcile/labels-reconcile.sh 2>&1)" \
+  || empty_validation_rc=$?
+expect "the direct-script boundary rejects an explicitly empty mode with rc 2" 2 \
+  "$empty_validation_rc"
+expect "the direct-script empty-mode diagnostic names the accepted set" \
+  "$validation_output" "$empty_validation_output"
 action_validation_body="$(awk '
   /- name: validate auto_merge input/ { found=1 }
   found && /^      run: \|/ { body=1; next }
@@ -95,6 +102,15 @@ for outside_login in danmt "" cndgr dan-claude; do
     "$(is_fleet_login "$outside_login" && echo fleet || echo outside)"
 done
 
+ROW_REVIEWER_CONF="$RTMP/row-reviewer.conf"
+printf '%s\n' \
+  'panel=base-reviewer' \
+  'panel[row-author]=row-only-reviewer' \
+  >"$ROW_REVIEWER_CONF"
+load_config "$ROW_REVIEWER_CONF"
+expect "a per-author panel row reviewer is fleet" fleet \
+  "$(is_fleet_login row-only-reviewer && echo fleet || echo outside)"
+
 MALFORMED_FLEET_CONF="$RTMP/malformed-fleet.conf"
 printf '%s\n' \
   'panel=fixture-reviewer' \
@@ -117,6 +133,9 @@ expect "off is the first refusal" SKIP:off \
   "$(auto_merge_verdict state:addressing)"
 AUTO_MERGE=merge
 expect "a non-handoff pass verdict is refused" SKIP:state \
+  "$(auto_merge_verdict state:addressing)"
+LABELS=release
+expect "the state refusal precedes the release refusal" SKIP:state \
   "$(auto_merge_verdict state:addressing)"
 LABELS=$'state:needs-human\nrelease'
 expect "a release PR is refused" SKIP:release \

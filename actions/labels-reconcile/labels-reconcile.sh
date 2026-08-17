@@ -83,7 +83,7 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # Closed by default at the direct-script boundary as well as the reusable
 # workflow and composite action boundaries (#459). This issue only observes
 # the verdict; a later child owns the write.
-AUTO_MERGE="${AUTO_MERGE:-off}"
+AUTO_MERGE="${AUTO_MERGE-off}"
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
