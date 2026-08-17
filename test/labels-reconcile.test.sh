@@ -70,7 +70,7 @@ expect "the direct-script validator rejects an unknown mode with rc 2" 2 \
 expect "the direct-script validator names the input and accepted set" \
   "auto_merge must be one of: off, merge, squash, rebase" "$validation_output"
 empty_validation_rc=0
-empty_validation_output="$(AUTO_MERGE= bash actions/labels-reconcile/labels-reconcile.sh 2>&1)" \
+empty_validation_output="$(AUTO_MERGE='' bash actions/labels-reconcile/labels-reconcile.sh 2>&1)" \
   || empty_validation_rc=$?
 expect "the direct-script boundary rejects an explicitly empty mode with rc 2" 2 \
   "$empty_validation_rc"
