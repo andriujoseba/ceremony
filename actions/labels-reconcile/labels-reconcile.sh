@@ -1059,13 +1059,13 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   local method path
   [ "$AUTO_MERGE" != off ] || [ "$AUTO_MERGE_RELEASE" != off ] || return 0
   method="$(auto_merge_method)"
-  path=standard
+  path=ordinary
   has_label release && path=release
   verdict="$(auto_merge_verdict "$desired")"
   if [ "$path" = release ]; then
     log "#$n: auto-merge[release]: $verdict"
   else
-    log "#$n: auto-merge: $verdict"
+    log "#$n: auto-merge[ordinary]: $verdict"
   fi
   [ "$verdict" = MERGE ] || return 0
 

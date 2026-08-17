@@ -661,10 +661,10 @@ warm="$(reconcile_probe "$(printf 'state:addressing\nmerge-next\nstale\nblocker:
 expect "a bootstrapped repo converges the state as well" \
   yes "$(grep -q 'state -> state:addressing' <<<"$warm" && echo yes || echo no)"
 expect "toggle off emits no auto-merge line" no \
-  "$(grep -q 'auto-merge:' <<<"$warm" && echo yes || echo no)"
+  "$(grep -q 'auto-merge\[' <<<"$warm" && echo yes || echo no)"
 shadow="$(reconcile_probe "$(printf 'state:addressing\nmerge-next\nstale\nblocker:unrequested')" merge)"
 expect "toggle on logs the pure verdict after attention reconciliation" yes \
-  "$(grep -q '#777: auto-merge: SKIP:state' <<<"$shadow" && echo yes || echo no)"
+  "$(grep -q '#777: auto-merge\[ordinary\]: SKIP:state' <<<"$shadow" && echo yes || echo no)"
 
 # ---------------------------------------------------------------------------
 # needs-ruling (#51): a pending human decision. Hand-set intent the machine
@@ -2391,7 +2391,7 @@ expect "...whose argv pins the graded head" \
   "pr merge 901 -R owner/repo --merge --match-head-commit amhead1" \
   "$(cat "$AM/merges-901")"
 expect "...and the verdict that authorised it is logged" yes \
-  "$(grep -q '#901: auto-merge: MERGE' <<<"$am_on" && echo yes || echo no)"
+  "$(grep -q '#901: auto-merge\[ordinary\]: MERGE' <<<"$am_on" && echo yes || echo no)"
 expect "...and the merge is logged as done, naming head and method" yes \
   "$(grep -q '#901: auto-merged amhead1 (merge) — commented' <<<"$am_on" && echo yes || echo no)"
 
@@ -2746,7 +2746,7 @@ expect "...and narrating the comment it would have posted" yes \
   "$(grep -q 'DRY_RUN: gh issue comment 910' <<<"$am_dry" && echo yes || echo no)"
 expect "...while the confirmation READ still happened: a rehearsal that
   skipped it would narrate a merge the real sweep would have refused" yes \
-  "$(grep -q '#910: auto-merge: MERGE' <<<"$am_dry" && echo yes || echo no)"
+  "$(grep -q '#910: auto-merge\[ordinary\]: MERGE' <<<"$am_dry" && echo yes || echo no)"
 
 # -- the comment: the marker and D6's four facts, asserted against the
 #    recorded body. Under a doctrine that says only humans merge, a bot merge
@@ -2772,7 +2772,7 @@ expect "the converge edit is logged before the merge" yes \
   "$(awk '/state -> state:needs-human/{s=NR} /auto-merged amhead1/{m=NR} END{print (s && m && s < m) ? "yes" : "no"}' \
     <<<"$am_order")"
 expect "...and the verdict line before the merge it authorised" yes \
-  "$(awk '/auto-merge: MERGE/{v=NR} /auto-merged amhead1/{m=NR} END{print (v && m && v < m) ? "yes" : "no"}' \
+  "$(awk '/auto-merge\[ordinary\]: MERGE/{v=NR} /auto-merged amhead1/{m=NR} END{print (v && m && v < m) ? "yes" : "no"}' \
     <<<"$am_order")"
 # The structural half of the same rule, which no log ordering can show: the
 # call is the LAST statement of reconcile_pr. A step appended below it would
@@ -2902,7 +2902,7 @@ am_pm_state="$(am_probe 943 merge amhead1 open "$NO_LABELS" 0 "" ci.yml 0 "" blo
 expect "SKIP:state records no dispatch" 0 "$(am_dispatches 943)"
 expect "...because it merged nothing" 0 "$(am_merges 943)"
 expect "...and the verdict that refused is the one logged" yes \
-  "$(grep -q '#943: auto-merge: SKIP:state' <<<"$am_pm_state" && echo yes || echo no)"
+  "$(grep -q '#943: auto-merge\[ordinary\]: SKIP:state' <<<"$am_pm_state" && echo yes || echo no)"
 am_pm_refused="$(am_probe 944 merge amhead1 open "$NO_LABELS" 1 "" ci.yml)"
 expect "a merge GitHub refused records no dispatch" 0 "$(am_dispatches 944)"
 expect "...and is still attempted exactly once" 1 "$(am_merges 944)"
