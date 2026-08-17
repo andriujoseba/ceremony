@@ -13,8 +13,13 @@ export LC_ALL=C
 cd "$(dirname "$0")/.."
 # shellcheck source=actions/labels-reconcile/labels-reconcile.sh
 unset AUTO_MERGE
+unset POST_MERGE_WORKFLOW
 . actions/labels-reconcile/labels-reconcile.sh
 SCRIPT_AUTO_MERGE_DEFAULT="${AUTO_MERGE-<unset>}"
+# Captured the same way and for the same reason: the sourced defaults are what
+# a direct-script caller gets, and `<unset>` here would mean the script left
+# the variable undefined and `set -u` would abort the sweep at the first read.
+SCRIPT_POST_MERGE_DEFAULT="${POST_MERGE_WORKFLOW-<unset>}"
 
 RTMP="$(mktemp -d)"
 trap 'rm -rf "$RTMP"' EXIT
@@ -62,6 +67,79 @@ expect "the reusable workflow defaults auto_merge to off" 1 \
 expect "the composite action defaults auto_merge to off" 1 \
   "$(awk '/^  auto_merge:/{seen=1} seen && /default: "off"/{print 1; exit}' \
     actions/labels-reconcile/action.yml)"
+
+# ---------------------------------------------------------------------------
+# The post-merge dispatch's default (#461 D1). Empty at all three boundaries,
+# which is what makes the whole input inert for every consumer that does not
+# set it — and empty means dispatch NOTHING, never a guessed default name like
+# "ci": a sweep that woke a workflow nobody configured would be the hourly
+# noise this input exists to avoid.
+# ---------------------------------------------------------------------------
+expect "the direct script defaults post_merge_workflow to empty when unset" "" \
+  "$SCRIPT_POST_MERGE_DEFAULT"
+expect "the reusable workflow defaults post_merge_workflow to empty" 1 \
+  "$(awk '/^      post_merge_workflow:/{seen=1} seen && /default: ""/{print 1; exit}' \
+    .github/workflows/labels-sweep.yml)"
+expect "the composite action defaults post_merge_workflow to empty" 1 \
+  "$(awk '/^  post_merge_workflow:/{seen=1} seen && /default: ""/{print 1; exit}' \
+    actions/labels-reconcile/action.yml)"
+# The action's description carries the three facts a consumer needs; the
+# reusable workflow's carries them in full. Asserted on the reusable, which is
+# the surface a consumer reads.
+pmw_desc="$(awk '/^      post_merge_workflow:/{seen=1; next}
+                 seen && /^        type:/{exit} seen{print}' \
+  .github/workflows/labels-sweep.yml)"
+expect "the input description names the workflow_dispatch requirement" yes \
+  "$(grep -q 'must declare workflow_dispatch' <<<"$pmw_desc" && echo yes || echo no)"
+expect "...the actions: write the caller needs" yes \
+  "$(grep -q 'actions: write' <<<"$pmw_desc" && echo yes || echo no)"
+expect "...and that a hand merge is unaffected" yes \
+  "$(grep -q 'never on a hand merge' <<<"$pmw_desc" && echo yes || echo no)"
+# D4 — no validation of the name at the action boundary, unlike auto_merge,
+# whose accepted set is closed. Three questions gh answers by failing.
+expect "the action adds no post_merge_workflow validation step" no \
+  "$(grep -q 'validate post_merge_workflow' actions/labels-reconcile/action.yml \
+    && echo yes || echo no)"
+expect "...and plumbs it to the script as POST_MERGE_WORKFLOW" yes \
+  "$(grep -q 'POST_MERGE_WORKFLOW: ${{ inputs.post_merge_workflow }}' \
+    actions/labels-reconcile/action.yml && echo yes || echo no)"
+# D5 — this arc opts nobody in, here least of all: no workflow file in this
+# repository GAINS a trigger, `ci.yml` above all. The whole trigger map is
+# pinned rather than `workflow_dispatch` merely being grepped for, because two
+# files legitimately carry it already (`release-exercise.yml`,
+# `self-labels-sweep.yml`) and an absence assertion would be false on `main`.
+# Pinning the map is also the stronger claim: a file gaining ANY trigger reds,
+# and so does a file losing one.
+#
+# The keys are read from under `on:` only, which is what makes this assertion
+# survive the input D1 adds — that input lives under `on: workflow_call:
+# inputs:`, two levels deeper than the trigger keys this reads. The
+# criterion's parenthetical asks for no change to any `on:` BLOCK, which D1
+# makes literally unmeetable; this is that criterion's substance, and the
+# divergence is called out in the PR body rather than shipped silently.
+workflow_trigger_map() {
+  local wf
+  for wf in .github/workflows/*.yml; do
+    printf '%s:' "${wf##*/}"
+    awk '/^on:/{inside=1; next}
+         inside && /^[^ ]/{exit}
+         inside && /^  [a-z_]+:/{sub(/:.*/, ""); sub(/^  /, ""); printf " %s", $0}' "$wf"
+    printf '\n'
+  done
+}
+expect "no workflow file in this repository gained or lost a trigger" \
+  "ci-rerun.yml: workflow_call
+ci.yml: pull_request push
+labels-sweep.yml: workflow_call
+labels.yml: workflow_call
+refs-guard.yml: pull_request
+release-exercise.yml: workflow_dispatch workflow_call
+release.yml: workflow_call
+self-ci-rerun.yml: pull_request_target
+self-labels-sweep.yml: schedule workflow_dispatch
+self-labels.yml: issues pull_request_target
+self-release.yml: push" \
+  "$(workflow_trigger_map)"
 
 AUTO_MERGE=sometimes validation_rc=0
 validation_output="$(validate_auto_merge 2>&1)" || validation_rc=$?
@@ -2132,6 +2210,11 @@ am_pull_json() { # $1 head sha, $2 state, $3 labels as a JSON array → the conf
 }
 
 am_probe() { # $1 PR, $2 AUTO_MERGE, $3 confirmed head, $4 confirmed state, $5 confirmed labels JSON, $6 merge rc, $7 dry run
+             # #461 adds four, all optional, so every call above stays a call:
+             # $8 POST_MERGE_WORKFLOW (empty = the shipped default),
+             # $9 dispatch rc, ${10} REQUESTED, ${11} round shape —
+             # "block" swaps one approval for a change-request, which is how a
+             # SKIP:state pass is BOUGHT from decide_state rather than asserted.
   (
     local n="$1" at
     at="$(iso_at $((RNOW - 3600)))"
@@ -2144,18 +2227,52 @@ am_probe() { # $1 PR, $2 AUTO_MERGE, $3 confirmed head, $4 confirmed state, $5 c
     # The needs-human fixture: three head-current approvals, mergeable, green,
     # nothing excluded. decide_state's conclusion is the trigger (D2), so the
     # fixture buys it honestly rather than hand-setting the label.
-    LABELS="" DRAFT=false HEAD_SHA=amhead1 REQUESTED=""
+    LABELS="" DRAFT=false HEAD_SHA=amhead1 REQUESTED="${10:-}"
     MERGEABLE=MERGEABLE CHECKS=SUCCESS HEAD_COMMIT_AT="$at"
-    REVIEWS_JSON="$(reviews \
-      "$(rev "$BOT1" APPROVED amhead1 "" "$at")" \
-      "$(rev "$BOT2" APPROVED amhead1 "" "$at")" \
-      "$(rev "$BOT3" APPROVED amhead1 "" "$at")")"
+    if [ "${11:-}" = block ]; then
+      REVIEWS_JSON="$(reviews \
+        "$(rev "$BOT1" CHANGES_REQUESTED amhead1 "" "$at")" \
+        "$(rev "$BOT2" APPROVED amhead1 "" "$at")" \
+        "$(rev "$BOT3" APPROVED amhead1 "" "$at")")"
+    else
+      REVIEWS_JSON="$(reviews \
+        "$(rev "$BOT1" APPROVED amhead1 "" "$at")" \
+        "$(rev "$BOT2" APPROVED amhead1 "" "$at")" \
+        "$(rev "$BOT3" APPROVED amhead1 "" "$at")")"
+    fi
     PR_JSON="$(jq -n --arg at "$at" '{created_at: $at, assignees: []}')"
     AM_CONFIRM="$(am_pull_json "$3" "$4" "$5")"
     AM_MERGE_RC="$6"
+    POST_MERGE_WORKFLOW="${8:-}"
+    AM_DISPATCH_RC="${9:-0}"
     [ -z "${7:-}" ] || DRY_RUN=1
+    # human_request_needed is COUNTED, not re-implemented: D7's second
+    # criterion is that reaching the recorded fact costs no second evaluation,
+    # and a count is the only thing that can see a re-evaluation added further
+    # down the function. The original is renamed rather than copied so the
+    # wrapper cannot drift from the guard it wraps.
+    eval "am_orig_human_request_needed() $(declare -f human_request_needed | tail -n +2)"
+    human_request_needed() {
+      printf 'called\n' >>"$AM/hrn-$n"
+      am_orig_human_request_needed
+    }
     # NOT overridden: run() is the unit under test (see this block's header).
     gh() {
+      # The whole invocation list, verbatim and in order — what D7's
+      # no-second-read criterion is graded on. A count of `requested_reviewers`
+      # lines cannot be forged by a read that happens to return the right
+      # answer, which is why the assertion is on the calls and not the outcome.
+      printf '%s\n' "$*" >>"$AM/calls-$n"
+      if [ "$1" = workflow ] && [ "$2" = run ]; then
+        printf '%s\n' "$*" >>"$AM/dispatch-$n"
+        [ "$AM_DISPATCH_RC" = 0 ] || {
+          # multi-line, like the merge stub: read_failure_reason's collapse is
+          # what stops one PR's dispatch error forging another PR's log line
+          printf 'could not find any workflows named %s\nTry `gh workflow list` to see available workflows\n' "$3" >&2
+          return "$AM_DISPATCH_RC"
+        }
+        return 0
+      fi
       if [ "$1" = api ]; then
         shift
         local jqexpr="" endpoint=""
@@ -2317,15 +2434,22 @@ expect "...and merges" 1 "$(am_merges 909)"
 #    (D3) and that fetch share one endpoint, which is what an open PR at the
 #    graded head looks like to both.
 am_sweep_probe() { # $1 = the first PR's merge rc; the second always succeeds
+                   # #461 adds two, both optional: $2 POST_MERGE_WORKFLOW and
+                   # $3 the FIRST PR's dispatch rc — the second always
+                   # dispatches cleanly, which is what makes the continuation
+                   # after a failed dispatch visible.
   (
     GITHUB_EVENT_NAME=schedule
     REPO=owner/repo
     LABELS_CONF="$FIXTURE_CONF"
     AUTO_MERGE=merge
     AM_FIRST_RC="$1"
-    # the recordings are per-run: this probe is driven twice and an appended
-    # file would let the second run answer the first run's assertions
-    AM_RUN="rc$1"
+    POST_MERGE_WORKFLOW="${2:-}"
+    AM_FIRST_DISPATCH_RC="${3:-0}"
+    AM_SWEEP_PR=none
+    # the recordings are per-run: this probe is driven several times and an
+    # appended file would let a later run answer an earlier run's assertions
+    AM_RUN="rc$1${2:+-pm}${3:+-d$3}"
     # main sets NOW from the real clock, so the fixture's own dates are
     # relative to it rather than to this file's fixed RNOW.
     local at
@@ -2343,10 +2467,26 @@ am_sweep_probe() { # $1 = the first PR's merge rc; the second always succeeds
         return 0
       fi
       if [ "$1" = pr ] && [ "$2" = merge ]; then
+        # main() reconciles each PR inside its own command-substitution
+        # subshell, so this assignment is per-PR and cannot leak to the next
+        # one — which is what lets the dispatch stub below know whose merge it
+        # is following without the argv naming a PR at all.
+        AM_SWEEP_PR="$3"
         printf '%s\n' "$*" >>"$AM/sweep-$AM_RUN-merges-$3"
         if [ "$3" = 920 ] && [ "$AM_FIRST_RC" != 0 ]; then
           printf 'failed to merge: Base branch was modified.\nReview and try the merge again.\n' >&2
           return "$AM_FIRST_RC"
+        fi
+        return 0
+      fi
+      if [ "$1" = workflow ] && [ "$2" = run ]; then
+        # keyed by the CURRENT PR, which the sweep's dispatch names nowhere in
+        # its argv: the log line is what carries the PR, so the recording is
+        # keyed off the reconcile in flight via $AM_SWEEP_PR.
+        printf '%s\n' "$*" >>"$AM/sweep-$AM_RUN-dispatch-$AM_SWEEP_PR"
+        if [ "$AM_SWEEP_PR" = 920 ] && [ "$AM_FIRST_DISPATCH_RC" != 0 ]; then
+          printf 'could not find any workflows named %s\nTry `gh workflow list` to see available workflows\n' "$3" >&2
+          return "$AM_FIRST_DISPATCH_RC"
         fi
         return 0
       fi
@@ -2426,6 +2566,50 @@ expect "the same sweep with both merges accepted merges both PRs" 2 \
   "$(grep -c 'auto-merged amhead1 (merge) — commented' <<<"$am_sweep_ok")"
 expect "...and refuses nothing" 0 \
   "$(grep -c 'auto-merge refused' <<<"$am_sweep_ok")"
+
+# -- #461's continuation, at the same boundary and for the same reason: ONE
+#    main() sweep, both merges accepted, and the FIRST PR's dispatch refused.
+#    D3's "the sweep continues to the next PR" is a property of main's per-PR
+#    error handling and nothing in the reconcile_pr probes above can see it —
+#    a regression that let one misconfigured workflow name strand every
+#    remaining PR would leave all of them green, *after* a merge had landed.
+am_pmsweep_rc=0
+am_pmsweep="$(am_sweep_probe 0 ci.yml 1)" || am_pmsweep_rc=$?
+expect "a sweep whose first dispatch is refused still exits 0" 0 "$am_pmsweep_rc"
+expect "...and runs to the end of the loop" 1 \
+  "$(grep -c '^labels: reconciled\.$' <<<"$am_pmsweep")"
+expect "...merging both PRs regardless" 2 \
+  "$(grep -c 'auto-merged amhead1 (merge) — commented' <<<"$am_pmsweep")"
+expect "...attempting the refused dispatch exactly once" 1 \
+  "$(wc -l <"$AM/sweep-rc0-pm-d1-dispatch-920" | tr -d ' ')"
+expect "...logging its reason on one line, naming that PR and the workflow" 1 \
+  "$(grep -c '^labels: #920: WARNING: post-merge dispatch of ci.yml failed: could not find any workflows named ci.yml Try `gh workflow list` to see available workflows — the merge stands$' \
+    <<<"$am_pmsweep")"
+expect "...and never reporting it as a failed reconcile" no \
+  "$(grep -q 'reconcile failed' <<<"$am_pmsweep" && echo yes || echo no)"
+# the criterion itself: the NEXT PR of the same run is still reconciled, still
+# merged, and still dispatched.
+expect "the next PR in the same sweep is reconciled" yes \
+  "$(grep -q 'state:needs-human' "$AM/sweep-rc0-pm-d1-edits-921" && echo yes || echo no)"
+expect "...and dispatches cleanly, head-independent and ref-free" \
+  "workflow run ci.yml -R owner/repo" \
+  "$(cat "$AM/sweep-rc0-pm-d1-dispatch-921")"
+expect "...after the first PR's failure, in the one run (order)" yes \
+  "$(awk '/#920: WARNING: post-merge dispatch/{f=NR} /#921: dispatched ci.yml/{d=NR}
+          END{print (f && d && f < d) ? "yes" : "no"}' <<<"$am_pmsweep")"
+# The control the case needs to not be vacuous: the same sweep with a dispatch
+# GitHub accepts dispatches for BOTH PRs. Without it, a sweep that dispatched
+# for #921 for some reason unrelated to continuing past #920 would read alike.
+am_pmsweep_ok="$(am_sweep_probe 0 ci.yml)"
+expect "the same sweep with both dispatches accepted dispatches twice" 2 \
+  "$(grep -c 'dispatched ci.yml after the merge' <<<"$am_pmsweep_ok")"
+expect "...and warns about none of them" 0 \
+  "$(grep -c 'post-merge dispatch of' <<<"$am_pmsweep_ok")"
+# ...and the same sweep with the input UNSET dispatches for neither, which is
+# every consumer today: the criterion's "exactly the invocations #460 ships".
+expect "the same sweep with post_merge_workflow unset dispatches nothing" no \
+  "$([ -e "$AM/sweep-rc0-dispatch-920" ] || [ -e "$AM/sweep-rc0-dispatch-921" ] \
+    && echo yes || echo no)"
 
 # -- DRY_RUN=1 mutates nothing, and this is the case that protects the live
 #    repository: DRY_RUN=1 is how this script is rehearsed against it (:30),
@@ -2529,6 +2713,207 @@ am_unreadable="$(
 expect "an unreadable confirmation refuses rather than merging" yes \
   "$(grep -q 'the confirmation read failed: gh: Not Found (HTTP 404)' \
     <<<"$am_unreadable" && echo yes || echo no)"
+
+# ---------------------------------------------------------------------------
+# THE POST-MERGE DISPATCH (#461 D1–D4). A GITHUB_TOKEN merge raises a `push`
+# that starts no workflow run, so the consumer's `push: branches: [main]` CI
+# never grades the merge commit. The repair is the one exemption GitHub
+# allows. Every assertion below is on the RECORDED ARGV or on its absence,
+# because the cases that cost are all "something fired that should not have".
+# ---------------------------------------------------------------------------
+am_dispatches() { # $1 PR → post-merge dispatch invocations recorded
+  [ -f "$AM/dispatch-$1" ] || { echo 0; return; }
+  wc -l <"$AM/dispatch-$1" | tr -d ' '
+}
+
+# -- empty is the default and dispatches nothing. The fixture merges, so what
+#    is measured is the input alone: #901 above ran with no POST_MERGE_WORKFLOW
+#    at all and is the control for "exactly the invocations #460 ships".
+expect "an unset post_merge_workflow records no dispatch on a merged PR" 0 \
+  "$(am_dispatches 901)"
+expect "...and says nothing about a dispatch at all" no \
+  "$(grep -q 'dispatch' <<<"$am_on" && echo yes || echo no)"
+am_pm_empty="$(am_probe 940 merge amhead1 open "$NO_LABELS" 0 "" "")"
+expect "an explicitly empty post_merge_workflow still merges" 1 "$(am_merges 940)"
+expect "...and still dispatches nothing" 0 "$(am_dispatches 940)"
+expect "...and never invents a default workflow name" no \
+  "$(grep -q 'workflow run' "$AM/calls-940" && echo yes || echo no)"
+
+# -- set plus a successful merge: exactly one dispatch, naming the configured
+#    workflow and this repository, with NO --ref. gh targets the default
+#    branch, which is the branch the merge just landed on and the only branch
+#    this could mean; a --ref would name a branch the merge did not touch.
+am_pm="$(am_probe 941 merge amhead1 open "$NO_LABELS" 0 "" ci.yml)"
+expect "a set post_merge_workflow records exactly one dispatch" 1 \
+  "$(am_dispatches 941)"
+expect "...whose argv names the workflow and the repository, and nothing else" \
+  "workflow run ci.yml -R owner/repo" \
+  "$(cat "$AM/dispatch-941")"
+expect "...carrying no --ref" no \
+  "$(grep -q -- '--ref' "$AM/dispatch-941" && echo yes || echo no)"
+expect "...logged as done, naming the workflow" yes \
+  "$(grep -q '#941: dispatched ci.yml after the merge' <<<"$am_pm" && echo yes || echo no)"
+# ORDER: after the merge and after the provenance comment. A dispatch before
+# the merge grades the pre-merge tree and reports on a commit that does not
+# exist yet — the whole point of the input inverted.
+expect "the dispatch is logged after the merge it followed" yes \
+  "$(awk '/#941: auto-merged amhead1/{m=NR} /#941: dispatched ci.yml/{d=NR}
+          END{print (m && d && m < d) ? "yes" : "no"}' <<<"$am_pm")"
+expect "...and the merge call precedes the dispatch call in the recorded argv" yes \
+  "$(awk '/^pr merge 941/{m=NR} /^workflow run ci.yml/{d=NR}
+          END{print (m && d && m < d) ? "yes" : "no"}' "$AM/calls-941")"
+expect "...as does the provenance comment" yes \
+  "$(awk '/^issue comment 941/{c=NR} /^workflow run ci.yml/{d=NR}
+          END{print (c && d && c < d) ? "yes" : "no"}' "$AM/calls-941")"
+
+# -- set plus NO merge dispatches nothing, in each of the three shapes a pass
+#    reaches that state by. Every sweep would otherwise wake the consumer's CI
+#    hourly, for nothing.
+am_pm_off="$(am_probe 942 off amhead1 open "$NO_LABELS" 0 "" ci.yml)"
+expect "SKIP:off records no dispatch" 0 "$(am_dispatches 942)"
+expect "...because it merged nothing" 0 "$(am_merges 942)"
+expect "...and the pass still did its ordinary work (control)" yes \
+  "$(grep -q 'state -> state:needs-human' <<<"$am_pm_off" && echo yes || echo no)"
+am_pm_state="$(am_probe 943 merge amhead1 open "$NO_LABELS" 0 "" ci.yml 0 "" block)"
+expect "SKIP:state records no dispatch" 0 "$(am_dispatches 943)"
+expect "...because it merged nothing" 0 "$(am_merges 943)"
+expect "...and the verdict that refused is the one logged" yes \
+  "$(grep -q '#943: auto-merge: SKIP:state' <<<"$am_pm_state" && echo yes || echo no)"
+am_pm_refused="$(am_probe 944 merge amhead1 open "$NO_LABELS" 1 "" ci.yml)"
+expect "a merge GitHub refused records no dispatch" 0 "$(am_dispatches 944)"
+expect "...and is still attempted exactly once" 1 "$(am_merges 944)"
+expect "...and its refusal is what the log says" yes \
+  "$(grep -q '#944: auto-merge refused: failed to merge' <<<"$am_pm_refused" \
+    && echo yes || echo no)"
+# The head-moved refusal is the same shape from the other lock, and it is the
+# one a reader is most likely to assume is covered by the row above.
+am_pm_moved="$(am_probe 945 merge amhead2 open "$NO_LABELS" 0 "" ci.yml)"
+expect "a head that moved since the grading records no dispatch" 0 \
+  "$(am_dispatches 945)"
+
+# -- DRY_RUN=1 narrates the dispatch and invokes nothing. This is the case that
+#    protects THIS repository: drill/rehearsal.sh runs the reconciler here that
+#    way, and a dispatch written outside run() wakes real workflows.
+am_pm_dry="$(am_probe 946 merge amhead1 open "$NO_LABELS" 0 dry ci.yml)"
+expect "DRY_RUN records no dispatch invocation" 0 "$(am_dispatches 946)"
+expect "...narrating the dispatch it would have made" yes \
+  "$(grep -q 'DRY_RUN: gh workflow run ci.yml -R owner/repo' <<<"$am_pm_dry" \
+    && echo yes || echo no)"
+expect "...with the narration intact, not swallowed by a redirect" 1 \
+  "$(grep -c 'DRY_RUN: gh workflow run' <<<"$am_pm_dry")"
+
+# -- a failed dispatch is loud, local and non-fatal (D3). The merge has already
+#    happened and cannot be undone by failing the pass; the opposite of the
+#    trigger job's fail-the-job treatment, deliberately — that job's failure is
+#    a PRE-condition alarm and this one is a POST-condition report.
+am_pm_fail_rc=0
+am_pm_fail="$(am_probe 947 merge amhead1 open "$NO_LABELS" 0 "" no-such.yml 1)" \
+  || am_pm_fail_rc=$?
+expect "a failed dispatch never fails the PR's reconcile" 0 "$am_pm_fail_rc"
+expect "...is attempted exactly once, never retried in the same pass" 1 \
+  "$(am_dispatches 947)"
+expect "...logs its reason on exactly one line, naming PR and workflow" 1 \
+  "$(grep -c '^labels: #947: WARNING: post-merge dispatch of no-such.yml failed: could not find any workflows named no-such.yml Try `gh workflow list` to see available workflows — the merge stands$' \
+    <<<"$am_pm_fail")"
+expect "...and the merge it follows still stands and is still reported" yes \
+  "$(grep -q '#947: auto-merged amhead1 (merge) — commented' <<<"$am_pm_fail" \
+    && echo yes || echo no)"
+expect "...and the merge is never re-attempted after it" 1 "$(am_merges 947)"
+
+# -- the dispatch lives in the SUCCESS branch, asserted on the source: a
+#    dispatch reachable from any earlier return is a branch no fixture above
+#    can distinguish from one that simply never fired.
+am_pm_body="$(awk '/^reconcile_auto_merge\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
+  actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#' || true)"
+expect "the dispatch goes through run(), like every mutation in the file" yes \
+  "$(grep -q 'run gh workflow run' <<<"$am_pm_body" && echo yes || echo no)"
+expect "...and is the only gh workflow call in the function" 1 \
+  "$(grep -c 'gh workflow run' <<<"$am_pm_body")"
+expect "...after the provenance comment, in source order" yes \
+  "$(awk '/gh issue comment/{c=NR} /run gh workflow run/{d=NR}
+          END{print (c && d && c < d) ? "yes" : "no"}' <<<"$am_pm_body")"
+# D4 — the name is never validated here: three questions gh answers by failing.
+expect "the act validates no workflow name of its own" no \
+  "$(grep -qE 'workflow_dispatch|gh workflow list|gh api "repos/\$REPO/actions/workflows' \
+    <<<"$am_pm_body" && echo yes || echo no)"
+
+# ---------------------------------------------------------------------------
+# D7 (#458 E18) — the merge says the human was asked, and only when it was.
+# THE DISCRIMINATING PAIR: the same merged PR shape twice, differing in one
+# input only. A single fixture cannot grade this — the case that costs is the
+# comment claiming an act that did not happen (#377).
+# ---------------------------------------------------------------------------
+D7_LINE='**The human was asked:**'
+am_d7_yes="$(am_probe 930 merge amhead1 open "$NO_LABELS" 0)"
+# ...and the half that must NOT carry it: a live request already stood, so
+# human_request_needed refuses and this pass asks nobody.
+am_d7_no="$(am_probe 931 merge amhead1 open "$NO_LABELS" 0 "" "" 0 "$HUMAN")"
+expect "the pass that requested the human logs that it did" yes \
+  "$(grep -q "#930: requested $HUMAN (round passed)" <<<"$am_d7_yes" && echo yes || echo no)"
+expect "...and its provenance comment carries D7's line" yes \
+  "$(grep -qF "$D7_LINE" "$AM/posted-930" && echo yes || echo no)"
+expect "...naming the human it asked" yes \
+  "$(grep -qF "requested \`$HUMAN\`'s review" "$AM/posted-930" && echo yes || echo no)"
+expect "the pass that requested nobody says so by omission" no \
+  "$(grep -q "#931: requested" <<<"$am_d7_no" && echo yes || echo no)"
+expect "...and its provenance comment omits D7's line entirely" no \
+  "$(grep -qF "$D7_LINE" "$AM/posted-931" && echo yes || echo no)"
+# The pair is only a pair if BOTH halves merged and commented: a half that
+# merged nothing would omit the line for a reason that is not the one measured.
+expect "both halves of the pair merged" "1 1" \
+  "$(am_merges 930) $(am_merges 931)"
+expect "...and both posted exactly one provenance comment" "1 1" \
+  "$(am_posts 930) $(am_posts 931)"
+# ...and differ in NOTHING else. Everything #460 asserted is still in both.
+expect "the omitting half still names the head, method and authorisation" yes \
+  "$(grep -qF 'amhead1' "$AM/posted-931" \
+    && grep -qF "**Method:** \`merge\`" "$AM/posted-931" \
+    && grep -qF 'auto_merge=merge' "$AM/posted-931" && echo yes || echo no)"
+expect "...and the carrying half does too" yes \
+  "$(grep -qF 'amhead1' "$AM/posted-930" \
+    && grep -qF "**Method:** \`merge\`" "$AM/posted-930" \
+    && grep -qF 'auto_merge=merge' "$AM/posted-930" && echo yes || echo no)"
+# The line's own claim, which is the reason it is conditional: it says the
+# request is never suppressed, because at line 979 the pass cannot know the
+# merge will land (E18), and a suppression would starve the human on exactly
+# the configuration that needs them most.
+expect "D7's line says the request is not suppressed" yes \
+  "$(grep -qF 'The request is never' "$AM/posted-930" && echo yes || echo no)"
+
+# -- NO SECOND READ (D7, #460 D2). The fact is passed down from the request
+#    site, not re-derived. Two independent measurements, because either alone
+#    can be satisfied by the other's defect: the recorded argv cannot see a
+#    second call to a pure guard, and the guard's call count cannot see an
+#    extra API read added beside it.
+expect "the merged PR's recorded calls touch requested_reviewers exactly once" 1 \
+  "$(grep -c 'requested_reviewers' "$AM/calls-930")"
+expect "...and that one is the WRITE, never a read" yes \
+  "$(grep 'requested_reviewers' "$AM/calls-930" \
+    | grep -qF -- "-f reviewers[]=$HUMAN" && echo yes || echo no)"
+expect "the half that asked nobody touches requested_reviewers not at all" 0 \
+  "$(grep -c 'requested_reviewers' "$AM/calls-931" || true)"
+expect "human_request_needed is called exactly once for the asking pass" 1 \
+  "$(wc -l <"$AM/hrn-930" | tr -d ' ')"
+expect "...and exactly once for the non-asking pass" 1 \
+  "$(wc -l <"$AM/hrn-931" | tr -d ' ')"
+# ...and the act itself never reaches for the fact a second time. Asserted on
+# the source, because a second read added there would simply agree with the
+# first on every fixture this file can write.
+expect "the act re-reads no requested_reviewers of its own" no \
+  "$(grep -q 'requested_reviewers' <<<"$am_pm_body" && echo yes || echo no)"
+expect "...and re-evaluates no human_request_needed" no \
+  "$(grep -q 'human_request_needed' <<<"$am_pm_body" && echo yes || echo no)"
+expect "...and takes the fact as its third argument" yes \
+  "$(grep -q 'human_requested="\$3"' <<<"$am_pm_body" && echo yes || echo no)"
+# The caller half of the same contract: reconcile_pr records it at the request
+# site, which is the only place it is knowable.
+am_pr_body="$(awk '/^reconcile_pr\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
+  actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#' || true)"
+expect "reconcile_pr evaluates human_request_needed exactly once" 1 \
+  "$(grep -c 'human_request_needed' <<<"$am_pr_body")"
+expect "...and passes the recorded fact into the act" yes \
+  "$(grep -q 'reconcile_auto_merge "\$n" "\$desired" "\$human_requested"' <<<"$am_pr_body" \
+    && echo yes || echo no)"
 
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
