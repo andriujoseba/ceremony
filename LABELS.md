@@ -20,7 +20,7 @@ and the reconciler recomputes it from GitHub's own facts.
 | `state:building` | `#FBCA04` | the builder — pre-round: no verdict stands against the head. Draft is evidence for it, not the definition of it: a draft carrying a standing non-approving verdict is a fix round and reads `state:addressing` (#205) |
 | `state:bots-reviewing` | `#1D76DB` | the reviewer panel to finish the round (a request is live) |
 | `state:addressing` | `#D93F0B` | the builder — round complete without full approval, or nobody was asked, or a blocker is up, or a ruling is pending |
-| `state:needs-human` | `#8250DF` | the human — **this PR could be merged right now**: zero blockers, whole panel approved the current head |
+| `state:needs-human` | `#8250DF` | the human — or, where this repository's own sweep caller passes a merge toggle (`auto_merge`, `off` by default, and the consumer's setting, not ceremony's), the reconciler pressing on this same verdict — **this PR could be merged right now**: zero blockers, whole panel approved the current head |
 
 `bots-reviewing` vs `addressing` is deliberate: staleness in the first means
 *poke the reviewers*, in the second *the builder dropped the ball* — unless a
@@ -102,7 +102,7 @@ and re-entry does not set `attention`.
 | `rerun-owed` | `#D4C5F9` | PR-only: the head is red on a rerun no agent may start, so the builder owes nothing until it is made. Set by the builder with its evidence; cleared by `ci-rerun` when it starts the attempt, and by the reconciler when the head recovers or moves (#424) |
 | `attention` | `#D93F0B` | issue-only demand parked for the assignee; hand-set, and never written by the machine |
 | `release` | `#0E8A16` | release flow, versioning, packaging work — and the ceremony PR itself |
-| `merge-next` | `#0E8A16` | head of the merge queue — merge this one next. Queue order is *intent*: never set by the reconciler, only cleared by it |
+| `merge-next` | `#0E8A16` | head of the merge queue — merge this one next. Queue order is *intent*: never set by the reconciler, only cleared by it — and never read by it, so where a repository's own sweep caller passes a merge toggle (`auto_merge`, `off` by default, and the consumer's setting, not ceremony's), the order this label expresses is not honoured: two confirmed PRs merge in whatever order the sweep reaches them, and a real conflict then disqualifies the loser with `blocker:conflict` on the next pass |
 
 `needs-ruling` marks where the human's turn is when the pending thing is a
 *decision*, not a merge ([#50 D1–D14](https://github.com/heavy-duty/ceremony/issues/50)).

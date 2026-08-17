@@ -818,6 +818,108 @@ dispatch carries `bootstrap=no`). When a ceremony pin bump adds a core
 label, bump the pin first and then re-dispatch; the scheduled sweep warns
 when the pinned taxonomy declares a core label the repository lacks.
 
+### Letting the sweep merge a converged PR
+
+*Only humans merge* is this organization's default and stays the default
+here. A repository may delegate that one press to the reconciler, and this
+subsection is the whole of what that costs. It is a diff you apply
+deliberately: the stubs above pass no auto-merge input and grant no write,
+so a repository that copies them is unaffected by everything below.
+
+**1. The two inputs.** Both live on the **sweep** caller, and both default
+to the inert value, so naming neither is identical to naming both at their
+defaults:
+
+| input | accepted | default | what it does |
+|---|---|---|---|
+| `auto_merge` | `off`, `merge`, `squash`, `rebase` | `off` | `off` merges nothing; the other three name the merge method the sweep uses |
+| `post_merge_workflow` | a workflow filename or name in this repository | *(empty)* | dispatched once after a merge this sweep performed; empty dispatches nothing |
+
+Any other `auto_merge` value fails the run loudly rather than being read as
+`off`. `post_merge_workflow` is never validated here: whether the workflow
+exists, declares `workflow_dispatch:` and is dispatchable by this token are
+three questions `gh workflow run` already answers by failing.
+
+```yaml
+jobs:
+  sweep:
+    uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@<pinned-tag>
+    with:
+      auto_merge: squash            # off | merge | squash | rebase
+      post_merge_workflow: ci.yml   # omit to dispatch nothing
+```
+
+Add those under the sweep caller's existing `with:` key alongside
+`pr_workflow_name` and `runner` when present; do not repeat the key.
+
+**2. The two permission changes, on the caller.** A called workflow cannot
+raise what its caller grants (box#97, as at
+[Release workflow](#release-workflow) above), so these go on **your**
+`labels-sweep.yml` and nowhere else. Change the sweep caller's `contents:
+read` to `contents: write` — the merge is a write to `main` — and its
+`actions: read` to `actions: write`, which `gh workflow run` needs for the
+dispatch. Take `actions: write` only if you set `post_merge_workflow`;
+`contents: write` only if you set `auto_merge`. **A consumer that changes
+neither permission is unaffected by this whole feature**, inputs included:
+without `contents: write` the merge simply fails and is logged.
+
+**3. What the reconciler refuses to merge**, in the order it asks, and it
+merges only when all five pass:
+
+1. **Not opted in** — `auto_merge` is `off`.
+2. **Not this pass's own `state:needs-human` verdict.** The trigger is the
+   conclusion this sweep just computed from the PR's blockers, draft state
+   and current-head approvals — **never the `state:needs-human` label**,
+   whoever set it. A builder, a reviewer or an operator who applies that
+   label by hand merges nothing: the sweep re-derives the verdict from
+   scratch every pass, so a hand-set label that the facts do not support is
+   corrected rather than obeyed. The label being writable by anyone is
+   exactly why it is not the trigger.
+3. **`release`-labelled** — the ceremony PR is refused under every value of
+   `auto_merge`.
+4. **Not authored by a fleet login** — the author must appear in this
+   repository's `.github/labels.conf`, in `panel=`, in any
+   `panel[<login>]=` row, or in `triage-actors=`. A human's PR and an
+   outside contributor's PR are never auto-merged.
+5. **Not `MERGEABLE`** — GitHub's own mergeability, so a conflicted or
+   blocked PR is refused.
+
+Two locks, not one: the head is re-read immediately before the merge and
+the merge itself is pinned to that SHA, so a push arriving in the seconds
+between the grading and the press loses the race rather than the review.
+Every merge the sweep performs posts a provenance comment on the PR naming
+the head, the method and the setting that authorised it.
+
+**4. The push-run cost — read this before opting in.** A commit merged with
+the workflow's own `GITHUB_TOKEN` raises **no `push` event**, so a `push`-
+triggered workflow does not run and your `main` stops being graded. Nothing
+goes red; it goes quiet, which is worse. Two lines fix it, and you need
+both:
+
+- name that workflow in `post_merge_workflow` on the sweep caller;
+- add `workflow_dispatch:` to that workflow's **own** `on:` triggers, since
+  a workflow without it cannot be dispatched at all.
+
+A failed dispatch is logged and non-fatal: the merge has already happened
+and stands.
+
+**5. The approval-latency note.** The event-facing labels caller carries no
+`pull_request_review` trigger, so the round's final approval wakes nothing
+and the merge waits for the next scheduled sweep — up to an hour on the
+recommended cron. A consumer that wants the press to follow the approval
+adds the trigger to its **own** labels caller:
+
+```yaml
+  pull_request_review:
+    types: [submitted]
+```
+
+**6. The stubs above stay minimum-permission and are not edited by this.**
+The copyable sweep caller keeps `contents: read`, keeps `actions: read` and
+passes neither input; the copyable labels caller keeps its trigger list as
+shown. Opting in is the diff in points 1, 2 and 5 applied on purpose, never
+the default anyone pastes.
+
 ## Rerun servicing
 
 `0.7.4` (#424) — one more caller, adopted at the same pin as the two

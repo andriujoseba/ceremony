@@ -28,7 +28,13 @@ no second roster.
 Review panel per PR = the governed repo's `.github/labels.conf` `panel=` line
 minus the PR's author, as [REVIEWER.md](REVIEWER.md) specifies (recusal by
 construction). Only humans merge — enforced as permissions (the agents team
-holds the triage role, not write), not as convention.
+holds the triage role, not write), not as convention. That sentence is about
+**identities** and stays exactly true: no fleet identity gains any permission
+from the merge toggle, and their rights remain `"push": false`. What can press
+the button beside a human is a **workflow token** — the class that already
+writes to `main` on every release — and only where that repository's own sweep
+caller passes `auto_merge`, `off` by default and the consumer's setting, not
+ceremony's.
 
 ## Anatomy of a duty loop
 
