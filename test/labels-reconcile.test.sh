@@ -12,7 +12,9 @@ export LC_ALL=C
 
 cd "$(dirname "$0")/.."
 # shellcheck source=actions/labels-reconcile/labels-reconcile.sh
+unset AUTO_MERGE
 . actions/labels-reconcile/labels-reconcile.sh
+SCRIPT_AUTO_MERGE_DEFAULT="$AUTO_MERGE"
 
 RTMP="$(mktemp -d)"
 trap 'rm -rf "$RTMP"' EXIT
@@ -52,6 +54,35 @@ expect() { # $1 = description, $2 = want, $3 = got
 # in labels.conf, and the verdict consumes decide_state's result rather than
 # trusting the hand-set label that the same pass is about to validate.
 # ---------------------------------------------------------------------------
+expect "the direct script defaults auto_merge to off when unset" off \
+  "$SCRIPT_AUTO_MERGE_DEFAULT"
+expect "the reusable workflow defaults auto_merge to off" 1 \
+  "$(awk '/^      auto_merge:/{seen=1} seen && /default: off/{print 1; exit}' \
+    .github/workflows/labels-sweep.yml)"
+expect "the composite action defaults auto_merge to off" 1 \
+  "$(awk '/^  auto_merge:/{seen=1} seen && /default: "off"/{print 1; exit}' \
+    actions/labels-reconcile/action.yml)"
+
+AUTO_MERGE=sometimes validation_rc=0
+validation_output="$(validate_auto_merge 2>&1)" || validation_rc=$?
+expect "the direct-script validator rejects an unknown mode with rc 2" 2 \
+  "$validation_rc"
+expect "the direct-script validator names the input and accepted set" \
+  "auto_merge must be one of: off, merge, squash, rebase" "$validation_output"
+action_validation_body="$(awk '
+  /- name: validate auto_merge input/ { found=1 }
+  found && /^      run: \|/ { body=1; next }
+  body && /^    - name:/ { exit }
+  body { sub(/^        /, ""); print }
+' actions/labels-reconcile/action.yml)"
+action_validation_rc=0
+action_validation_output="$(AUTO_MERGE=sometimes bash -c "$action_validation_body" 2>&1)" \
+  || action_validation_rc=$?
+expect "the action-boundary validator rejects an unknown mode with rc 2" 2 \
+  "$action_validation_rc"
+expect "the action-boundary validator uses the direct script's diagnostic" \
+  "$validation_output" "$action_validation_output"
+
 load_config .github/labels.conf
 for fleet_login in \
   claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl \
