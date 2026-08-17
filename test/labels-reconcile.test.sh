@@ -113,9 +113,13 @@ expect "...the actions: write the caller needs" yes \
 expect "...and that empty prevents release auto-merges" yes \
   "$(grep -q 'Empty means release pull requests are never auto-merged' <<<"$release_desc" && echo yes || echo no)"
 
-# D14 — both reusable action sites carry the whole four-input family. Counting
+# D14 — both reusable action sites carry the whole input family. Counting
 # each literal twice makes deleting any one line from either block red.
-for pass_input in auto_merge post_merge_workflow auto_merge_release release_workflow; do
+# `bootstrap` joins it at #472, and is the one member whose silent default
+# means NEVER BOOTSTRAP, EVER — the operator's manual full-board dispatch
+# included, since after #472 that dispatch is the only thing that upserts the
+# taxonomy. Deleting the line is legal YAML and invisible to actionlint.
+for pass_input in bootstrap auto_merge post_merge_workflow auto_merge_release release_workflow; do
   expect "both reusable with blocks pass $pass_input" 2 \
     "$(grep -c "^          $pass_input:.*inputs.$pass_input" .github/workflows/labels-sweep.yml)"
 done
@@ -1675,33 +1679,130 @@ EOF
 chmod +x "$EXEC/stub/gh"
 printf 'panel=bot-a bot-b bot-c\n' >"$EXEC/labels.conf"
 
-exec_env() { # $1 = event name → the real script, executed under the PATH stub
+exec_env() { # $1 = BOOTSTRAP, $2 = GITHUB_EVENT_NAME; "-" leaves either unset.
+             # $3, optional, is DRY_RUN.
+             # → the real script, executed under the PATH stub
   : >"$EXEC/record"
-  env PATH="$EXEC/stub:$PATH" GH_RECORD="$EXEC/record" \
-    REPO=owner/repo LABELS_CONF="$EXEC/labels.conf" GITHUB_EVENT_NAME="$1" \
+  local -a vars=(PATH="$EXEC/stub:$PATH" GH_RECORD="$EXEC/record"
+    REPO=owner/repo LABELS_CONF="$EXEC/labels.conf")
+  [ "$1" = - ] || vars+=("BOOTSTRAP=$1")
+  [ "$2" = - ] || vars+=("GITHUB_EVENT_NAME=$2")
+  # $3 rather than an inherited DRY_RUN: a prefix assignment on a bash
+  # FUNCTION call is not exported, so the child would never see it.
+  [ -z "${3:-}" ] || vars+=("DRY_RUN=$3")
+  # The event name is still SET on most of these calls, deliberately (#472):
+  # a fixture that stopped setting it could not see the defect at all, since
+  # the whole repair is that the two facts are now independent. It is passed
+  # here for the gate to ignore.
+  env -u BOOTSTRAP -u GITHUB_EVENT_NAME -u DRY_RUN "${vars[@]}" \
     bash actions/labels-reconcile/labels-reconcile.sh
 }
+exec_created() { sed -n 's/^create //p' "$EXEC/record"; }
+exec_deleted() { grep -c '^delete ' "$EXEC/record" || true; }
 
 exec_rc=0
-exec_out="$(exec_env workflow_dispatch 2>&1)" || exec_rc=$?
-expect "an executed dispatch with all six absent completes green" 0 "$exec_rc"
+exec_out="$(exec_env yes workflow_dispatch 2>&1)" || exec_rc=$?
+expect "an executed bootstrap with all six absent completes green" 0 "$exec_rc"
 expect "...reaching the end of the sweep" \
   yes "$(grep -q 'reconciled.' <<<"$exec_out" && echo yes || echo no)"
-expect "...having attempted all six deletions" \
-  6 "$(grep -c '^delete ' "$EXEC/record")"
+expect "...having attempted all six deletions" 6 "$(exec_deleted)"
 expect "...and created the full taxonomy" \
-  "$(core_label_rows | cut -d'|' -f1)" \
-  "$(sed -n 's/^create //p' "$EXEC/record")"
+  "$(core_label_rows | cut -d'|' -f1)" "$(exec_created)"
+expect "...and the log names the input, not the event that woke the sweep" \
+  yes "$(grep -q '^labels: bootstrap=yes: bootstrapping the taxonomy' <<<"$exec_out" \
+    && echo yes || echo no)"
 
-# -- bootstrap is dispatch-only, deletes included: the cron and
-#    pull_request_target paths touch no label
-for ev in schedule pull_request_target; do
-  ev_rc=0
-  exec_env "$ev" >/dev/null 2>&1 || ev_rc=$?
-  expect "the $ev path completes green" 0 "$ev_rc"
-  expect "...and deletes nothing" \
-    no "$(grep -q '^delete ' "$EXEC/record" && echo yes || echo no)"
+# -- THE DISCRIMINATING CASE (#472). One fixture, two readings: the event says
+#    workflow_dispatch and the input says no. Only the input is the ask.
+#
+#    This is the defect restated as a test, and it fails on main: the
+#    composite exported GITHUB_EVENT_NAME=workflow_dispatch on bootstrap=yes
+#    and main() gated on that export, so `no` could not be obeyed — every
+#    trigger-woken sweep already arrives as a dispatch, that being how the
+#    trigger job wakes the sweep caller with no PAT. Run 32004881752 logged
+#    `BOOTSTRAP: no` and, 21 ms later, a log line crediting the event with a
+#    bootstrap the caller had declined: 28 upserts and six retire probes on
+#    ~10 sweeps an hour, in every governed repo. That literal is asserted
+#    absent below, so it is described here rather than quoted.
+disc_rc=0
+disc_out="$(exec_env no workflow_dispatch 2>&1)" || disc_rc=$?
+expect "a dispatch carrying bootstrap=no completes green" 0 "$disc_rc"
+expect "...reaching the end of the sweep" \
+  yes "$(grep -q 'reconciled.' <<<"$disc_out" && echo yes || echo no)"
+expect "...creating nothing" "" "$(exec_created)"
+expect "...deleting nothing" 0 "$(exec_deleted)"
+expect "...and narrating no bootstrap at all" \
+  0 "$(grep -c 'bootstrapping the taxonomy' <<<"$disc_out" || true)"
+
+# -- the same defect from the other side, and the case that proves the
+#    composite's export is gone rather than merely moved: the input says yes
+#    while the event name is unset, and then while it says schedule.
+for ev in - schedule; do
+  mirror_rc=0
+  exec_env yes "$ev" >/dev/null 2>&1 || mirror_rc=$?
+  expect "bootstrap=yes with the event name '$ev' completes green" 0 "$mirror_rc"
+  expect "...creating the full taxonomy" \
+    "$(core_label_rows | cut -d'|' -f1)" "$(exec_created)"
+  expect "...and attempting all six retirements" 6 "$(exec_deleted)"
 done
+
+# -- unset is `no` at the direct-script boundary, whatever woke the run. The
+#    composite always passes a value (its own validation runs first), so this
+#    is the boundary where the default is the only answer.
+for ev in - workflow_dispatch pull_request_target; do
+  unset_rc=0
+  exec_env - "$ev" >/dev/null 2>&1 || unset_rc=$?
+  expect "an unset BOOTSTRAP on event '$ev' completes green" 0 "$unset_rc"
+  expect "...and touches no label" "" "$(exec_created)$(sed -n 's/^delete //p' "$EXEC/record")"
+done
+
+# -- DRY_RUN mutates nothing through the EXECUTED path, under BOOTSTRAP=yes:
+#    the sourced probe above drives bootstrap_labels directly, so only this
+#    one proves the gate and the narration together.
+dry_exec_rc=0
+dry_exec_out="$(exec_env yes workflow_dispatch 1 2>&1)" || dry_exec_rc=$?
+expect "a DRY_RUN bootstrap completes green" 0 "$dry_exec_rc"
+expect "...narrating the upserts" yes \
+  "$(grep -q '^labels: DRY_RUN: gh label create' <<<"$dry_exec_out" && echo yes || echo no)"
+expect "...and recording no gh invocation whatsoever" "" "$(cat "$EXEC/record")"
+
+# -- validate_bootstrap, in validate_auto_merge's shape (#472 D3). Empty is
+#    asserted explicitly: it is the one case `-` rather than `:-` decides, and
+#    a typo that silently selected "do not bootstrap" is this issue's subject.
+for bad in Yes true "" "1" "on"; do
+  bad_rc=0
+  bad_out="$(exec_env "$bad" workflow_dispatch 2>&1)" || bad_rc=$?
+  expect "BOOTSTRAP='$bad' exits 2" 2 "$bad_rc"
+  expect "...with a message naming the accepted set" yes \
+    "$(grep -q "bootstrap must be 'yes' or 'no'" <<<"$bad_out" && echo yes || echo no)"
+  expect "...before any label write" "" "$(cat "$EXEC/record")"
+done
+
+# -- the gate's only reader is the input: no line of the action reads or
+#    writes an event name any more (#472 D1, D2). Asserted on the tree rather
+#    than in the PR body, because a body claim guards nothing.
+expect "no line of the action mentions GITHUB_EVENT_NAME" "" \
+  "$(git grep -n GITHUB_EVENT_NAME -- actions/labels-reconcile/ || true)"
+# Assembled from two adjacent literals, not written whole: this file is inside
+# the tree it greps, so a contiguous literal here would be its own only match.
+event_log_literal="workflow_dispatch: ""bootstrapping"
+expect "no log line attributes the bootstrap to the event name" "" \
+  "$(git grep -nF "$event_log_literal" || true)"
+# shellcheck disable=SC2016,SC2028 # action.yml literals, not expansions
+expect "the composite runs the script bare, with no shell prologue" \
+  'run: bash "$GITHUB_ACTION_PATH/labels-reconcile.sh"' \
+  "$(awk '/^      run: bash /{sub(/^ +/, ""); print; exit}' actions/labels-reconcile/action.yml)"
+# Twice: the validation step reads it to close the accepted set, and the
+# reconcile step plumbs it to the script that now acts on it.
+# shellcheck disable=SC2016 # an action.yml literal, not an expansion
+expect "...while still plumbing BOOTSTRAP to the script" 2 \
+  "$(grep -cF 'BOOTSTRAP: ${{ inputs.bootstrap }}' actions/labels-reconcile/action.yml)"
+expect "...keeping its own validation step" yes \
+  "$(grep -q 'name: validate bootstrap input' actions/labels-reconcile/action.yml \
+    && echo yes || echo no)"
+expect "...and the input's closed default" 1 \
+  "$(awk '/^  bootstrap:/{seen=1} seen && /default: "no"/{print 1; exit}' \
+    actions/labels-reconcile/action.yml)"
 # -- a re-drafted fix round is not a build (#205) ----------------------------
 # Draft used to short-circuit decide_state before the round was consulted, so
 # a PR carrying a standing CHANGES_REQUESTED that its builder converted back
