@@ -180,6 +180,7 @@ EOF
 
   # D3: the docs block matched a literal README this tree does not have
   check "derive: README.md is scope:docs" 0 "[scope:docs]" derives 'README.md'
+  check "derive: FLEET.md is scope:docs" 0 "[scope:docs]" derives 'FLEET.md'
   check "derive: RELEASES.md is scope:docs" 0 "[scope:docs]" derives 'RELEASES.md'
   check "derive: TRIAGE.md is scope:docs" 0 "[scope:docs]" derives 'TRIAGE.md'
 
@@ -213,10 +214,10 @@ EOF
     "[scope:release-flow]" derives 'lib/version.sh'
 
   # D6: the map stays advisory. An unmapped path derives an empty set and
-  # exits 0 — a guard that redded here would fail every PR touching FLEET.md
-  # or ci.yml, neither of which this map claims.
+  # exits 0 — a guard that redded here would fail every PR touching ci.yml,
+  # which this map does not claim.
   check "derive: an unmapped path is silence, not an error" 0 "[]" \
-    derives "$(files FLEET.md .github/workflows/ci.yml)"
+    derives '.github/workflows/ci.yml'
 
   # --- #302: one wrong answer and the surfaces the map never learned ------
   # Every path asserted ALONE, per #300 round 1: a set holding a script and

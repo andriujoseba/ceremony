@@ -125,6 +125,7 @@ scope:docs:
           - docs/**
           - AGENTS.md
           - BUILDER.md
+          - FLEET.md
           - RELEASES.md
           - REVIEWER.md
           - TRIAGE.md
