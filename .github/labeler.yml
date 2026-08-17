@@ -48,6 +48,7 @@ scope:release-flow:
           - test/decide.test.sh
           - test/facts.test.sh
           - test/release-chain.test.sh
+          - test/release-dispatch.test.sh
           - test/version.test.sh
           - test/changelog.test.sh
           - test/self-ref.test.sh
