@@ -2359,8 +2359,13 @@ expect "reconcile_auto_merge is the last statement in reconcile_pr" yes \
 # re-implement, so a pattern read over the comments finds the words it is
 # hunting for in the very sentence promising they are absent, and the
 # assertion passes or fails on prose rather than on code.
+# `|| true` so a tree where the function is ABSENT still reaches this file's
+# summary line. Without it the empty awk output reds grep under pipefail, the
+# file aborts mid-suite, and the failure count a reader quotes is a floor
+# rather than a total — which is exactly the shape of run this block is the
+# evidence for.
 am_body="$(awk '/^reconcile_auto_merge\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
-  actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#')"
+  actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#' || true)"
 # The patterns match CODE SHAPE — an array reference, a command substitution,
 # a call — and not the bare words. Stripping the comments above was not enough
 # on its own: the success comment's own prose tells the reader that the
@@ -2377,7 +2382,7 @@ expect "the act re-reads no labels of its own" no \
 # ...and the confirmation re-reads rather than recomputing: a confirmation
 # built from the values this pass already holds is a comment, not a lock.
 am_confirm_body="$(awk '/^auto_merge_confirm\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
-  actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#')"
+  actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#' || true)"
 expect "the confirmation reads the PR back from the API" yes \
   "$(grep -qF 'gh api "repos/' <<<"$am_confirm_body" \
     && grep -qF 'pulls/' <<<"$am_confirm_body" && echo yes || echo no)"
@@ -2392,7 +2397,7 @@ am_unreadable="$(
     REPO=owner/repo HEAD_SHA=amhead1
     gh() { printf 'gh: Not Found (HTTP 404)\n' >&2; return 1; }
     auto_merge_confirm 912
-  )
+  ) || true
 )"
 expect "an unreadable confirmation refuses rather than merging" yes \
   "$(grep -q 'the confirmation read failed: gh: Not Found (HTTP 404)' \
