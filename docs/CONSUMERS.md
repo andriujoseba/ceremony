@@ -83,9 +83,17 @@ after that PR merges, dispatch the sweep caller with taxonomy bootstrapping
 enabled and wait for that exact run to succeed:
 
 ```bash
+dispatched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh workflow run labels-sweep.yml --repo "$repo" -f bootstrap=yes
-run_id="$(gh run list --repo "$repo" --workflow labels-sweep.yml \
-  --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
+run_id=
+for attempt in {1..12}; do
+  run_id="$(gh run list --repo "$repo" --workflow labels-sweep.yml \
+    --event workflow_dispatch --created ">=${dispatched_at}" --limit 1 \
+    --json databaseId --jq '.[0].databaseId')"
+  [ -z "$run_id" ] || break
+  sleep 5
+done
+test -n "$run_id" || { echo "labels bootstrap run did not appear" >&2; false; }
 gh run watch "$run_id" --repo "$repo" --exit-status
 ```
 
