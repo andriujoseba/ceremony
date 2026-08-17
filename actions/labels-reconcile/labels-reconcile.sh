@@ -1128,9 +1128,8 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   fi
 
   # #468 D6/D7 — a release merge opens the ship door with the exact head this
-  # pass graded and pinned. The attempt precedes its provenance comment so the
-  # comment can truthfully say it happened; failure is loud but cannot undo the
-  # merge or stop the sweep.
+  # pass graded and pinned. Dispatch stays after the successful merge gate;
+  # failure is loud but cannot undo the merge or stop the sweep.
   local release_dispatch_line=""
   if [ "$path" = release ]; then
     local release_err release_err_file

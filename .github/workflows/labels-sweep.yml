@@ -30,8 +30,8 @@ name: labels-sweep
 # create workflow runs from GITHUB_TOKEN-raised events (the trigger's
 # workflow_dispatch is one of the two documented exemptions; this workflow
 # dispatches nothing unless post_merge_workflow or release_workflow is set,
-# which no caller in this repository sets). Agent writes use a PAT and therefore do trigger —
-# exactly the asymmetry wanted.
+# which no caller in this repository sets). Agent writes use a PAT and
+# therefore do trigger — exactly the asymmetry wanted.
 on:
   workflow_call:
     inputs:

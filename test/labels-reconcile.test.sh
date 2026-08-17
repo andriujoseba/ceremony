@@ -2438,6 +2438,11 @@ expect "...naming what appeared" yes \
   "$(grep -q '#906: auto-merge refused: release appeared on the PR since this pass graded it' \
     <<<"$am_release" && echo yes || echo no)"
 
+am_dispatches() { # $1 PR -> workflow dispatch invocations recorded
+  [ -f "$AM/dispatch-$1" ] || { echo 0; return; }
+  wc -l <"$AM/dispatch-$1" | tr -d ' '
+}
+
 # -- #468's disjoint selector. The four corners differ only in the two toggle
 # values and the graded release label; every merging argv is asserted.
 am_probe 960 merge amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" off "" "" >/dev/null
@@ -2446,6 +2451,7 @@ expect "auto_merge on / release toggle off merges a non-release PR" \
   "$(cat "$AM/merges-960")"
 am_corner_release_off="$(am_probe 961 merge amhead1 open '[{"name":"release"}]' 0 "" "" 0 "" "" off release.yml release)"
 expect "auto_merge on / release toggle off refuses a release PR" 0 "$(am_merges 961)"
+expect "...and records no release dispatch" 0 "$(am_dispatches 961)"
 expect "...on the release-labelled log path" yes \
   "$(grep -q '#961: auto-merge\[release\]: SKIP:off' <<<"$am_corner_release_off" && echo yes || echo no)"
 am_probe 962 off amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" merge release.yml "" >/dev/null
@@ -2464,11 +2470,13 @@ expect "...and its provenance names the release toggle and dispatch input" yes \
 
 am_release_no_dispatch="$(am_probe 964 off amhead1 open '[{"name":"release"}]' 0 "" "" 0 "" "" merge "" release)"
 expect "a release toggle with no dispatch configured records no merge" 0 "$(am_merges 964)"
+expect "...and records no release dispatch" 0 "$(am_dispatches 964)"
 expect "...and logs the dedicated refusal" yes \
   "$(grep -q '#964: auto-merge\[release\]: SKIP:no-release-dispatch' <<<"$am_release_no_dispatch" && echo yes || echo no)"
 
 am_release_disappeared="$(am_probe 965 off amhead1 open "$NO_LABELS" 0 "" "" 0 "" "" squash release.yml release)"
 expect "a release label disappearing after grading records no merge" 0 "$(am_merges 965)"
+expect "...and records no release dispatch" 0 "$(am_dispatches 965)"
 expect "...and names the symmetric confirmation refusal" yes \
   "$(grep -q '#965: auto-merge refused: release disappeared on the PR since this pass graded it' \
     <<<"$am_release_disappeared" && echo yes || echo no)"
@@ -2843,11 +2851,6 @@ expect "an unreadable confirmation refuses rather than merging" yes \
 # allows. Every assertion below is on the RECORDED ARGV or on its absence,
 # because the cases that cost are all "something fired that should not have".
 # ---------------------------------------------------------------------------
-am_dispatches() { # $1 PR → post-merge dispatch invocations recorded
-  [ -f "$AM/dispatch-$1" ] || { echo 0; return; }
-  wc -l <"$AM/dispatch-$1" | tr -d ' '
-}
-
 # -- empty is the default and dispatches nothing. The fixture merges, so what
 #    is measured is the input alone: #901 above ran with no POST_MERGE_WORKFLOW
 #    at all and is the control for "exactly the invocations #460 ships".
@@ -2957,7 +2960,7 @@ expect "the dispatch goes through run(), like every mutation in the file" yes \
 expect "the generic and release dispatches are the only gh workflow calls in the function" 2 \
   "$(grep -c 'gh workflow run' <<<"$am_pm_body")"
 expect "...after the provenance comment, in source order" yes \
-  "$(awk '/gh issue comment/{c=NR} /run gh workflow run/{d=NR}
+  "$(awk '/gh issue comment/{c=NR} /run gh workflow run "\$POST_MERGE_WORKFLOW"/{d=NR}
           END{print (c && d && c < d) ? "yes" : "no"}' <<<"$am_pm_body")"
 # D4 — the name is never validated here: three questions gh answers by failing.
 expect "the act validates no workflow name of its own" no \
