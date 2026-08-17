@@ -81,9 +81,16 @@ RECONCILE_UNREQUESTED_GRACE="${RECONCILE_UNREQUESTED_GRACE:-300}"
 # (a local rehearsal, an older pin) must not silently start dropping entries.
 SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # Closed by default at the direct-script boundary as well as the reusable
-# workflow and composite action boundaries (#459). This issue only observes
-# the verdict; a later child owns the write.
+# workflow and composite action boundaries (#459). #459 observed the verdict;
+# #460 acts on it, at the end of reconcile_pr and through run().
 AUTO_MERGE="${AUTO_MERGE-off}"
+# What the success comment opens with (#460 D6). A marker in the shape this
+# file's other machine comments use — but NOT an idempotency guard, and no
+# ensure_comment reads it: the sweep enumerates OPEN pull requests only
+# (main's `gh pr list --state open`), so a merged PR is never reconciled a
+# second time and there is no repeat to suppress. It is here so a human, or a
+# later machine, can find every auto-merge this toggle performed.
+AUTO_MERGED_MARKER='<!-- ceremony:auto-merged -->'
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -963,6 +970,128 @@ again — the same head with the same blockers never does.*" >/dev/null; then
   fi
 }
 
+auto_merge_confirm() { # $1 = PR number → the refusal reason, empty when confirmed (#460 D3)
+  # The second of the two locks. Between the pass that graded this PR and this
+  # call a builder can push: the window is seconds and the loss is a merged
+  # head nobody reviewed, so the head is re-read here and pinned again at the
+  # call itself (D4). Either lock alone is a race; both is not.
+  #
+  # A read, so it does NOT go through run() — under DRY_RUN=1 the confirmation
+  # still happens, which is what makes the rehearsal's narration say what the
+  # sweep would really have merged rather than what it hoped to.
+  #
+  # It deliberately does not re-read mergeability (D3): a conflict arriving
+  # from another PR's merge does not move THIS PR's head, and GitHub refuses
+  # that merge itself — which D5 handles — so a second `gh pr view` would buy
+  # a slower window, not a smaller one.
+  #
+  # stderr is captured the way this file's other two read sites capture it
+  # (:1211, :1238) rather than through lib/read.sh's guarded_read: that
+  # helper's header states it has no labels-side caller, and lib/read.sh is
+  # outside this issue's scope fence, so a caller here would ship a comment
+  # this PR may not correct.
+  local n="$1" pr err err_file state head
+  err_file="$(mktemp)"
+  if ! pr="$(gh api "repos/$REPO/pulls/$n" 2>"$err_file")"; then
+    err="$(cat "$err_file")"
+    rm -f "$err_file"
+    # An unreadable fact never invents a verdict (#101) — and here the verdict
+    # it would invent is irreversible, so the unreadable case refuses.
+    printf 'the confirmation read failed: %s\n' "$(read_failure_reason "$err")"
+    return 0
+  fi
+  rm -f "$err_file"
+
+  # Re-read, never recomputed: reading back the values this pass already
+  # computed would make the confirmation a comment rather than a lock.
+  state="$(jq -r '.state // "unknown"' <<<"$pr")"
+  head="$(jq -r '.head.sha // ""' <<<"$pr")"
+  [ "$state" = open ] ||
+    { printf 'the PR is no longer open (state: %s)\n' "$state"; return 0; }
+  [ "$head" = "$HEAD_SHA" ] ||
+    { printf 'the head moved since this pass graded it (graded %s, now %s)\n' \
+      "$HEAD_SHA" "$head"; return 0; }
+  # `release` is auto_merge_verdict's own refusal (#459), so its presence on
+  # the re-read is by construction one that appeared since the grading.
+  if jq -e '.labels[]? | select(.name == "release")' <<<"$pr" >/dev/null; then
+    printf 'release appeared on the PR since this pass graded it\n'
+    return 0
+  fi
+}
+
+reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclusion (#460)
+  # The one irreversible act in the sweep. Everything that makes it safe is
+  # upstream and is not re-derived here (D2): decide_state's conclusion is the
+  # trigger and carries its five accumulated disqualifiers, auto_merge_verdict
+  # (#459) owns the refusal set, and this function owns the act alone. A second
+  # draft or blocker check here would be a refusal no fixture can reach (#458 E7).
+  local n="$1" desired="$2" verdict reason err err_file
+  [ "$AUTO_MERGE" != off ] || return 0
+  verdict="$(auto_merge_verdict "$desired")"
+  log "#$n: auto-merge: $verdict"
+  [ "$verdict" = MERGE ] || return 0
+
+  reason="$(auto_merge_confirm "$n")"
+  if [ -n "$reason" ]; then
+    log "#$n: auto-merge refused: $reason"
+    return 0
+  fi
+
+  # Pinned to the graded head (D4). Never `--auto`, which arms GitHub's own
+  # auto-merge — option A, needing branch protection nobody has. Never
+  # `--delete-branch`: every PR in this family arrives from a fork and the
+  # branch is not ours to delete.
+  # stdout is NOT sent to /dev/null, unlike this file's other mutations, and
+  # the difference is load-bearing: `>/dev/null` on a `run` invocation
+  # discards run()'s OWN `DRY_RUN:` narration along with the command's output,
+  # so the rehearsal would fall silent about the one act it exists to preview.
+  # That is the whole of the reason. It buys nothing from gh itself on the
+  # happy path — gh prints its `✓ Merged pull request` line to STDERR, which
+  # the redirect two lines below captures into err_file for D5's reason and
+  # discards when the merge succeeds.
+  err_file="$(mktemp)"
+  if ! run gh pr merge "$n" -R "$REPO" "--$AUTO_MERGE" \
+    --match-head-commit "$HEAD_SHA" 2>"$err_file"; then
+    err="$(cat "$err_file")"
+    rm -f "$err_file"
+    # Loud, local and non-fatal (D5): the PR is exactly as it was, nothing is
+    # retried this pass, no comment is posted, and the loop continues with the
+    # remaining PRs. The next sweep re-derives all of it from scratch, which is
+    # what a stateless sweep is for. read_failure_reason's collapse-and-truncate
+    # treatment is why a multi-line API error cannot forge another PR's line.
+    log "#$n: auto-merge refused: $(read_failure_reason "$err")"
+    return 0
+  fi
+  rm -f "$err_file"
+
+  # D6/D7 — the provenance. Under this toggle the merge commit is authored by
+  # `github-actions[bot]` in an organization whose doctrine has said for its
+  # whole life that only humans merge; a run log nobody opens is exactly the
+  # invisibility #377 was about. The merge and the comment are one unit, which
+  # is why a failed comment is loud and the merge is never re-attempted: it
+  # already happened.
+  if run gh issue comment "$n" -R "$REPO" --body "$AUTO_MERGED_MARKER
+🤖 **Auto-merged by the labels sweep.**
+
+- **Head merged:** \`$HEAD_SHA\` — the commit this pass graded, and the one
+  the merge call was pinned to.
+- **Method:** \`$AUTO_MERGE\`.
+- **Authorised by:** \`auto_merge=$AUTO_MERGE\` on this repository's labels
+  caller. The toggle is closed by default; this repository opted in.
+- **Trigger:** this sweep's own \`decide_state\` conclusion —
+  \`state:needs-human\`, re-derived from the round, the blockers and the
+  checks in this pass — and *not* the \`state:needs-human\` label, which the
+  same pass validates rather than trusts.
+
+The head was re-read immediately before the merge and matched.
+*Only humans merge* remains this organization's default: this repository
+turned that default off deliberately (heavy-duty/ceremony#458)."; then
+    log "#$n: auto-merged $HEAD_SHA ($AUTO_MERGE) — commented"
+  else
+    log "#$n: WARNING: auto-merged $HEAD_SHA ($AUTO_MERGE) but the provenance comment failed to post — the merge stands and is NOT re-attempted"
+  fi
+}
+
 reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   local n="$1" desired remove s args last_activity last_activity_epoch age
 
@@ -1136,9 +1265,19 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
     reconcile_attention "$n" pr "$(jq '.assignees | length' <<<"$PR_JSON")" ""
   fi
 
-  if [ "$AUTO_MERGE" != off ]; then
-    log "#$n: auto-merge: $(auto_merge_verdict "$desired")"
-  fi
+  # ---- the merge, and nothing after it (#460 D1) -----------------------
+  # LAST on purpose, and the ordering is the rule rather than a preference.
+  # Everything above is what the board owes a PR that is still OPEN — the
+  # converge edit, the release-shape warning, merge-next, stale, the take-back
+  # comment, the ruling and attention halves — and all of it is cheap and
+  # idempotent. This is the one irreversible act in the function, so it goes
+  # after all of them: a write landing on a PR this call already closed is a
+  # write into the void, and a take-back comment posting after the merge that
+  # made it meaningless is worse than a write into the void.
+  #
+  # NOTHING MAY BE ADDED BELOW THIS LINE. A step appended here would run on a
+  # closed PR on exactly the passes where the sweep did the most.
+  reconcile_auto_merge "$n" "$desired"
 }
 
 main() {
