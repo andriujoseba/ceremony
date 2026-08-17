@@ -1549,9 +1549,10 @@ expect "...and the sweep does not report it as a blind pass" 0 \
 # them as deleted at bootstrap; nothing deleted them — incubator's first
 # dispatch (run 30041309187) ran green and left `good first issue` standing,
 # the first honest read of the machine since the older repos were cleaned by
-# hand. One registry beside the taxonomy, dispatch-only, and never fatal:
-# absence is the NORMAL case from the second dispatch on (#91's set -e
-# shape), and a 403 refusal must not cost the taxonomy the token CAN create.
+# hand. One registry beside the taxonomy, gated on `BOOTSTRAP=yes` like the
+# upserts (#472 — dispatch-gated until then), and never fatal: absence is the
+# NORMAL case from the second bootstrap on (#91's set -e shape), and a 403
+# refusal must not cost the taxonomy the token CAN create.
 # ---------------------------------------------------------------------------
 BOOT="$RTMP/bootstrap"
 mkdir -p "$BOOT"
@@ -1785,9 +1786,23 @@ expect "no line of the action mentions GITHUB_EVENT_NAME" "" \
   "$(git grep -n GITHUB_EVENT_NAME -- actions/labels-reconcile/ || true)"
 # Assembled from two adjacent literals, not written whole: this file is inside
 # the tree it greps, so a contiguous literal here would be its own only match.
+# Tree-wide minus CHANGELOG.md alone: history is the one prose the census says
+# is never edited, and a published section quoting the retired line would red
+# this for a file no builder may touch. Subtracting that one file rather than
+# allow-listing directories keeps every editable path — lib/, bin/, drill/,
+# the role files — inside the guard.
 event_log_literal="workflow_dispatch: ""bootstrapping"
 expect "no log line attributes the bootstrap to the event name" "" \
-  "$(git grep -nF "$event_log_literal" || true)"
+  "$(git grep -nF "$event_log_literal" -- . ':(exclude)CHANGELOG.md' || true)"
+# ...and no comment in the shipped surfaces still calls the bootstrap or its
+# retirements dispatch-gated. The prose was false in both directions after
+# D1 — a dispatch carrying bootstrap=no deletes nothing, and BOOTSTRAP=yes
+# under any event deletes — so the phrase is retired from the action, the
+# workflows and the docs, and asserted gone rather than merely fixed once.
+# This file is outside the pathspec, which is why the literal can be written
+# whole here.
+expect "no shipped comment calls the bootstrap dispatch-gated" "" \
+  "$(git grep -nF "dispatch-only" -- actions/ .github/ docs/ || true)"
 # shellcheck disable=SC2016,SC2028 # action.yml literals, not expansions
 expect "the composite runs the script bare, with no shell prologue" \
   'run: bash "$GITHUB_ACTION_PATH/labels-reconcile.sh"' \

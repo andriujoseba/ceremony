@@ -895,9 +895,10 @@ $(configured_label_rows "$LABELS_CONF")"
 
   # LABELS.md publishes the defaults as deleted at bootstrap; until #93
   # nothing deleted them — incubator's first dispatch ran green and left
-  # `good first issue` standing. Deletion is dispatch-only like the upserts,
-  # and never fatal: `gh label delete` exits non-zero on a label that is
-  # already gone, the NORMAL case from the second dispatch on, and under
+  # `good first issue` standing. Deletion is `BOOTSTRAP=yes` only like the
+  # upserts (#472 — it was dispatch-gated until then, and no event gates it
+  # now), and never fatal: `gh label delete` exits non-zero on a label that
+  # is already gone, the NORMAL case from the second bootstrap on, and under
   # set -e an unguarded call aborts the whole run (#91's shape). A 403
   # refusal gets the same tolerance — the bot bootstrap already 403s on
   # blocker:drill-pending, and a token that cannot delete must still get
