@@ -67,12 +67,12 @@ bench at all — triage, a human, a builder identity that does not review —
 recuses nobody and owes every bench verdict. The rule states no count on
 purpose: how many verdicts it comes to is a fact about today's roster, and a
 number written into the rule goes false at the next bench change while the
-sentence around it still reads true (#456). Builders and triage
-default to different models so the issue contract is honestly exercised —
-a spec gap should surface as a question on the issue, not be silently filled
-by shared priors. Humans (`danmt`) decide in discussions and merge; the
-roster is config, not doctrine — swapping a vendor is an edit to this table
-(and to `panel=` in `.github/labels.conf` once #10 lands), nothing more.
+sentence around it still reads true (#456). Builders and triage default to
+different models so the issue contract is honestly exercised — a spec gap
+should surface as a question on the issue, not be silently filled by shared
+priors. Humans (`danmt`) decide in discussions and merge; the roster is
+config, not doctrine — swapping a vendor is an edit to this table (and to
+`panel=` in `.github/labels.conf` once #10 lands), nothing more.
 
 Each governed repo names its own roster in its CONTRIBUTING; this one is
 ceremony's. Its `scope:*` set is the same kind of repo-specific fact:
