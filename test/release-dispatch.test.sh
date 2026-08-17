@@ -56,18 +56,23 @@ check "merge door keeps the push+main entrance" 0 \
 check "merge door adds only dispatch+non-empty merged-sha" 0 \
   "(github.event_name == 'workflow_dispatch' && inputs.merged-sha != '')" \
   printf '%s\n' "$MERGE_JOB"
+# shellcheck disable=SC2016 # $1 belongs to the nested shell
 check "merge door has exactly two event-name forms" 0 "2" bash -c \
   'printf "%s\n" "$1" | grep -o "github.event_name" | wc -l | tr -d " "' _ "$MERGE_JOB"
 check "tag door remains push-only" 1 "" \
   grep -F 'workflow_dispatch' <<<"$TAG_JOB"
 
+# shellcheck disable=SC2016 # assert the workflow expression literally
 check "merge job defines the one shipped-head seam" 0 \
   'MERGE_SHA: ${{ inputs.merged-sha || github.sha }}' \
   printf '%s\n' "$MERGE_JOB"
 check "merge job has no direct github.sha consumer" 1 "" \
   grep -F 'github.sha' <<<"$(printf '%s\n' "$MERGE_JOB" | grep -vF 'inputs.merged-sha || github.sha')"
-check "the checkout reads MERGE_SHA" 0 'ref: ${{ env.MERGE_SHA }}' \
+# shellcheck disable=SC2016 # assert the workflow expression literally
+check "the checkout reads MERGE_SHA" 0 \
+  'ref: ${{ env.MERGE_SHA }}' \
   printf '%s\n' "$MERGE_JOB"
+# shellcheck disable=SC2016 # $1 belongs to the nested shell; expression is literal
 check "facts and tag both read MERGE_SHA" 0 "2" bash -c \
   'printf "%s\n" "$1" | grep -F "MERGE_SHA: \${{ env.MERGE_SHA }}" | wc -l | tr -d " "' _ "$MERGE_JOB"
 
@@ -96,7 +101,7 @@ run_validation() { # $1 = value; invalid executions must create nothing
   case_dir="$TMP/case-$VALIDATION_CASE"
   mkdir -p "$case_dir"
   (
-    cd "$case_dir"
+    cd "$case_dir" || exit
     MERGED_SHA="$value" bash -c "$VALIDATION_BODY"
   )
   rc=$?
