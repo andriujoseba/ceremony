@@ -2110,9 +2110,10 @@ LABELS="" HEAD_COMMIT_AT=2026-08-03T11:00:00Z RERUN_OWED_HEAD=""
 # that replaced run() with its own recorder would have to re-implement the
 # DRY_RUN branch, and would then pass identically whether the shipped run()
 # still honoured it or not. Worse, it would blind the must-fail case that costs
-# the most: a merge written OUTSIDE run() executes under DRY_RUN, and
-# drill/rehearsal.sh runs this script with DRY_RUN=1 against this live
-# repository. Leaving the shipped run() in place and recording at the gh
+# the most: a merge written OUTSIDE run() executes under DRY_RUN, and DRY_RUN=1
+# is how this script is rehearsed against this live repository (:30) — by hand
+# today, and a reviewer of this very PR ran exactly that rehearsal against this
+# repository twice. Leaving the shipped run() in place and recording at the gh
 # boundary makes that case red — the merge reaches the stub on a pass that must
 # record nothing.
 #
@@ -2292,17 +2293,143 @@ expect "...carrying gh's own words, collapsed to that one line" yes \
 expect "...and never fails the PR's reconcile, so the sweep loop continues" 0 \
   "$am_fail_rc"
 
-# -- ...and the loop really does continue: a second fixture PR in the same
-#    run is still reconciled after the first one's merge was refused. The
-#    acceptance criterion asks for the NEXT PR, not merely for a zero status.
+# -- reconcile_pr is re-enterable after a refusal: a fresh PR reconciles and
+#    merges. This says nothing about the LOOP — every am_probe call is its own
+#    invocation — and the criterion asks for the next PR in the same run,
+#    which the sweep case below is the evidence for.
 am_next="$(am_probe 909 merge amhead1 open "$NO_LABELS" 0)"
-expect "the PR after a refused merge is reconciled normally" yes \
+expect "a PR reconciled after a refused merge converges normally" yes \
   "$(grep -q 'state -> state:needs-human' <<<"$am_next" && echo yes || echo no)"
 expect "...and merges" 1 "$(am_merges 909)"
 
+# -- THE CONTINUATION, at the boundary the criterion names: ONE main() sweep
+#    carrying two PRs, the first of which GitHub refuses to merge. D5's
+#    "the loop continues with the remaining PRs" is a property of main's
+#    per-PR error handling, and nothing above can see it: the probes call
+#    reconcile_pr directly, one PR per invocation, so a regression that
+#    abandoned the sweep after a refused merge — an unguarded `|| return`,
+#    a `set -e` reaching the loop body — would leave every one of them green
+#    while the board silently stopped being swept after its first bad merge.
+#    Round 1, codex-bot-andresmgsl.
+#
+#    The stubs here are the sweep's whole feed, on the pattern the main()
+#    probes above use: main fetches the PR itself, so the confirmation read
+#    (D3) and that fetch share one endpoint, which is what an open PR at the
+#    graded head looks like to both.
+am_sweep_probe() { # $1 = the first PR's merge rc; the second always succeeds
+  (
+    GITHUB_EVENT_NAME=schedule
+    REPO=owner/repo
+    LABELS_CONF="$FIXTURE_CONF"
+    AUTO_MERGE=merge
+    AM_FIRST_RC="$1"
+    # the recordings are per-run: this probe is driven twice and an appended
+    # file would let the second run answer the first run's assertions
+    AM_RUN="rc$1"
+    # main sets NOW from the real clock, so the fixture's own dates are
+    # relative to it rather than to this file's fixed RNOW.
+    local at
+    at="$(iso_at $(($(date +%s) - 3600)))"
+    gh() {
+      if [ "$1" = label ] && [ "$2" = list ]; then core_label_rows | cut -d'|' -f1; return 0; fi
+      if [ "$1" = pr ] && [ "$2" = list ]; then printf '920\n921\n'; return 0; fi
+      if [ "$1" = pr ] && [ "$2" = view ]; then
+        # green and mergeable: the verdict's last two conditions, so what the
+        # sweep is measured on is the loop and not a refusal.
+        jq -n '{mergeable:"MERGEABLE",
+                statusCheckRollup:[{__typename:"CheckRun",workflowName:"ci",
+                                    name:"check",conclusion:"SUCCESS",
+                                    startedAt:"2026-07-01T00:00:00Z"}]}'
+        return 0
+      fi
+      if [ "$1" = pr ] && [ "$2" = merge ]; then
+        printf '%s\n' "$*" >>"$AM/sweep-$AM_RUN-merges-$3"
+        if [ "$3" = 920 ] && [ "$AM_FIRST_RC" != 0 ]; then
+          printf 'failed to merge: Base branch was modified.\nReview and try the merge again.\n' >&2
+          return "$AM_FIRST_RC"
+        fi
+        return 0
+      fi
+      if [ "$1" = issue ] && [ "$2" = comment ]; then
+        local n="$3" body="" ; shift 3
+        while [ $# -gt 0 ]; do
+          case "$1" in --body) body="$2"; shift ;; esac
+          shift
+        done
+        printf '%s\n----\n' "$body" >>"$AM/sweep-$AM_RUN-posted-$n"
+        return 0
+      fi
+      # recorded to a file: reconcile_pr sends the edit's stdout to /dev/null
+      if [ "$1" = issue ] && [ "$2" = edit ]; then printf '%s\n' "$*" >>"$AM/sweep-$AM_RUN-edits-$3"; return 0; fi
+      [ "$1" = api ] || return 0
+      shift
+      local jqexpr="" endpoint=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --jq) jqexpr="$2"; shift ;;
+          -*) ;;
+          *) [ -n "$endpoint" ] || endpoint="$1" ;;
+        esac
+        shift
+      done
+      case "$endpoint" in
+        */reviews) # the round: three head-current approvals, so decide_state
+                   # buys state:needs-human rather than the fixture asserting it
+          reviews \
+            "$(rev "$BOT1" APPROVED amhead1 "" "$at")" \
+            "$(rev "$BOT2" APPROVED amhead1 "" "$at")" \
+            "$(rev "$BOT3" APPROVED amhead1 "" "$at")" | jq -r "${jqexpr:-.}" ;;
+        */commits/*)
+          jq -n --arg at "$at" '{commit:{committer:{date:$at}}}' | jq -r "${jqexpr:-.}" ;;
+        */pulls/92[01]) # main's own fetch AND the confirmation read (D3)
+          jq -n --arg at "$at" --arg author "$FIXTURE_AUTHOR" \
+            '{state:"open",draft:false,user:{login:$author},head:{sha:"amhead1"},
+              base:{sha:"basesha"},labels:[],requested_reviewers:[],
+              created_at:$at,assignees:[]}' | jq -r "${jqexpr:-.}" ;;
+        *) printf '[]\n' | jq -r "${jqexpr:-.}" ;;
+      esac
+    }
+    main
+  )
+}
+
+am_sweep_rc=0
+am_sweep="$(am_sweep_probe 1)" || am_sweep_rc=$?
+expect "a sweep whose first merge is refused still exits 0" 0 "$am_sweep_rc"
+expect "...and runs to the end of the loop" 1 \
+  "$(grep -c '^labels: reconciled\.$' <<<"$am_sweep")"
+expect "...attempting the refused merge exactly once" 1 \
+  "$(wc -l <"$AM/sweep-rc1-merges-920" | tr -d ' ')"
+expect "...posting no success comment for it" no \
+  "$([ -e "$AM/sweep-rc1-posted-920" ] && echo yes || echo no)"
+expect "...logging its reason on one line, naming that PR" 1 \
+  "$(grep -c '^labels: #920: auto-merge refused: failed to merge: Base branch was modified. Review and try the merge again.$' \
+    <<<"$am_sweep")"
+expect "...and never reporting the refusal as a failed reconcile" no \
+  "$(grep -q 'reconcile failed' <<<"$am_sweep" && echo yes || echo no)"
+# the criterion itself: the NEXT PR of the same run.
+expect "the next PR in the same sweep is reconciled" yes \
+  "$(grep -q 'state:needs-human' "$AM/sweep-rc1-edits-921" && echo yes || echo no)"
+expect "...and merges, head-pinned" \
+  "pr merge 921 -R owner/repo --merge --match-head-commit amhead1" \
+  "$(cat "$AM/sweep-rc1-merges-921")"
+expect "...and gets its provenance comment" 1 \
+  "$(grep -cF "$AUTO_MERGED_MARKER" "$AM/sweep-rc1-posted-921")"
+expect "...after the first PR's refusal, in the one run (order)" yes \
+  "$(awk '/#920: auto-merge refused/{r=NR} /#921: auto-merged amhead1/{m=NR}
+          END{print (r && m && r < m) ? "yes" : "no"}' <<<"$am_sweep")"
+# The control the case needs to not be vacuous: with the same fixture and a
+# merge GitHub accepts, BOTH PRs merge. Without it, a sweep that reconciled
+# #921 for some reason unrelated to continuing past #920 would read the same.
+am_sweep_ok="$(am_sweep_probe 0)"
+expect "the same sweep with both merges accepted merges both PRs" 2 \
+  "$(grep -c 'auto-merged amhead1 (merge) — commented' <<<"$am_sweep_ok")"
+expect "...and refuses nothing" 0 \
+  "$(grep -c 'auto-merge refused' <<<"$am_sweep_ok")"
+
 # -- DRY_RUN=1 mutates nothing, and this is the case that protects the live
-#    repository: drill/rehearsal.sh drives this script with DRY_RUN=1 against
-#    it. A merge written outside run() reaches the stub here and reds.
+#    repository: DRY_RUN=1 is how this script is rehearsed against it (:30),
+#    and a merge written outside run() reaches the stub here and reds.
 am_dry="$(am_probe 910 merge amhead1 open "$NO_LABELS" 0 dry)"
 expect "DRY_RUN records no merge invocation" 0 "$(am_merges 910)"
 expect "...and no comment" 0 "$(am_posts 910)"

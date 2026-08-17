@@ -1045,8 +1045,10 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   # the difference is load-bearing: `>/dev/null` on a `run` invocation
   # discards run()'s OWN `DRY_RUN:` narration along with the command's output,
   # so the rehearsal would fall silent about the one act it exists to preview.
-  # What comes through instead is gh's one-line confirmation, which is
-  # provenance the run log should carry anyway.
+  # That is the whole of the reason. It buys nothing from gh itself on the
+  # happy path — gh prints its `✓ Merged pull request` line to STDERR, which
+  # the redirect two lines below captures into err_file for D5's reason and
+  # discards when the merge succeeds.
   err_file="$(mktemp)"
   if ! run gh pr merge "$n" -R "$REPO" "--$AUTO_MERGE" \
     --match-head-commit "$HEAD_SHA" 2>"$err_file"; then
