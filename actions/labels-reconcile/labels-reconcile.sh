@@ -28,9 +28,10 @@ fi
 # stale approval must never promote unreviewed code to the human.
 #
 # DRY_RUN=1 narrates every mutation instead of performing it (how this script
-# is rehearsed against the live repo). A workflow_dispatch run also bootstraps
-# the taxonomy (label create --force) — that heal is dispatch-only; the cron
-# sweep tolerates a missing label rather than recreating it.
+# is rehearsed against the live repo). BOOTSTRAP=yes also bootstraps the
+# taxonomy (label create --force) — that heal is asked for, never inferred
+# from the event that woke the sweep (#472); every other run tolerates a
+# missing label rather than recreating it.
 #
 # The state machine below is pure (globals in, state out) and covered by
 # fixture tests in test/labels-reconcile.test.sh.
@@ -85,6 +86,13 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # #460 acts on it, at the end of reconcile_pr and through run().
 AUTO_MERGE="${AUTO_MERGE-off}"
 AUTO_MERGE_RELEASE="${AUTO_MERGE_RELEASE-off}"
+# The taxonomy bootstrap's only gate (#472). `-` and not `:-`, exactly as
+# above: unset is the default, and empty is a typo the run must die on rather
+# than silently read as "do not bootstrap" — which is what made the defect
+# this replaced survive, a gate answering a question nobody asked. The
+# composite validates its own input first, so this bites the direct-script
+# caller, where the value was otherwise unchecked.
+BOOTSTRAP="${BOOTSTRAP-no}"
 # What the success comment opens with (#460 D6). A marker in the shape this
 # file's other machine comments use — but NOT an idempotency guard, and no
 # ensure_comment reads it: the sweep enumerates OPEN pull requests only
@@ -344,6 +352,13 @@ validate_auto_merge() {
   case "$AUTO_MERGE_RELEASE" in
     off | merge | squash | rebase) ;;
     *) echo "auto_merge_release must be one of: off, merge, squash, rebase" >&2; return 2 ;;
+  esac
+}
+
+validate_bootstrap() { # validate_auto_merge's shape, for the same reason (#472)
+  case "$BOOTSTRAP" in
+    yes | no) ;;
+    *) echo "bootstrap must be 'yes' or 'no'" >&2; return 2 ;;
   esac
 }
 
@@ -866,7 +881,7 @@ good first issue
 EOF
 }
 
-bootstrap_labels() { # dispatch-only: ~20 upserts is too chatty for every cron tick
+bootstrap_labels() { # BOOTSTRAP=yes only: ~20 upserts is too chatty for every sweep
   local rows name
   rows="$(core_label_rows)"
   if [ -f "$LABELS_CONF" ]; then
@@ -1416,13 +1431,21 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
 
 main() {
   validate_auto_merge || return $?
+  validate_bootstrap || return $?
   REPO="${REPO:?set REPO to owner/name}"
   LABELS_CONF="${LABELS_CONF:-.github/labels.conf}"
   load_config "$LABELS_CONF"
   NOW="$(date +%s)"
 
-  if [ "${GITHUB_EVENT_NAME:-}" = workflow_dispatch ]; then
-    log "workflow_dispatch: bootstrapping the taxonomy"
+  # The caller asks for the bootstrap, and the event that woke the sweep is
+  # not the ask (#472). Every trigger-driven wake arrives as a
+  # workflow_dispatch — that is how `gh workflow run` reaches the sweep
+  # caller without a PAT — so an event-name gate could not tell the
+  # operator's manual full-board bootstrap from a board event, and read
+  # `yes` on roughly ten trigger-woken sweeps an hour while the step env
+  # said `BOOTSTRAP: no`.
+  if [ "$BOOTSTRAP" = yes ]; then
+    log "bootstrap=yes: bootstrapping the taxonomy"
     bootstrap_labels
   fi
 

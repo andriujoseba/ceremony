@@ -1353,7 +1353,7 @@ expect "...over a matrix that actually reaches the take-back" yes \
 # -- the sweep wiring observes the existing per-PR skip without writing -------
 blind_main_probe() {
   (
-    GITHUB_EVENT_NAME=schedule
+    BOOTSTRAP=no
     REPO=owner/repo
     LABELS_CONF=.github/labels.conf
     gh() {
@@ -1423,7 +1423,7 @@ expect "exactly the blind PRs match the counted shape whole-line — no more, no
 # options execution arms.
 big_output_main_probe() {
   (
-    GITHUB_EVENT_NAME=schedule
+    BOOTSTRAP=no
     REPO=owner/repo
     LABELS_CONF=.github/labels.conf
     # gh's own diagnostics on the reviews read are NOT captured to a file the
@@ -1475,7 +1475,7 @@ expect "...and reconciles to the end" 1 \
 #    shape, where the probes could not reach the per-PR path at all.
 unrequested_main_probe() { # $1 = read | denied, the head-commit read's outcome
   (
-    GITHUB_EVENT_NAME=schedule
+    BOOTSTRAP=no
     REPO=owner/repo
     LABELS_CONF=.github/labels.conf
     UMODE="$1"
@@ -2535,7 +2535,7 @@ am_sweep_probe() { # $1 = the first PR's merge rc; the second always succeeds
                    # #468 adds $4=mixed: PR 920 is a release governed by
                    # auto_merge_release=squash and PR 921 is ordinary/merge.
   (
-    GITHUB_EVENT_NAME=schedule
+    BOOTSTRAP=no
     REPO=owner/repo
     LABELS_CONF="$FIXTURE_CONF"
     AUTO_MERGE=merge
