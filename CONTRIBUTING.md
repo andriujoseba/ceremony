@@ -57,8 +57,7 @@ the box is the blast-radius boundary; roles are what a session is told, and
 
 **The bench is the review identities in that table** — every row whose
 standing work includes *review*. `dan-claude-bot`'s standing work is triage
-alone, so it is not on the bench: it is never a required verdict, and a
-review request sitting on it is a PR that can never converge.
+alone, so it is not on the bench: it is never a required verdict.
 
 **The review panel for any PR is every bench identity except its author** —
 recusal by construction, enforced by the reconciler (#10): the required
