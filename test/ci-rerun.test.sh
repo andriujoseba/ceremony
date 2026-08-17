@@ -43,6 +43,62 @@ check "fleet: a panel[<login>]= row names its builder and its reviewers" 0 "" \
     [ "$(fleet_roster)" = "one-bot builder-bot two-bot triage-bot" ] || { fleet_roster; exit 1; }' \
   _ "$ACTION" "$TMP/bracketed.conf"
 
+# A login named by several rows is one identity, and `load_fleet` is where it
+# collapses (#453 D1): FLEET is the roster, so the array a future reader
+# iterates is already the set, and `fleet_roster` stays a printer. Both halves
+# of the pair matter — the exact string kills a dedup that sorts or drops a
+# half, and the cardinality of FLEET itself kills a dedup that lives in
+# `fleet_roster`, which would print a clean list over a duplicated array.
+printf '%s\n' 'panel=a b c' 'panel[d]=a b c' 'triage-actors=e' >"$TMP/repeats.conf"
+check "fleet: a bracketed row repeating panel= names each identity once" 0 "" \
+  bash -c 'source "$1"; load_fleet "$2"
+    [ "${#FLEET[@]}" -eq 5 ] || { printf "FLEET=%d: " "${#FLEET[@]}"; fleet_roster; exit 1; }
+    [ "$(fleet_roster)" = "a b c d e" ] || { fleet_roster; exit 1; }' \
+  _ "$ACTION" "$TMP/repeats.conf"
+
+# The other three append sites, in one conf: the bracketed login repeats a
+# panel= reviewer, its row repeats another, and triage-actors= repeats a third.
+# First-seen order means every repeat keeps the position of its first mention,
+# so the printed roster reads as the file reads — which is the whole reason the
+# refusal comment names the file.
+printf '%s\n' 'panel=a b c' 'panel[b]=c d' 'triage-actors=a e' >"$TMP/repeats2.conf"
+check "fleet: a repeat keeps its first-seen position, whichever row repeats it" 0 "" \
+  bash -c 'source "$1"; load_fleet "$2"
+    [ "${#FLEET[@]}" -eq 5 ] || { printf "FLEET=%d: " "${#FLEET[@]}"; fleet_roster; exit 1; }
+    [ "$(fleet_roster)" = "a b c d e" ] || { fleet_roster; exit 1; }' \
+  _ "$ACTION" "$TMP/repeats2.conf"
+
+# The shape a real conf reaches, reproduced from #453's own measurement of this
+# repository's file with #452's two per-author rows applied: twelve appends,
+# six identities, three of them named three times. A fixture and not a roster —
+# nothing reads it but this assertion.
+printf '%s\n' \
+  'panel=claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl' \
+  'panel[cndgrr]=claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl' \
+  'panel[andriujoseba]=claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl' \
+  'triage-actors=dan-claude-bot' >"$TMP/repeats-live.conf"
+check "fleet: the twelve-append live shape prints six identities, file order" 0 "" \
+  bash -c 'source "$1"; load_fleet "$2"
+    [ "${#FLEET[@]}" -eq 6 ] || { printf "FLEET=%d: " "${#FLEET[@]}"; fleet_roster; exit 1; }
+    [ "$(fleet_roster)" = "claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl cndgrr andriujoseba dan-claude-bot" ] \
+      || { fleet_roster; exit 1; }' \
+  _ "$ACTION" "$TMP/repeats-live.conf"
+
+# D2's property, asserted where the dedup happens: admission is unchanged for
+# every login. Each of the six is still fleet, on the deduped array, and the
+# strangers and the empty actor are still refused — a dedup that dropped a
+# bracketed login while keeping its reviewers, or the reverse, reds here.
+check "fleet: every identity of a repeating conf is still admitted" 0 "" \
+  bash -c 'source "$1"; load_fleet "$2"
+    for who in claude-bot-andresmgsl codex-bot-andresmgsl kimi-bot-andresmgsl \
+      cndgrr andriujoseba dan-claude-bot; do
+      is_fleet_actor "$who" || { echo "refused: $who"; exit 1; }
+    done
+    for who in stranger claude-bot ""; do
+      ! is_fleet_actor "$who" || { echo "admitted: $who"; exit 1; }
+    done' \
+  _ "$ACTION" "$TMP/repeats-live.conf"
+
 # The whole authorization of this script is this list, so an unreadable conf
 # refuses loudly rather than falling back to an empty set that reads as
 # "nobody may" — or to a default roster nobody wrote down.
