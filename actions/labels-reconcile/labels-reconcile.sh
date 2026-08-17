@@ -91,6 +91,14 @@ AUTO_MERGE="${AUTO_MERGE-off}"
 # second time and there is no repeat to suppress. It is here so a human, or a
 # later machine, can find every auto-merge this toggle performed.
 AUTO_MERGED_MARKER='<!-- ceremony:auto-merged -->'
+# The workflow to wake after a merge this sweep performed (#461). Empty means
+# dispatch nothing, which is every consumer until one opts in, and empty is the
+# default at all three boundaries the way `auto_merge`'s `off` is. The name is
+# never validated here (D4): whether the workflow exists, declares
+# `workflow_dispatch:` and is dispatchable by this token are three questions
+# `gh workflow run` already answers by failing, and a second implementation of
+# GitHub's own checks is a guess this script cannot keep current.
+POST_MERGE_WORKFLOW="${POST_MERGE_WORKFLOW-}"
 
 # The needs-ruling invariants (#52) — one implementation for both surfaces.
 # shellcheck source=lib/ruling.sh
@@ -1019,13 +1027,13 @@ auto_merge_confirm() { # $1 = PR number → the refusal reason, empty when confi
   fi
 }
 
-reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclusion (#460)
+reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclusion (#460), $3 = whether THIS pass requested the human (#461 D7)
   # The one irreversible act in the sweep. Everything that makes it safe is
   # upstream and is not re-derived here (D2): decide_state's conclusion is the
   # trigger and carries its five accumulated disqualifiers, auto_merge_verdict
   # (#459) owns the refusal set, and this function owns the act alone. A second
   # draft or blocker check here would be a refusal no fixture can reach (#458 E7).
-  local n="$1" desired="$2" verdict reason err err_file
+  local n="$1" desired="$2" human_requested="$3" verdict reason err err_file
   [ "$AUTO_MERGE" != off ] || return 0
   verdict="$(auto_merge_verdict "$desired")"
   log "#$n: auto-merge: $verdict"
@@ -1064,6 +1072,31 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
   fi
   rm -f "$err_file"
 
+  # #461 D7 (#458 E18) — the human is review-requested at the TOP of this same
+  # pass and merged by its last statement, so the first adopting repository's
+  # human gets a request on a PR that is already merged when the notification
+  # arrives. That ordering is #460's D1 working as specified; what is owed is
+  # that the merge says so.
+  #
+  # Two properties, both load-bearing. The fact is PASSED IN, never re-read: a
+  # second `requested_reviewers` read, or a second `human_request_needed` call,
+  # would make the comment re-derive what the pass already knew (#460 D2), and
+  # the two reads could disagree. And the line is CONDITIONAL, because the
+  # claim must be true — a PR that already carried a live request, or whose
+  # human approval was head-current, got no request in this pass, and a comment
+  # stating an act that did not happen is the #377 defect this comment exists
+  # to prevent. An `if` and not a `&&` one-liner: under `set -e` a trailing
+  # false test is a failed command and takes the whole PR's subshell with it.
+  local human_line=""
+  if [ "$human_requested" = true ]; then
+    human_line="
+- **The human was asked:** this pass requested \`$HUMAN\`'s review moments
+  before this merge, and this merge is the answer. The request is never
+  suppressed — at the moment it is made the pass cannot know the merge will
+  land, and a repository that opted in without \`contents: write\` merges
+  nothing and would then also ask nobody."
+  fi
+
   # D6/D7 — the provenance. Under this toggle the merge commit is authored by
   # `github-actions[bot]` in an organization whose doctrine has said for its
   # whole life that only humans merge; a run log nobody opens is exactly the
@@ -1081,7 +1114,7 @@ reconcile_auto_merge() { # $1 = PR number, $2 = this pass's decide_state conclus
 - **Trigger:** this sweep's own \`decide_state\` conclusion —
   \`state:needs-human\`, re-derived from the round, the blockers and the
   checks in this pass — and *not* the \`state:needs-human\` label, which the
-  same pass validates rather than trusts.
+  same pass validates rather than trusts.$human_line
 
 The head was re-read immediately before the merge and matched.
 *Only humans merge* remains this organization's default: this repository
@@ -1089,6 +1122,49 @@ turned that default off deliberately (heavy-duty/ceremony#458)."; then
     log "#$n: auto-merged $HEAD_SHA ($AUTO_MERGE) — commented"
   else
     log "#$n: WARNING: auto-merged $HEAD_SHA ($AUTO_MERGE) but the provenance comment failed to post — the merge stands and is NOT re-attempted"
+  fi
+
+  # #461 D2/D3 — the post-merge wake. GitHub creates no workflow runs from
+  # events raised by GITHUB_TOKEN, so the `push` this merge just made to the
+  # default branch starts NOTHING: the consumer's own `push: branches: [main]`
+  # CI never grades the merge commit, and a merge commit is a commit no PR
+  # check ever ran against. `workflow_dispatch` is one of the two documented
+  # exemptions, and it is the mechanism the trigger job in labels.yml already
+  # relies on — so the repair is the exemption itself.
+  #
+  # HERE and not earlier, and the placement is the rule rather than a
+  # preference. Only a merge that SUCCEEDED raises the push whose loss this
+  # repairs: a dispatch on a pass that merged nothing would wake the consumer's
+  # CI hourly for nothing, and a dispatch before the merge grades the pre-merge
+  # tree and reports on a commit that does not exist yet. After the provenance
+  # comment, so the comment is not held behind a dispatch that can hang.
+  #
+  # Through run(), like every mutation in this file: `drill/rehearsal.sh` runs
+  # this script against THIS live repository with DRY_RUN=1, and a dispatch
+  # written outside run() wakes real workflows here. stdout is deliberately not
+  # redirected — `>/dev/null` on a `run` invocation discards run()'s own
+  # `DRY_RUN:` narration along with the command's output.
+  #
+  # No `--ref`: `gh` targets the repository's default branch, which is the
+  # branch the merge just landed on and the only branch this could mean.
+  [ -n "$POST_MERGE_WORKFLOW" ] || return 0
+  local dispatch_err dispatch_err_file
+  dispatch_err_file="$(mktemp)"
+  if run gh workflow run "$POST_MERGE_WORKFLOW" -R "$REPO" 2>"$dispatch_err_file"; then
+    rm -f "$dispatch_err_file"
+    log "#$n: dispatched $POST_MERGE_WORKFLOW after the merge"
+  else
+    # Loud and non-fatal (D3), and the asymmetry with the trigger job's
+    # fail-the-job treatment is deliberate: that job's failure is a
+    # PRE-condition alarm and this one is a POST-condition report. The merge
+    # has already happened and cannot be undone by failing the pass, so one
+    # log line naming the PR, the workflow and the reason is the whole
+    # handling and the sweep continues to the next PR. read_failure_reason's
+    # collapse-and-truncate is why a multi-line API error cannot forge
+    # another PR's line.
+    dispatch_err="$(cat "$dispatch_err_file")"
+    rm -f "$dispatch_err_file"
+    log "#$n: WARNING: post-merge dispatch of $POST_MERGE_WORKFLOW failed: $(read_failure_reason "$dispatch_err") — the merge stands"
   fi
 }
 
@@ -1105,9 +1181,17 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   # Idempotent (a live request suppresses it); race-free via the shared
   # concurrency group in labels.yml. With a comment-only bot on the panel
   # this path stays cold and the AUTHOR requests the human.
+  #
+  # Whether THIS pass made that request is recorded here and passed down, in
+  # the shape reconcile_handoff_takeback's `$handoff_cleared` already uses
+  # (#461 D7): it is knowable only here, and the alternative — asking again
+  # further down — is the second read D2 forbids. `human_request_needed` is
+  # therefore called exactly once per PR, and it stays the sole evaluation.
+  local human_requested=false
   if [ "$desired" = state:needs-human ] && human_request_needed; then
     run gh api "repos/$REPO/pulls/$n/requested_reviewers" -f "reviewers[]=$HUMAN" --silent
     log "#$n: requested $HUMAN (round passed)"
+    human_requested=true
   fi
 
   # ---- converge both axes ----
@@ -1277,7 +1361,7 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   #
   # NOTHING MAY BE ADDED BELOW THIS LINE. A step appended here would run on a
   # closed PR on exactly the passes where the sweep did the most.
-  reconcile_auto_merge "$n" "$desired"
+  reconcile_auto_merge "$n" "$desired" "$human_requested"
 }
 
 main() {

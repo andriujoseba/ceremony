@@ -60,6 +60,20 @@ on:
         type: string
         required: false
         default: "off"
+      post_merge_workflow:
+        description: >-
+          A workflow in the calling repository to dispatch after the
+          reconciler auto-merges a pull request, restoring the push-triggered
+          run that merge no longer raises (GitHub creates no workflow runs
+          from GITHUB_TOKEN-raised events). Empty — the default — dispatches
+          nothing. Three facts bind a consumer that sets it: the named
+          workflow must declare workflow_dispatch: or the dispatch fails;
+          the caller needs actions: write; and it fires only after an
+          auto-merge, never on a hand merge, which GitHub still runs
+          normally.
+        type: string
+        required: false
+        default: ""
 
 env:
   # A called workflow arrives without its repository. Keep this literal pin
@@ -114,6 +128,7 @@ jobs:
         with:
           bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
           auto_merge: ${{ inputs.auto_merge }}
+          post_merge_workflow: ${{ inputs.post_merge_workflow }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -124,6 +139,7 @@ jobs:
         with:
           bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
           auto_merge: ${{ inputs.auto_merge }}
+          post_merge_workflow: ${{ inputs.post_merge_workflow }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
