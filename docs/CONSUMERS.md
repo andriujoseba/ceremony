@@ -37,6 +37,94 @@ edits to this guide (#12).
     --description "Release flow and version/packaging work"
   ```
 
+## On-board a fleet-worked repo
+
+The ordinary bootstrap paths below assume a human can land the first PR. A
+repo the fleet will work has an earlier gate: **its queue taxonomy must exist
+before the repo enters the fleet registry.** The taxonomy is normally created
+by a dispatch in a workflow that a builder still has to land, but that builder
+cannot claim the bootstrap issue until the queue labels exist. Resolve that
+bootstrap-order problem explicitly: the operator hand-creates the minimum
+set, the builder lands labels automation, the operator dispatches it, and only
+after verifying the full taxonomy adds the repo to `repos.txt`.
+
+The minimum hand-created set is `ready`, `release`, `claimed`, `blocked`,
+`epic`, and `state:needs-human`. Do not retype their colors or descriptions.
+Read the complete canonical rows from `core_label_rows()` at the same ceremony
+ref the new repo will pin, then use those rows for the hand-created labels:
+
+```bash
+repo=OWNER/REPO
+ceremony_ref=X.Y.Z # replace with the exact tag this repo will pin
+minimum='^(ready|release|claimed|blocked|epic|state:needs-human)$'
+
+gh api "/repos/heavy-duty/ceremony/contents/actions/labels-reconcile/labels-reconcile.sh?ref=${ceremony_ref}" \
+  --jq .content | base64 --decode |
+  awk -F '|' -v minimum="$minimum" '
+    /^core_label_rows\(\) \{/ { in_function = 1; next }
+    in_function && /^  cat <<.*EOF/ { in_rows = 1; next }
+    in_rows && /^EOF$/ { exit }
+    in_rows && $1 ~ minimum { print }
+  ' |
+  while IFS='|' read -r name color description; do
+    gh label create "$name" --repo "$repo" --color "$color" \
+      --description "$description" --force
+  done
+```
+
+`state:needs-human` belongs in a *minimum* set for a reason: it is the one
+state label the PR author sets by hand at handoff, and it is exactly what the
+operator notifier sweeps for. Without it, the first PR can become mergeable
+without telling anybody that the human now owns the move.
+
+With those six labels present, a builder can claim and land the bootstrap
+below, including both labels callers and `.github/labels.conf`. Immediately
+after that PR merges, dispatch the sweep caller with taxonomy bootstrapping
+enabled and wait for that exact run to succeed:
+
+```bash
+dispatched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh workflow run labels-sweep.yml --repo "$repo" -f bootstrap=yes
+run_id=
+for attempt in {1..12}; do
+  run_id="$(gh run list --repo "$repo" --workflow labels-sweep.yml \
+    --event workflow_dispatch --created ">=${dispatched_at}" --limit 1 \
+    --json databaseId --jq '.[0].databaseId')"
+  [ -z "$run_id" ] || break
+  sleep 5
+done
+test -n "$run_id" || { echo "labels bootstrap run did not appear" >&2; false; }
+gh run watch "$run_id" --repo "$repo" --exit-status
+```
+
+Do not treat six familiar-looking labels as proof that the dispatch ran.
+Verify the repository contains every core row declared at the pinned ref:
+
+```bash
+expected="$(gh api "/repos/heavy-duty/ceremony/contents/actions/labels-reconcile/labels-reconcile.sh?ref=${ceremony_ref}" \
+  --jq .content | base64 --decode |
+  awk -F '|' '
+    /^core_label_rows\(\) \{/ { in_function = 1; next }
+    in_function && /^  cat <<.*EOF/ { in_rows = 1; next }
+    in_rows && /^EOF$/ { exit }
+    in_rows { print $1 }
+  ' | sort)"
+actual="$(gh label list --repo "$repo" --limit 1000 --json name \
+  --jq '.[].name' | sort)"
+missing="$(comm -23 <(printf '%s\n' "$expected") <(printf '%s\n' "$actual"))"
+test -z "$missing" || { printf 'missing core labels:\n%s\n' "$missing" >&2; false; }
+```
+
+The first bootstrap dispatch also removes GitHub's six retired defaults:
+`duplicate`, `invalid`, `question`, `wontfix`, `help wanted`, and
+`good first issue`. That deletion is expected; `question` is a discussion in
+this flow, and the other five are likewise outside the shared taxonomy.
+
+Only after the successful run and the full-taxonomy comparison may the
+operator add the repository to the fleet's `repos.txt`. Pointing the fleet at
+it earlier turns a missing label from a setup omission into a partially
+mutated claim that the builder cannot repair.
+
 ## Bootstrap a new repo
 
 The greenfield path (incubator's, #16) — the repo never owns a copy of
