@@ -46,6 +46,8 @@ usage: drill/rehearsal.sh --owner <login> --version <X.Y.Z>
                           --fork-ref <owner/repo[@ref]> --candidate-sha <sha>
                           [--repo-name <name>] [--candidate-ref <ref>]
                           [--private] [--out <file>] [--date <YYYY-MM-DD>]
+                          [--gap '<title>|<body>']…
+   or: drill/rehearsal.sh --amend-record <path> --gap '<title>|<body>'…
 
   --owner          where the disposable public scratch repo is created
   --version        the candidate's release version; the fixture arms X.Y.Z-dev
@@ -59,6 +61,14 @@ usage: drill/rehearsal.sh --owner <login> --version <X.Y.Z>
   --private        create a private repo; record links then resolve only for its owner
   --out            where the record is written (default: ./<version>-drill.md)
   --date           the ceremony's changelog stamp (default: today, UTC)
+  --gap            a coverage gap the record declares under `## Known gaps`,
+                   split at the FIRST `|`; repeatable, rendered in declaration
+                   order. A gap is coverage no probe drives at all — never a
+                   probe that ran and failed, which writes its own row
+  --amend-record   add gaps to an already committed record and re-render it,
+                   running no probe, creating no repository and making no
+                   network call. It refuses a record that does not already
+                   round-trip, and one that is not the instrument's emission
 
 Run it from a checkout of the candidate: the ceremony probe assembles its
 changelog section with the candidate's own bin/changelog-assemble.
@@ -71,9 +81,117 @@ refuse() {
   exit 1
 }
 
+# The declared gaps, `title<TAB>body` per element, in declaration order
+# (#484 D6). Validated as each one is parsed, which is BEFORE the first remote
+# read and long before the scratch repo: a refusal that fired after the repo
+# existed would have burned a scratch name to reject a typo.
+gap_specs=()
+
+gap_add() { # <'title|body'> — every D6 refusal, each naming which gap defeated it
+  local spec="${1-}" title body n=$((${#gap_specs[@]} + 1)) seen
+  case "$spec" in
+    *'|'*) ;;
+    *) refuse "--gap #$n ('$spec') has no '|': a gap is '<title>|<body>', split at the first '|'." ;;
+  esac
+  # The FIRST `|`, so a body may carry one and a title may not. Titles are
+  # short labels and that asymmetry is free.
+  title="${spec%%|*}"
+  body="${spec#*|}"
+  [ -n "$title" ] ||
+    refuse "--gap #$n ('$spec') has an empty title. A gap is '<title>|<body>' and both halves are required."
+  [ -n "$body" ] ||
+    refuse "--gap #$n ('$spec') has an empty body. A gap is '<title>|<body>' and both halves are required."
+  # A gap travels as a TSV row and is re-rendered verbatim, so a TAB or a
+  # newline would break the row, and surrounding whitespace would not survive
+  # a re-render — each is refused here rather than discovered at the round
+  # trip on a record nobody edited.
+  case "$title$body" in
+    *$'\t'*)
+      refuse "--gap #$n ('$title') carries a TAB. A gap travels as a TSV row, so a TAB would break it."
+      ;;
+  esac
+  case "$title$body" in
+    *$'\n'*)
+      refuse "--gap #$n ('$title') carries a newline. A gap is rendered as ONE line, verbatim and never re-wrapped (#484 D5)."
+      ;;
+  esac
+  case "$title" in
+    ' '* | *' ')
+      refuse "--gap #$n ('$title') has leading or trailing whitespace in its title, which would not survive a re-render."
+      ;;
+  esac
+  case "$body" in
+    ' '* | *' ')
+      refuse "--gap #$n ('$title') has leading or trailing whitespace in its body, which would not survive a re-render."
+      ;;
+  esac
+  for seen in ${gap_specs[@]+"${gap_specs[@]}"}; do
+    [ "${seen%%$'\t'*}" != "$title" ] ||
+      refuse "--gap #$n declares the title '$title', which an earlier --gap already declared. Two gaps may not share a title."
+  done
+  gap_specs+=("$title"$'\t'"$body")
+}
+
+# amend_run <record-path> — D7's whole mode. It parses the committed record,
+# appends the declared gaps, re-renders, and writes it back.
+#
+# IT REFUSES TO LAUNDER. Before it writes anything it requires that the file
+# is `record_class`'s `emission` AND that `record_roundtrip` already passes on
+# it as committed. A record that does not round-trip is stale or hand-touched,
+# and the unblock for that is re-running the instrument —
+# .github/scripts/record-roundtrip.sh's own refusal text says so. This mode
+# must never become the path that makes such a file green.
+#
+# The re-rendered record is graded BEFORE it replaces the committed one,
+# never after: a re-render that failed its own grading must not be what is
+# left on disk. Every refusal below therefore leaves the record byte-unchanged.
+amend_run() {
+  local file="${1:?}" work title seen
+  [ -n "${gap_specs[*]:-}" ] ||
+    refuse "--amend-record '$file' needs at least one --gap: the mode exists to add a declared gap to a record that already round-trips, and with none to add it would rewrite the file to no purpose."
+  [ -f "$file" ] || refuse "--amend-record '$file': no such file."
+  record_class "$file" || exit 1
+  if [ "$RECORD_CLASS" != emission ]; then
+    refuse "--amend-record '$file' is not the instrument's emission — $RECORD_CLASS_WHY. Only the rehearsal shape has a renderer to re-run, so there is nothing here to amend; the file is unchanged."
+  fi
+  if ! record_roundtrip "$file" >/dev/null; then
+    refuse "--amend-record '$file' does not round-trip as committed, so it is stale or hand-touched. The unblock is to RE-RUN the instrument and commit what it writes, exactly as .github/scripts/record-roundtrip.sh says — never this mode, which would only make a record that is not the instrument's emission look like one. The file is unchanged."
+  fi
+  work="$(mktemp -d)" || refuse "--amend-record: could not create a work directory."
+  # shellcheck disable=SC2064 # $work is expanded now on purpose: the trap must
+  # name the directory this call made, not whatever the variable holds later
+  trap "rm -rf '$work'" EXIT
+  record_parse "$file" "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv" \
+    "$work/gaps.tsv" ||
+    refuse "--amend-record '$file': the parse refused it after the round trip passed, which should not happen. The file is unchanged."
+  # A title the record already declares is the same duplicate D6 refuses
+  # between two --gap arguments, one run later.
+  while IFS=$'\t' read -r title _; do
+    [ -n "${title:-}" ] || continue
+    for seen in "${gap_specs[@]}"; do
+      [ "${seen%%$'\t'*}" != "$title" ] ||
+        refuse "--gap declares the title '$title', which $file already declares. Two gaps may not share a title; the file is unchanged."
+    done
+  done <"$work/gaps.tsv"
+  printf '%s\n' "${gap_specs[@]}" >>"$work/gaps.tsv"
+  record_render "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv" \
+    "$work/gaps.tsv" >"$work/amended.md" ||
+    refuse "--amend-record '$file': the re-render refused the amended inputs. The file is unchanged."
+  record_check "$work/amended.md" ||
+    refuse "--amend-record '$file': the amended record fails the shape check. The file is unchanged."
+  record_roundtrip "$work/amended.md" >/dev/null ||
+    refuse "--amend-record '$file': the amended record does not round-trip. The file is unchanged."
+  # Written through, never renamed: the record keeps its inode and its mode,
+  # and a reader holding it open sees the amendment rather than the old file.
+  cat "$work/amended.md" >"$file"
+  printf 'drill: %s amended — %s declared gap(s) added; the record was re-rendered from its own stated measurements and round-trips.\n' \
+    "$file" "${#gap_specs[@]}" >&2
+}
+
 owner=""
 version=""
 fork_spec=""
+amend_record=""
 candidate_sha=""
 repo_name=""
 candidate_ref=""
@@ -91,11 +209,29 @@ while [ $# -gt 0 ]; do
     --private) private=1 ;;
     --out) [ $# -ge 2 ] || usage; out="$2"; shift ;;
     --date) [ $# -ge 2 ] || usage; stamp="$2"; shift ;;
+    --gap) [ $# -ge 2 ] || usage; gap_add "$2"; shift ;;
+    --amend-record) [ $# -ge 2 ] || usage; amend_record="$2"; shift ;;
     -h | --help) usage ;;
     *) usage ;;
   esac
   shift
 done
+
+# ---- --amend-record: a gap added after the run, by re-rendering (#484 D7) --
+# Without this the section is nearly unusable: a reviewer asking for a
+# disclosure mid-panel would otherwise cost a full eight-probe rehearsal
+# against a fresh scratch repo, which is the cost that made the second-document
+# option unacceptable on #482. It is a MODE of this script rather than a second
+# entry point because `usage`, `refuse` and the argument parser above are
+# already here, and a second file would duplicate all three to gain nothing.
+#
+# It runs before every check the rehearsal owes — the required arguments, the
+# tool probe, the fixture probe — because it needs none of them: no probe, no
+# scratch repo, no network.
+if [ -n "$amend_record" ]; then
+  amend_run "$amend_record"
+  exit 0
+fi
 
 [ -n "$owner" ] || usage
 [ -n "$version" ] || usage
@@ -146,12 +282,17 @@ DRILL_WORK="$(mktemp -d)"
 DRILL_STAGE="$DRILL_WORK/stage"
 DRILL_PROBES="$DRILL_WORK/probes.tsv"
 DRILL_SETUP="$DRILL_WORK/setup.tsv"
+DRILL_GAPS="$DRILL_WORK/gaps.tsv"
 out="${out:-$PWD/$version-drill.md}"
 : >"$DRILL_PROBES"
 : >"$DRILL_SETUP"
+# The gaps were declared and validated at the CLI, before anything remote
+# happened; this is only where they land for the render (#484 D6).
+: >"$DRILL_GAPS"
+[ -z "${gap_specs[*]:-}" ] || printf '%s\n' "${gap_specs[@]}" >"$DRILL_GAPS"
 export DRILL_ROOT DRILL_V1 DRILL_V2 DRILL_V3 DRILL_V4 DRILL_RC1 DRILL_RC2
 export DRILL_DATE DRILL_REPO DRILL_WORK DRILL_STAGE
-export DRILL_PROBES DRILL_SETUP
+export DRILL_PROBES DRILL_SETUP DRILL_GAPS
 trap 'rm -rf "$DRILL_WORK"' EXIT
 
 retry_command_for_attempt() { # <attempt> <fork-ref> — print a complete invocation
@@ -408,7 +549,7 @@ ctx="$DRILL_WORK/ctx.tsv"
   printf 'stamp\t%s\n' "$DRILL_DATE"
 } >"$ctx"
 
-record_render "$ctx" "$DRILL_PROBES" "$DRILL_SETUP" >"$out"
+record_render "$ctx" "$DRILL_PROBES" "$DRILL_SETUP" "$DRILL_GAPS" >"$out"
 record_check "$out"
 
 failed="$(awk -F'\t' '$5 == "FAIL"' "$DRILL_PROBES" | wc -l | tr -d ' ')"
