@@ -2763,8 +2763,14 @@ expect "...and runs to the end of the loop" 1 \
   "$(grep -c '^labels: reconciled\.$' <<<"$am_sweep")"
 expect "...attempting the refused merge exactly once" 1 \
   "$(wc -l <"$AM/sweep-rc1-merges-920" | tr -d ' ')"
+# By MARKER and not by "this PR received no comment at all", which is what
+# this line used to assert (#479). The claim is and always was about the
+# auto-merge SUCCESS comment; the sweep also marks the human request it makes
+# on the way to state:needs-human, and a file-existence test reads that mark as
+# a success comment. am_posts above has counted by marker since #460 — this is
+# the same count, spelled for the sweep probe's recording.
 expect "...posting no success comment for it" no \
-  "$([ -e "$AM/sweep-rc1-posted-920" ] && echo yes || echo no)"
+  "$(grep -qF "$AUTO_MERGED_MARKER" "$AM/sweep-rc1-posted-920" 2>/dev/null && echo yes || echo no)"
 expect "...logging its reason on one line, naming that PR" 1 \
   "$(grep -c '^labels: #920: auto-merge refused: failed to merge: Base branch was modified. Review and try the merge again.$' \
     <<<"$am_sweep")"

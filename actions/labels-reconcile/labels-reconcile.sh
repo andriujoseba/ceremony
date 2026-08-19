@@ -100,6 +100,38 @@ BOOTSTRAP="${BOOTSTRAP-no}"
 # second time and there is no repeat to suppress. It is here so a human, or a
 # later machine, can find every auto-merge this toggle performed.
 AUTO_MERGED_MARKER='<!-- ceremony:auto-merged -->'
+# The mark on a human review request THIS machine made (#479). The reconciler
+# asks the human when the round passes and could never take that ask back,
+# because `requested "$HUMAN"` cannot tell its own request from a maintainer's
+# — and the two mean opposite things to round_state, where a maintainer
+# pulling a PR to themselves early is a deliberate act that outranks an
+# unfinished round. A stale self-made request therefore read as that
+# deliberate claim forever. The mark is the smallest thing that separates
+# them, and it is what makes retraction safe: without it every retraction
+# would also clear a maintainer's deliberate early claim, which is the case
+# the precedence exists to protect.
+#
+# A comment marker and not a label: the taxonomy rejected markers-as-labels
+# for other purposes, and this is the shape the ruling, attention and
+# auto-merge markers already use (#479 D2).
+HUMAN_REQUEST_MARKER='<!-- ceremony:human-requested -->'
+# ...and the mark on its withdrawal. Two markers and not one, because the
+# question is about the request standing NOW: after a retraction the machine's
+# ask is gone, and a maintainer who asks next must not inherit the first
+# mark's answer. The newest of the two wins, which is what makes the pair a
+# state rather than a history.
+HUMAN_REQUEST_WITHDRAWN_MARKER='<!-- ceremony:human-request-withdrawn -->'
+# What those marks say about the request standing on THIS PR: MACHINE when the
+# newest mark is this machine's own request, NONE otherwise. Initialized here
+# for the reason LABELS is: the script runs under `set -u` even when sourced,
+# and the pure fixtures call round_state without setting it.
+#
+# NONE is the safe default in BOTH directions, which is why one default
+# serves. Nothing is withdrawn on it — an unread fact never takes a
+# maintainer's deliberate act away — and round_state's MISSING branch reads it
+# as the maintainer's request it has always read, so an unread fact invents no
+# verdict either.
+HUMAN_REQUEST_MARK=NONE
 # The workflow to wake after a merge this sweep performed (#461). Empty means
 # dispatch nothing, which is every consumer until one opts in, and empty is the
 # default at all three boundaries the way `auto_merge`'s `off` is. The name is
@@ -462,6 +494,39 @@ human_request_needed() { # 0 when needs-human requires a FRESH human request
   return 0
 }
 
+human_request_mark() { # comment first-lines on stdin → MACHINE | NONE (#479 D1)
+  # Pure, so the fixtures drive the parse rather than the API around it — the
+  # split rerun_owed_named_head and lib/attention.sh's attention_newest_flag
+  # both make, and for the same reason: the read either worked or it did not,
+  # and that is the caller's problem.
+  #
+  # Newest wins, which is the order the comments API returns: a request and a
+  # withdrawal are one running state, not a tally, so the last thing this
+  # machine said about its own ask is the whole answer. A withdrawal newer
+  # than the request is why a maintainer asking after a retraction is not
+  # answered by the retracted request's mark.
+  #
+  # Matched as the comment's FIRST LINE, which is where this file's other
+  # markers are written. There is no author to filter by, unlike the
+  # rerun-owed evidence read: the writer is the sweep's own token, and a
+  # consumer's may be a bot or a PAT, so a login test would be a guess about
+  # someone else's caller. The residual is the one reconcile_handoff_takeback's
+  # marker read already carries — a comment whose first line is a verbatim
+  # paste of the marker is read as this machine's — and it is bounded by which
+  # way each forgery fails: a forged request-mark costs one maintainer request,
+  # withdrawn visibly and re-requestable, while a forged withdrawal leaves a
+  # machine request standing, which is exactly the behaviour before this
+  # existed.
+  local line mark=NONE
+  while IFS= read -r line; do
+    case "$line" in
+      "$HUMAN_REQUEST_MARKER"*) mark=MACHINE ;;
+      "$HUMAN_REQUEST_WITHDRAWN_MARKER"*) mark=NONE ;;
+    esac
+  done
+  printf '%s\n' "$mark"
+}
+
 rerun_owed_state() { # → STANDS | CLEARED | ABSENT — what `rerun-owed` says about THIS head
   # The label a builder sets when the head is red on a rerun no identity in the
   # fleet can start (#423). It is not a blocker: every blocker:* names work the
@@ -809,6 +874,14 @@ round_state() { # → the state the REVIEW ROUND alone implies; knows no branch 
     # No verdict at all from some bot, and nothing staled. An explicit human
     # request still outranks an unfinished round — a maintainer pulling a PR
     # to themselves early is a deliberate act, and the original precedence.
+    # THE MAINTAINER'S request, and only that one (#479 D4): this machine also
+    # asks the human, when the round passes, and until it began marking its own
+    # ask the two were one bit. A request made at a head whose round has since
+    # come apart is this machine's own echo, and reading it as the deliberate
+    # claim says a human may merge a head some required reviewer still owes a
+    # verdict on — the same lie the paragraph below names, wearing a different
+    # label. An unmarked request is a maintainer's and outranks as it always
+    # did; so is an unread one, which is why NONE is the default.
     #
     # Otherwise it is the AGENT's ball, not the bots'. The loop above already
     # returned for every live bot request, so reaching here with a MISSING
@@ -817,7 +890,10 @@ round_state() { # → the state the REVIEW ROUND alone implies; knows no branch 
     # forgotten PR read "waiting on the reviewers" for the 48h it took the
     # stale sweep to notice. blocker:unrequested says why.
     *MISSING*)
-      if requested "$HUMAN"; then echo state:needs-human; return; fi
+      if requested "$HUMAN" && [ "${HUMAN_REQUEST_MARK:-NONE}" != MACHINE ]; then
+        echo state:needs-human
+        return
+      fi
       echo state:addressing; return ;;
   esac
   # an explicit human request outranks the remaining bot outcomes — it is the
@@ -1011,6 +1087,80 @@ again — the same head with the same blockers never does.*" >/dev/null; then
     # only this log line would have lied about it.
     log "#$n: WARNING: handoff taken back ($joined at $HEAD_SHA) — the comment failed to post; the next sweep retries"
   fi
+}
+
+reconcile_human_request() { # $1 PR, $2 this pass's desired state, $3 did this pass ask the human
+  # The two halves of #479's mark, together because they are one contract: the
+  # machine records the ask it makes, and takes back only what it recorded.
+  # They are mutually exclusive — asking happens on state:needs-human and
+  # withdrawing happens off it — so the early return below is the whole of the
+  # branching.
+  local n="$1" desired="$2" asked="$3"
+
+  if [ "$asked" = true ]; then
+    # A failed post leaves the request UNMARKED, which reads as a maintainer's
+    # and is never withdrawn: the behaviour before this existed, and the
+    # direction an unrecorded write has to fail in. It cannot be retried — the
+    # request now stands, so human_request_needed suppresses the next pass's
+    # ask and there is no second act to hang a mark on — which is why the
+    # warning says what the PR is left carrying rather than promising a retry.
+    if run gh issue comment "$n" -R "$REPO" --body "$HUMAN_REQUEST_MARKER
+🧑 Requested \`$HUMAN\`'s review — the round passed at \`$HEAD_SHA\`.
+
+This ask is **the sweep's own, and provisional**: if the round stops passing
+here — a push stales the approvals, a required verdict goes missing, a blocker
+comes up — the same sweep withdraws it, and says so. A request a *maintainer*
+makes carries no such mark: it is a deliberate act, it outranks an unfinished
+round, and this machine never withdraws it (heavy-duty/ceremony#479)." >/dev/null; then
+      log "#$n: marked the $HUMAN request as this machine's"
+    else
+      log "#$n: WARNING: requested $HUMAN but the mark failed to post — that request now reads as a maintainer's and will never be withdrawn"
+    fi
+    return 0
+  fi
+
+  # D3, written as a standing condition and not as an edge. "The transition
+  # where desired moves away from state:needs-human" is what this catches on
+  # the first sweep after the round stops passing, which is the criterion; but
+  # a pass whose DELETE failed, or whose label edit was skipped for a missing
+  # taxonomy row, has already spent the edge, and an edge-shaped test would
+  # never look again. The gate closes by itself, `requested` going false the
+  # moment the withdrawal lands.
+  [ "$desired" != state:needs-human ] || return 0
+  requested "$HUMAN" || return 0
+  # D3's other half: only its OWN. An unmarked request — a maintainer's, or one
+  # whose mark could not be read this pass — is left exactly where it is.
+  [ "${HUMAN_REQUEST_MARK:-NONE}" = MACHINE ] || return 0
+
+  # D5: idempotent and never fatal. The gate above means this only ever fires
+  # on a request that is standing, so the no-op case is not reached in practice
+  # — GitHub answers a DELETE for a reviewer who is not requested with a
+  # success and no change, and nothing here depends on which. A 4xx logs and
+  # the sweep continues, the contract every other write in this file has.
+  if ! run gh api --method DELETE "repos/$REPO/pulls/$n/requested_reviewers" \
+    -f "reviewers[]=$HUMAN" --silent; then
+    log "#$n: WARNING: could not withdraw this machine's $HUMAN request — the mark stands, so the next sweep retries"
+    return 0
+  fi
+  log "#$n: withdrew this machine's $HUMAN request (state is $desired)"
+
+  # The withdrawal's own mark, after the DELETE and conditional on it. The
+  # order is the rule: a mark written before a DELETE that then failed would
+  # say the machine's ask is gone while it stands, and D4's narrowing would go
+  # back to reading that ask as a maintainer's — the defect, with the fix's own
+  # bookkeeping vouching for it. This way a failed DELETE leaves both facts
+  # unchanged and the next sweep retries.
+  if ! run gh issue comment "$n" -R "$REPO" --body "$HUMAN_REQUEST_WITHDRAWN_MARKER
+🧑 Withdrew \`$HUMAN\`'s review request — this sweep asked for it, and the round
+that justified it no longer passes. The state at \`$HEAD_SHA\` is \`$desired\`.
+
+Nothing is owed to the human here yet; the machine asks again by itself the
+next time the round passes. Only the sweep's **own** request is withdrawn — a
+maintainer who asks for this PR keeps it through every push
+(heavy-duty/ceremony#479)." >/dev/null; then
+    log "#$n: WARNING: withdrew this machine's $HUMAN request but the withdrawal mark failed to post — a later maintainer request on this PR reads as this machine's until one does"
+  fi
+  return 0
 }
 
 auto_merge_confirm() { # $1 = PR number → the refusal reason, empty when confirmed (#460 D3)
@@ -1400,6 +1550,19 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   # should not have to be saved by a guard from believing itself.
   reconcile_handoff_takeback "$n" "$handoff_cleared"
 
+  # ---- the human request this machine owns (#479) ----------------------
+  # Here for the same two reasons, and one of its own. Both halves post a
+  # comment, so both must sit after the `last_activity` read or the sweep would
+  # read its own mark as the PR's sign of life and hold `stale` off. And the
+  # withdrawal is a request-level act, not a label one, so it belongs after the
+  # converge edit rather than inside it.
+  #
+  # The pass's OWN answers are what it is given — `$desired` and whether this
+  # pass asked — never a second read: `human_request_needed` is evaluated
+  # exactly once per PR (#460 D2), and a re-ask here could disagree with the
+  # one that produced the request.
+  reconcile_human_request "$n" "$desired" "$human_requested"
+
   # ---- the ruling invariants (#52): the bare-flag check + the 7-day nudge --
   # The stale EXEMPTION above is #51's; these are the sweep halves that ride
   # the same real-activity computation (lib/ruling.sh, shared with the issue
@@ -1549,6 +1712,24 @@ main() {
           # an API to look at. Both leave the label standing.
           [ -n "$RERUN_OWED_HEAD" ] ||
             log "#$n: rerun-owed evidence names no head — its moved-head test not judged this pass"
+        fi
+      fi
+      # Whose request is standing, when one is (#479). Behind `requested`, so a
+      # PR the human is not requested on pays nothing — the mark answers one
+      # question, and with no request standing there is nothing to ask about.
+      # Deliberately NOT behind a label or a state: the request outlives every
+      # state the PR passes through, which is the whole defect.
+      HUMAN_REQUEST_MARK=NONE
+      if requested "$HUMAN"; then
+        # Read whole, then parsed — the shape lib/attention.sh uses — so an
+        # unreadable list and a request nobody marked are told apart by the
+        # read's own status. Both leave the request standing as a maintainer's.
+        if ! HUMAN_REQUEST_MARKS="$(gh api --paginate \
+          "repos/$REPO/issues/$n/comments" \
+          --jq '.[] | .body | split("\n")[0] | sub("\r$"; "")' 2>/dev/null)"; then
+          log "#$n: human-request marks unreadable — the standing $HUMAN request read as a maintainer's this pass"
+        else
+          HUMAN_REQUEST_MARK="$(human_request_mark <<<"$HUMAN_REQUEST_MARKS")"
         fi
       fi
       reconcile_pr "$n"
