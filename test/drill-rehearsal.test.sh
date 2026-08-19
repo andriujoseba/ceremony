@@ -2420,10 +2420,15 @@ check "a record declaring neither shape is graded as an emission" 0 \
     record_class "$2"; printf "%s: %s\n" "$RECORD_CLASS" "$RECORD_CLASS_WHY"
     [ "$RECORD_CLASS" = emission ]' _ "$ROOT" "$ROOT/drills/0.1.0.md"
 # Appended rather than inserted, so the case isolates what it is about: the
-# heading lands after the conclusion, where nothing is parsed, so the parse
-# still succeeds and the failure is the round trip's rather than a displaced
-# line's. A record that declared both AND broke the parse would fail for two
-# reasons and measure neither.
+# heading lands past every section the record has, rather than displacing a
+# line some field lookup depends on. A record that declared both AND broke a
+# field's parse would fail for two reasons and measure neither.
+#
+# #484 moved WHERE the appended heading lands: the conclusion is no longer
+# last, so it falls inside `## Known gaps` and the parse refuses it by line
+# number instead of the re-render reporting it as a difference. The assertion
+# is unchanged and so is what it measures — a record declaring both shapes is
+# graded as an emission and fails.
 {
   cat "$FIX"
   printf '\n## Scope ruling — doors unchanged, no disposable-repo rehearsal\n'
@@ -2577,8 +2582,10 @@ check "trailing whitespace in a body is refused" 1 "leading or trailing whitespa
 check "two gaps sharing a title are refused" 1 "which an earlier --gap already declared" \
   gap_refusal 'same title|one' 'same title|two'
 # Each refusal names WHICH gap defeated it, so a run declaring several does not
-# leave its author grepping. The duplicate is #2 and the run must say so.
-check "the refusal names which gap defeated it" 1 "--gap #2" \
+# leave its author grepping. Three gaps here and the duplicate is the THIRD:
+# the offender is the second `same`, not the first, because the first is what
+# it collides with. A refusal naming #2 would be pointing at the innocent one.
+check "the refusal names which gap defeated it" 1 "--gap #3" \
   gap_refusal 'first|one' 'same|two' 'same|three'
 check "a body may carry the separator; the split is at the FIRST one" 1 "--gap #2" \
   gap_refusal 'a title|a body | with a pipe in it' 'a title|and a duplicate'

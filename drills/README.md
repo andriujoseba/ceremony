@@ -163,10 +163,10 @@ renderer's bytes**: what is written back is `record_render`'s output from the
 record's own stated measurements, which is why the round trip still passes on
 it and why a release criterion may be written against it.
 
-**The honest cost, stated here rather than discovered later: a hand-added gap
-entry survives the round trip.** The parse reads gap lines back out and the
-render writes them again verbatim, so the guard cannot tell a declared gap
-from a typed one. This is the same category as the measurements below — it is
+**The honest cost, stated here rather than discovered later:
+a hand-added gap entry survives the round trip.** The parse reads gap lines
+back out and the render writes them again verbatim, so the guard cannot tell
+a declared gap from a typed one. This is the same category as the measurements below — it is
 *data*, and #373 D4 already priced the only cure (committing the render
 inputs beside the record) and rejected it. It is accepted for one further
 reason: **a gap entry is monotone in the safe direction.** It only ever
