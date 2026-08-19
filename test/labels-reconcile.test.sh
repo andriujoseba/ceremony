@@ -3555,6 +3555,22 @@ expect "...and re-reads no requested_reviewers of its own" 1 \
   "$(grep -c 'requested_reviewers' <<<"$hr_body")"
 expect "...and re-evaluates no human_request_needed" no \
   "$(grep -q 'human_request_needed' <<<"$hr_body" && echo yes || echo no)"
+
+# -- DRY_RUN: a rehearsal sees both acts on the board ----------------------
+# The two marks redirect run()'s stdout, which spends their own narration —
+# the whole comment family's treatment (#411's reading of it). What must
+# survive is the ACT each one records, so this asserts the request and the
+# withdrawal narrate, not the bookkeeping about them.
+hr_dry="$(DRY_RUN=1 hr_probe 950 stale "$HUMAN" machine)"
+expect "a rehearsal narrates the withdrawal it would perform" yes \
+  "$(grep -qF "DRY_RUN: gh api --method DELETE repos/owner/repo/pulls/950/requested_reviewers" \
+    <<<"$hr_dry" && echo yes || echo no)"
+hr_dry_ask="$(DRY_RUN=1 hr_probe 951 approve "" none)"
+expect "...and the request it would make" yes \
+  "$(grep -qF "DRY_RUN: gh api repos/owner/repo/pulls/951/requested_reviewers" \
+    <<<"$hr_dry_ask" && echo yes || echo no)"
+expect "...performing neither" 0 \
+  "$(( $(hr_calls 950 'requested_reviewers') + $(hr_calls 951 'requested_reviewers') ))"
 # The caller half: the act is handed the pass's own answers, never a re-ask.
 expect "reconcile_pr passes desired and the recorded ask into the act" yes \
   "$(grep -q "reconcile_human_request \"\\\$n\" \"\\\$desired\" \"\\\$human_requested\"" \

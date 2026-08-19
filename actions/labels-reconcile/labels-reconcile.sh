@@ -1108,6 +1108,13 @@ reconcile_human_request() { # $1 PR, $2 this pass's desired state, $3 did this p
   # branching.
   local n="$1" desired="$2" asked="$3"
 
+  # Both comments below redirect run()'s stdout, which spends their own
+  # `DRY_RUN:` narration — the treatment every other `gh issue comment` in this
+  # family gets, and safe here for a reason the auto-merge site does not have:
+  # each mark RECORDS an act that is itself narrated. The request is written by
+  # an unredirected `run` in reconcile_pr, the withdrawal by one four lines
+  # below, so a rehearsal sees every act on the board and loses only the
+  # bookkeeping about it.
   if [ "$asked" = true ]; then
     # A failed post leaves the request UNMARKED, which reads as a maintainer's
     # and is never withdrawn: the behaviour before this existed, and the
