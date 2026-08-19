@@ -3230,6 +3230,33 @@ HUMAN_REQUEST_MARK=""
 expect "an unread mark reads as the maintainer's" state:needs-human "$(decide_state)"
 HUMAN_REQUEST_MARK=NONE
 
+# D4 is graded on round_state DIRECTLY, and it has to be. decide_state reaches
+# the same answer above through the blockers clause — blocker:unrequested now
+# fires on this head, and any blocker disqualifies needs-human — so a
+# decide_state fixture alone is satisfied by the blockers() half and would keep
+# passing with D4 reverted. The two halves are separate rules about the same
+# bit, and each is pinned where it is decided.
+HUMAN_REQUEST_MARK=MACHINE
+expect "the round alone no longer reads a machine request as a claim" \
+  state:addressing "$(round_state)"
+HUMAN_REQUEST_MARK=NONE
+expect "...while a maintainer's still outranks the unfinished round" \
+  state:needs-human "$(round_state)"
+
+# ...and the head where nothing else can stand in for it: checks still running.
+# blockers() writes nothing on a PENDING head — the ask is not permitted yet,
+# so blocker:unrequested is withheld — which leaves decide_state carrying
+# round_state's answer alone.
+CHECKS=PENDING
+HUMAN_REQUEST_MARK=MACHINE
+expect "a pending head with a verdict missing is the builder's, not the human's" \
+  state:addressing "$(decide_state)"
+expect "...and no blocker is doing that work" "" "$(blockers)"
+HUMAN_REQUEST_MARK=NONE
+expect "...while the maintainer's claim survives a pending head" \
+  state:needs-human "$(decide_state)"
+CHECKS=SUCCESS
+
 # -- the regression guard: narrowing MISSING must not widen STALE -----------
 # The mixed round 0.7.4 already handles — one head-current approval, one
 # approval staled by a push — is *STALE*, which is checked BEFORE *MISSING* and
@@ -3330,6 +3357,15 @@ hr_probe() { # $1 PR, $2 round, $3 requested logins, $4 marks: none|machine|with
               "$(rev "$BOT1" APPROVED hrhead "" "$at")" \
               "$(rev "$BOT2" APPROVED hrhead "" "$at")" \
               "$(rev "$BOT3" APPROVED hrhead "" "$at")" | jq -r "${jqexpr:-.}" ;;
+            # step 2: the push. Every approval covers an older head, so
+            # round_state answers *STALE* — above the branch #479 narrows, and
+            # without consulting any request at all. This is the round that
+            # reaches the withdrawal's own gate, `desired` having moved off
+            # state:needs-human for a reason that is not the mark.
+            stale) reviews \
+              "$(rev "$BOT1" APPROVED hrold "" "$at")" \
+              "$(rev "$BOT2" APPROVED hrold "" "$at")" \
+              "$(rev "$BOT3" APPROVED hrold "" "$at")" | jq -r "${jqexpr:-.}" ;;
             *) printf '[]\n' | jq -r "${jqexpr:-.}" ;;
           esac ;;
         */issues/*/comments)
@@ -3420,6 +3456,33 @@ expect "...with no unrequested blocker against it" no \
   "$(grep -q 'blocker:unrequested' "$HR/edits-942" && echo yes || echo no)"
 expect "...and logging no withdrawal at all" no \
   "$(grep -q '#942: withdrew' <<<"$hr_keep" && echo yes || echo no)"
+
+# -- the push, which is where the withdrawal's own gate is graded -----------
+# 942 above cannot grade that gate: its round leaves `desired` on
+# state:needs-human, so the withdrawal returns at its FIRST condition and the
+# mark is never consulted — a silent case satisfied by a step that never ran.
+# These two are the same push-staled round, differing in the mark alone, and
+# they are what a gate-removing mutation reds.
+hr_push_keep_rc=0
+hr_push_keep="$(hr_probe 948 stale "$HUMAN" none)" || hr_push_keep_rc=$?
+expect "the push-staled sweep over a maintainer's request exits 0" 0 "$hr_push_keep_rc"
+expect "...moving the board to the builder, the round having come apart" yes \
+  "$(grep -q 'state:addressing' "$HR/edits-948" && echo yes || echo no)"
+expect "...and withdrawing nothing, the request being none of its own" 0 \
+  "$(hr_calls 948 '--method DELETE')"
+expect "...and saying nothing about a withdrawal" no \
+  "$(grep -q '#948: withdrew' <<<"$hr_push_keep" && echo yes || echo no)"
+hr_push_wd_rc=0
+hr_push_wd="$(hr_probe 949 stale "$HUMAN" machine)" || hr_push_wd_rc=$?
+expect "the same push over this machine's own request exits 0" 0 "$hr_push_wd_rc"
+expect "...and moves the board to the builder alike" yes \
+  "$(grep -q 'state:addressing' "$HR/edits-949" && echo yes || echo no)"
+expect "...but withdraws the ask it made" 1 "$(hr_calls 949 '--method DELETE')"
+expect "...and marks the withdrawal" 1 \
+  "$(hr_marks 949 "$HUMAN_REQUEST_WITHDRAWN_MARKER")"
+expect "...logging it against the state the push produced" yes \
+  "$(grep -q "#949: withdrew this machine's $HUMAN request (state is state:addressing)" \
+    <<<"$hr_push_wd" && echo yes || echo no)"
 
 # -- a request this machine already withdrew is not withdrawn twice ---------
 hr_again_rc=0
