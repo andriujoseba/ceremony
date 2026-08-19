@@ -12,6 +12,80 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.5 — 2026-08-19
+
+### Added
+
+- Add independent release auto-merge and release-dispatch controls to the labels sweep (#468, #458, #464).
+- Allow opted-in consumers to dispatch a release pinned to its merged commit, while keeping non-opted-in callers dry (ceremony#467, ceremony#458).
+- A `post_merge_workflow` input on the labels sweep, empty by default. When set,
+  a successful auto-merge dispatches that workflow, restoring the
+  push-triggered run a `GITHUB_TOKEN` merge does not raise (#461, #458).
+- The dispatch fires only after a merge that landed, goes through `run()` so
+  `DRY_RUN=1` narrates it, and a failed dispatch is one log line naming the PR,
+  the workflow and the reason — never a failed pass (#461).
+- The auto-merge provenance comment now says when the same pass requested the
+  human's review moments earlier, and omits the line when it did not (#461,
+  #458).
+- The labels reconciler now performs the merge its `auto_merge` verdict
+  authorises: last in the pass, behind a confirmation read of the PR's state,
+  head and `release` label, pinned to the graded head, and through `run()` so
+  `DRY_RUN=1` narrates instead of merging (#460, #458).
+- A merge GitHub refuses is logged on one line and never retried in the pass; a
+  merge that lands posts one comment naming the head, the method, the toggle
+  that authorised it and the `decide_state` verdict that triggered it (#460).
+- Add an inert, opt-in auto-merge verdict with fleet-author and mergeability gates (#459, #458).
+
+### Changed
+
+- The consumer guide now gates fleet-worked repositories on a sourced minimum
+  label set, a verified taxonomy bootstrap, and only then `repos.txt`
+  registration, preventing partial claims on unprepared boards (#474, crew#459).
+- Doctrine now states *"only humans merge"* conditionally: nine sites across
+  `AGENTS.md`, `REVIEWER.md`, `LABELS.md`, `FLEET.md` and `CONTRIBUTING.md`
+  name `auto_merge`, its `off` default and that it is the consumer's setting
+  (#462, #458).
+- `FLEET.md` keeps its identity invariant and gains the workflow token's own
+  sentence beside it: no fleet identity gains a permission in this arc
+  (#462, #458).
+- `docs/CONSUMERS.md` gains the auto-merge operating manual — the two inputs,
+  the two caller permissions, the five refusals, the push-run cost and the
+  approval-latency note (#462, #458).
+- The ceremony fleet roster now admits both builder identities to service
+  builder-raised `rerun-owed` requests without changing either builder's
+  review panel (#452, #424, #435).
+- `docs/CONSUMERS.md` now states the board-shape tripwire set as the four
+  families `0.7.4` ships, `stalled` included, with its three-term firing
+  condition, its head-only placement, and how it reconciles with
+  `blocker:ci-red` and `rerun-owed` (#448, #440, #441).
+
+### Fixed
+
+- `labels-reconcile` now marks the human review request it makes itself, with
+  a hidden comment marker, and withdraws only what it marked once the round
+  stops passing. A maintainer's request carries no mark and is never withdrawn
+  (#479).
+- A machine-made request no longer reads as a maintainer's deliberate early
+  claim: a round with a required verdict missing lands on `state:addressing`
+  with `blocker:unrequested` instead of telling the human a head nobody
+  reviewed is theirs to merge (#479).
+- Map changes to the fleet doctrine file to the documentation scope (#476).
+- `labels-reconcile` now bootstraps the taxonomy only when the caller asks
+  for it. `bootstrap=no` was unobeyable: the gate read the event name, and
+  every trigger-woken sweep is a `workflow_dispatch` (#472, #466).
+- A ceremony pin bump that adds a core label no longer installs it on the
+  next board event. Dispatch the sweep caller, as `docs/CONSUMERS.md` says;
+  the scheduled sweep warns until you do (#472, #466).
+- `CONTRIBUTING.md`'s roster now agrees with `panel=`: the departed
+  `grok-bot-andresmgsl` row is gone, and the panel rule names no verdict
+  count — the required set is the review bench minus the PR's author, with
+  which rows are the bench made explicit so triage is not read into it
+  (#456).
+- `ci-rerun`'s fleet roster now names each identity once, in the order the
+  conf names it: `load_fleet` dedups on append, so a repo whose per-author
+  `panel[<login>]=` rows repeat its `panel=` reviewers reads a clean list in
+  the gate-1 refusal comment. Admission is unchanged (#453, #424).
+
 ## 0.7.4 — 2026-08-16
 
 ### Added
