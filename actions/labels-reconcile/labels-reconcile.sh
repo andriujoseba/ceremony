@@ -642,7 +642,14 @@ blockers() { # → the blocker:* labels this PR should carry, one per line
   # said "waiting on the bots" for the 48h it took `stale` to notice.
   # A draft is exempt (the bots ignore drafts by design), and so is an
   # explicit human request — a maintainer claiming a PR early is deliberate,
-  # not a dropped ball.
+  # not a dropped ball. THE MAINTAINER'S, and only that one (#479): the
+  # exemption's whole reason is the deliberate act, and this machine's own
+  # request is not one — it is an ask this sweep made when the round passed and
+  # has not yet taken back. Reading it as the deliberate claim suppresses the
+  # blocker on exactly the head the four-step sequence produces, where a
+  # required verdict is missing and nobody was asked for one. Same bit,
+  # same correction as round_state's MISSING branch, and the same safe default:
+  # unmarked or unread reads as the maintainer's and exempts as it always did.
   #
   # And so is a head whose checks have not answered yet (#236 D1). This is the
   # one blocker that names an act the author must PERFORM, so it is the one
@@ -663,7 +670,11 @@ blockers() { # → the blocker:* labels this PR should carry, one per line
   # UNREADABLE never arrives here: the caller skips the PR before deciding.
   local checks_permit_the_ask=false
   case "${CHECKS:-NONE}" in SUCCESS | NONE) checks_permit_the_ask=true ;; esac
-  if [ "$DRAFT" != true ] && [ "$checks_permit_the_ask" = true ] && ! requested "$HUMAN"; then
+  local human_claim=false
+  if requested "$HUMAN" && [ "${HUMAN_REQUEST_MARK:-NONE}" != MACHINE ]; then
+    human_claim=true
+  fi
+  if [ "$DRAFT" != true ] && [ "$checks_permit_the_ask" = true ] && [ "$human_claim" = false ]; then
     local b v owed=false any_requested=false
     for b in "${REQUIRED_BOTS[@]}"; do
       requested "$b" && any_requested=true

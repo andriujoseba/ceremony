@@ -3167,5 +3167,335 @@ expect "...and passes the recorded fact into the act" yes \
   "$(grep -q "reconcile_auto_merge \"\\\$n\" \"\\\$desired\" \"\\\$human_requested\"" \
     <<<"$am_pr_body" && echo yes || echo no)"
 
+# ---------------------------------------------------------------------------
+# #479 — the reconciler could not tell its own human request from a
+# maintainer's. It asks the human at the round's pass and never withdrew the
+# ask; from then on `requested "$HUMAN"` was true forever, and round_state read
+# that flag as the deliberate early claim a maintainer's request is. The four
+# steps below are all ordinary — pass at head A, push to B, re-request the
+# panel, one bot's request dropped — and they ended with the board saying a
+# human could merge a head some required reviewer still owed a verdict on.
+#
+# The mark is what separates the two requests, so every fixture here is a PAIR
+# on that one input: the same round, the same standing request, differing only
+# in whose ask it is.
+# ---------------------------------------------------------------------------
+
+# -- the pure reader: a running state, newest wins --------------------------
+expect "no marks at all read as nobody's mark" NONE "$(human_request_mark </dev/null)"
+expect "the machine's mark reads MACHINE" MACHINE \
+  "$(human_request_mark <<<"$HUMAN_REQUEST_MARKER")"
+expect "prose after the marker is still the marker" MACHINE \
+  "$(human_request_mark <<<"$HUMAN_REQUEST_MARKER extra")"
+expect "an unrelated comment stream marks nothing" NONE \
+  "$(printf '%s\n' 'hello' '🔧 addressing round on head abc' | human_request_mark)"
+expect "a withdrawal newer than the request supersedes it" NONE \
+  "$(printf '%s\n%s\n' "$HUMAN_REQUEST_MARKER" "$HUMAN_REQUEST_WITHDRAWN_MARKER" \
+    | human_request_mark)"
+# ...and the other order, which is the case a maintainer asking after a
+# retraction produces: request, withdrawal, request again.
+expect "a request newer than a withdrawal stands again" MACHINE \
+  "$(printf '%s\n%s\n%s\n' "$HUMAN_REQUEST_MARKER" "$HUMAN_REQUEST_WITHDRAWN_MARKER" \
+    "$HUMAN_REQUEST_MARKER" | human_request_mark)"
+# The two markers must not be each other's prefix, or the case arms above
+# would answer for both and the withdrawal could never supersede.
+expect "the withdrawal marker is not a request marker" NONE \
+  "$(human_request_mark <<<"$HUMAN_REQUEST_WITHDRAWN_MARKER")"
+# Matched as the FIRST LINE, the shape this file's other markers are written
+# in: a marker quoted further down a comment is quoted, not written.
+expect "a marker below the first line is not this machine's mark" NONE \
+  "$(printf '%s\n' "quoting: $HUMAN_REQUEST_MARKER" | human_request_mark)"
+
+# -- the four-step sequence, and its discriminating twin --------------------
+# APPROVE + MISSING with nothing staled and no bot requested: the shape the
+# comment at round_state's *MISSING* branch calls "somebody owes a verdict and
+# nobody was asked for one". The human request stands from step 1.
+DRAFT=false HEAD_SHA=head479B MERGEABLE=MERGEABLE CHECKS=SUCCESS LABELS=""
+REQUESTED="$HUMAN"
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" APPROVED head479B "" 2026-08-03T10:00:00Z)" \
+  "$(rev "$BOT2" APPROVED head479B "" 2026-08-03T10:01:00Z)")"
+HUMAN_REQUEST_MARK=MACHINE
+expect "a stale self-made request no longer reads as a human claim" \
+  state:addressing "$(decide_state)"
+expect "...and the stall it was hiding is named" blocker:unrequested "$(blockers)"
+HUMAN_REQUEST_MARK=NONE
+expect "the same round with a MAINTAINER's request is still needs-human" \
+  state:needs-human "$(decide_state)"
+expect "...and a deliberate claim is no dropped ball" "" "$(blockers)"
+# An unread mark is an unmarked one: an API that would not answer must not take
+# a maintainer's deliberate act away, so the fixture's default direction is the
+# pre-#479 reading.
+HUMAN_REQUEST_MARK=""
+expect "an unread mark reads as the maintainer's" state:needs-human "$(decide_state)"
+HUMAN_REQUEST_MARK=NONE
+
+# -- the regression guard: narrowing MISSING must not widen STALE -----------
+# The mixed round 0.7.4 already handles — one head-current approval, one
+# approval staled by a push — is *STALE*, which is checked BEFORE *MISSING* and
+# never consults the request at all. Both marks, because a narrowing written
+# one case too high would show up as the machine mark changing this answer.
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" APPROVED head479B "" 2026-08-03T10:00:00Z)" \
+  "$(rev "$BOT2" APPROVED head479A "" 2026-08-03T10:01:00Z)" \
+  "$(rev "$BOT3" APPROVED head479B "" 2026-08-03T10:02:00Z)")"
+HUMAN_REQUEST_MARK=MACHINE
+expect "APPROVE + STALE is addressing under a machine request" \
+  state:addressing "$(decide_state)"
+HUMAN_REQUEST_MARK=NONE
+expect "...and under a maintainer's, unchanged by #479" \
+  state:addressing "$(decide_state)"
+
+# -- and the final gate below *MISSING* is untouched (D4 is one branch) -----
+# Every verdict in, one of them a non-verdict: no MISSING, no STALE, so the
+# request is read at round_state's last gate — which #479 does not narrow.
+REVIEWS_JSON="$(reviews \
+  "$(rev "$BOT1" COMMENTED head479B "feedback" 2026-08-03T10:00:00Z)" \
+  "$(rev "$BOT2" APPROVED head479B "" 2026-08-03T10:01:00Z)" \
+  "$(rev "$BOT3" APPROVED head479B "" 2026-08-03T10:02:00Z)")"
+HUMAN_REQUEST_MARK=MACHINE
+expect "the gate below MISSING still honours any standing request" \
+  state:needs-human "$(decide_state)"
+HUMAN_REQUEST_MARK=NONE
+REQUESTED=""
+
+# -- the sweep: who is asked, who is withdrawn, and what is never read ------
+HR="$RTMP/humanreq"
+mkdir -p "$HR"
+
+hr_probe() { # $1 PR, $2 round, $3 requested logins, $4 marks: none|machine|withdrawn|unreadable
+  # HR_DELETE_RC / HR_COMMENT_RC are the stubbed mutations' exit status, each
+  # defaulting to the happy path.
+  (
+    BOOTSTRAP=no
+    REPO=owner/repo
+    LABELS_CONF="$FIXTURE_CONF"
+    AUTO_MERGE=off
+    AUTO_MERGE_RELEASE=off
+    HR_PR="$1" HR_ROUND="$2" HR_REQ="$3" HR_MARKS="$4"
+    local at
+    at="$(iso_at $(($(date +%s) - 3600)))"
+    gh() {
+      printf '%s\n' "$*" >>"$HR/calls-$HR_PR"
+      if [ "$1" = label ] && [ "$2" = list ]; then core_label_rows | cut -d'|' -f1; return 0; fi
+      if [ "$1" = pr ] && [ "$2" = list ]; then printf '%s\n' "$HR_PR"; return 0; fi
+      if [ "$1" = pr ] && [ "$2" = view ]; then
+        jq -n '{mergeable:"MERGEABLE",
+                statusCheckRollup:[{__typename:"CheckRun",workflowName:"ci",
+                                    name:"check",conclusion:"SUCCESS",
+                                    startedAt:"2026-07-01T00:00:00Z"}]}'
+        return 0
+      fi
+      if [ "$1" = issue ] && [ "$2" = comment ]; then
+        [ "${HR_COMMENT_RC:-0}" = 0 ] || return "$HR_COMMENT_RC"
+        local body=""; shift 3
+        while [ $# -gt 0 ]; do
+          case "$1" in --body) body="$2"; shift ;; esac
+          shift
+        done
+        printf '%s\n----\n' "$body" >>"$HR/posted-$HR_PR"
+        return 0
+      fi
+      if [ "$1" = issue ] && [ "$2" = edit ]; then printf '%s\n' "$*" >>"$HR/edits-$HR_PR"; return 0; fi
+      [ "$1" = api ] || return 0
+      shift
+      local jqexpr="" endpoint="" method=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --jq) jqexpr="$2"; shift ;;
+          --method) method="$2"; shift ;;
+          -*) ;;
+          *) [ -n "$endpoint" ] || endpoint="$1" ;;
+        esac
+        shift
+      done
+      # the two writes on the request, told apart by method and not by shape
+      case "$endpoint" in
+        */requested_reviewers)
+          [ "$method" != DELETE ] || return "${HR_DELETE_RC:-0}"
+          return 0 ;;
+      esac
+      case "$endpoint" in
+        */commits/*)
+          jq -n --arg at "$at" '{commit:{committer:{date:$at}}}' | jq -r "${jqexpr:-.}" ;;
+        */reviews)
+          case "$HR_ROUND" in
+            # step 4: one head-current approval, one required verdict missing,
+            # nothing staled and no bot requested
+            missing) reviews \
+              "$(rev "$BOT1" APPROVED hrhead "" "$at")" \
+              "$(rev "$BOT2" APPROVED hrhead "" "$at")" | jq -r "${jqexpr:-.}" ;;
+            # the round that passes: every required verdict head-current
+            approve) reviews \
+              "$(rev "$BOT1" APPROVED hrhead "" "$at")" \
+              "$(rev "$BOT2" APPROVED hrhead "" "$at")" \
+              "$(rev "$BOT3" APPROVED hrhead "" "$at")" | jq -r "${jqexpr:-.}" ;;
+            *) printf '[]\n' | jq -r "${jqexpr:-.}" ;;
+          esac ;;
+        */issues/*/comments)
+          # The marks read is the one asking for each body's FIRST line; the
+          # stale clock's read of the same endpoint asks for created_at, and
+          # must keep working when the marks read is the one refused.
+          case "$jqexpr" in
+            *'split("\n")[0]'*)
+              [ "$HR_MARKS" != unreadable ] || return 1 ;;
+          esac
+          local marks='[]'
+          case "$HR_MARKS" in
+            machine) marks="$(jq -n --arg b "$HUMAN_REQUEST_MARKER" \
+              '[{user:{login:"sweep-bot"},body:$b}]')" ;;
+            withdrawn) marks="$(jq -n --arg r "$HUMAN_REQUEST_MARKER" \
+              --arg w "$HUMAN_REQUEST_WITHDRAWN_MARKER" \
+              '[{user:{login:"sweep-bot"},body:$r},{user:{login:"sweep-bot"},body:$w}]')" ;;
+          esac
+          jq --arg at "$at" '[.[] | . + {created_at: $at}]' <<<"$marks" | jq -r "${jqexpr:-.}" ;;
+        */pulls/*)
+          jq -n --arg at "$at" --arg author "$FIXTURE_AUTHOR" --arg req "$HR_REQ" \
+            '{state:"open",draft:false,user:{login:$author},head:{sha:"hrhead"},
+              base:{sha:"basesha"},labels:[],
+              requested_reviewers:($req | if . == "" then [] else [{login:.}] end),
+              created_at:$at,assignees:[]}' | jq -r "${jqexpr:-.}" ;;
+        *) printf '[]\n' | jq -r "${jqexpr:-.}" ;;
+      esac
+    }
+    main
+  )
+}
+
+hr_calls() { # $1 PR, $2 pattern → how many recorded calls match
+  # -F and -- : the pattern under test is literally `--method DELETE`, whose
+  # leading dashes grep would otherwise read as its own options.
+  [ -f "$HR/calls-$1" ] || { echo 0; return; }
+  grep -cF -- "$2" "$HR/calls-$1" || true
+}
+hr_marks() { # $1 PR, $2 marker → how many comments carrying it were posted
+  [ -f "$HR/posted-$1" ] || { echo 0; return; }
+  grep -cF -- "$2" "$HR/posted-$1" || true
+}
+
+# -- the round passes: the machine asks, and marks what it asked ------------
+hr_pass_rc=0
+hr_pass="$(hr_probe 940 approve "" none)" || hr_pass_rc=$?
+expect "the passing round's sweep exits 0" 0 "$hr_pass_rc"
+expect "...requesting the human exactly once" 1 \
+  "$(hr_calls 940 'requested_reviewers')"
+expect "...as a write and never a DELETE" 0 \
+  "$(hr_calls 940 '--method DELETE')"
+expect "...and marking that ask as this machine's" 1 \
+  "$(hr_marks 940 "$HUMAN_REQUEST_MARKER")"
+expect "...saying in words whose ask it is" yes \
+  "$(grep -qF "the sweep's own, and provisional" "$HR/posted-940" && echo yes || echo no)"
+expect "...and logging the mark" yes \
+  "$(grep -q "#940: marked the $HUMAN request as this machine's" <<<"$hr_pass" \
+    && echo yes || echo no)"
+
+# -- the round stops passing: withdrawn, and marked withdrawn ---------------
+hr_wd_rc=0
+hr_wd="$(hr_probe 941 missing "$HUMAN" machine)" || hr_wd_rc=$?
+expect "the withdrawing sweep exits 0" 0 "$hr_wd_rc"
+expect "...taking the machine's own request back" 1 \
+  "$(hr_calls 941 '--method DELETE')"
+expect "...and saying so on the PR" 1 \
+  "$(hr_marks 941 "$HUMAN_REQUEST_WITHDRAWN_MARKER")"
+expect "...and never re-asking in the same pass" 0 \
+  "$(hr_marks 941 "$HUMAN_REQUEST_MARKER")"
+expect "...leaving the board on the builder with the stall named" yes \
+  "$(grep -q 'state:addressing' "$HR/edits-941" \
+    && grep -q 'blocker:unrequested' "$HR/edits-941" && echo yes || echo no)"
+
+# -- the SAME round with a maintainer's request: nothing is withdrawn -------
+# The discriminating twin. Every input but the mark is 941's.
+hr_keep_rc=0
+hr_keep="$(hr_probe 942 missing "$HUMAN" none)" || hr_keep_rc=$?
+expect "the maintainer-claim sweep exits 0" 0 "$hr_keep_rc"
+expect "...withdrawing nothing" 0 "$(hr_calls 942 '--method DELETE')"
+expect "...posting no withdrawal mark" 0 \
+  "$(hr_marks 942 "$HUMAN_REQUEST_WITHDRAWN_MARKER")"
+expect "...and leaving the deliberate claim on the board" yes \
+  "$(grep -q 'state:needs-human' "$HR/edits-942" && echo yes || echo no)"
+expect "...with no unrequested blocker against it" no \
+  "$(grep -q 'blocker:unrequested' "$HR/edits-942" && echo yes || echo no)"
+
+# -- a request this machine already withdrew is not withdrawn twice ---------
+hr_again_rc=0
+hr_again="$(hr_probe 943 missing "$HUMAN" withdrawn)" || hr_again_rc=$?
+expect "a superseded mark withdraws nothing" 0 "$(hr_calls 943 '--method DELETE')"
+expect "...and its sweep exits 0" 0 "$hr_again_rc"
+
+# -- no standing request: nothing to withdraw, and nothing to read ----------
+hr_noop_rc=0
+hr_noop="$(hr_probe 944 missing "" machine)" || hr_noop_rc=$?
+expect "a PR with no standing request exits the sweep 0" 0 "$hr_noop_rc"
+expect "...issuing no DELETE" 0 "$(hr_calls 944 '--method DELETE')"
+# The read is gated on the request, so an ordinary PR pays nothing for #479:
+# the only comments read left is the stale clock's own.
+expect "...and reading no marks it has no request to judge" 0 \
+  "$(hr_calls 944 'split(' )"
+expect "...while the stall is still named, the exemption having nothing to exempt" yes \
+  "$(grep -q 'blocker:unrequested' "$HR/edits-944" && echo yes || echo no)"
+
+# -- an unreadable mark leaves the request exactly where it is --------------
+hr_blind_rc=0
+hr_blind="$(hr_probe 945 missing "$HUMAN" unreadable)" || hr_blind_rc=$?
+expect "an unreadable mark exits the sweep 0" 0 "$hr_blind_rc"
+expect "...saying why, in this file's degraded-read shape" yes \
+  "$(grep -q "#945: human-request marks unreadable" <<<"$hr_blind" && echo yes || echo no)"
+expect "...and withdrawing nothing on a fact it did not read" 0 \
+  "$(hr_calls 945 '--method DELETE')"
+
+# -- a maintainer's standing request is never double-asked ------------------
+# The round passes with the human already requested: human_request_needed
+# refuses, so this pass asks nobody — and marks nobody, or the next pass would
+# read a maintainer's request as this machine's.
+hr_dbl_rc=0
+hr_dbl="$(hr_probe 946 approve "$HUMAN" none)" || hr_dbl_rc=$?
+expect "a passing round over a standing request exits 0" 0 "$hr_dbl_rc"
+expect "...requesting nobody a second time" 0 \
+  "$(hr_calls 946 'requested_reviewers')"
+expect "...and marking nothing it did not ask for" 0 \
+  "$(hr_marks 946 "$HUMAN_REQUEST_MARKER")"
+
+# -- D5: a refused DELETE logs and the sweep continues ----------------------
+hr_del_rc=0
+hr_del="$(HR_DELETE_RC=1 hr_probe 947 missing "$HUMAN" machine)" || hr_del_rc=$?
+expect "a refused withdrawal does not fail the sweep" 0 "$hr_del_rc"
+expect "...and says the mark stands so the next sweep retries" yes \
+  "$(grep -q "#947: WARNING: could not withdraw this machine's $HUMAN request" \
+    <<<"$hr_del" && echo yes || echo no)"
+expect "...writing no withdrawal mark over a withdrawal that did not happen" 0 \
+  "$(hr_marks 947 "$HUMAN_REQUEST_WITHDRAWN_MARKER")"
+expect "...while the pass still converges the board" yes \
+  "$(grep -q 'state:addressing' "$HR/edits-947" && echo yes || echo no)"
+
+# -- the order inside the act: DELETE first, its mark second ---------------
+# Asserted on the source, because the failing-DELETE fixture above can only
+# show that no mark was written — not that a mark would have been written
+# first had the call been made in the other order.
+hr_body="$(awk '/^reconcile_human_request\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
+  actions/labels-reconcile/labels-reconcile.sh | grep -v '^[[:space:]]*#' || true)"
+expect "the withdrawal calls DELETE before it marks the withdrawal" yes \
+  "$(awk -v d=0 -v m=0 '/--method DELETE/ && !d {d=NR}
+      /HUMAN_REQUEST_WITHDRAWN_MARKER/ && !m {m=NR}
+      END{print (d && m && d < m) ? "yes" : "no"}' <<<"$hr_body")"
+expect "...and re-reads no requested_reviewers of its own" 1 \
+  "$(grep -c 'requested_reviewers' <<<"$hr_body")"
+expect "...and re-evaluates no human_request_needed" no \
+  "$(grep -q 'human_request_needed' <<<"$hr_body" && echo yes || echo no)"
+# The caller half: the act is handed the pass's own answers, never a re-ask.
+expect "reconcile_pr passes desired and the recorded ask into the act" yes \
+  "$(grep -q "reconcile_human_request \"\\\$n\" \"\\\$desired\" \"\\\$human_requested\"" \
+    <<<"$am_pr_body" && echo yes || echo no)"
+
+# -- LABELS.md names which request the precedence is about (#479) -----------
+# Wrap-tolerantly: the sentence is prose in a wrapped file, and a line break
+# inside the phrase would hide it from a line-oriented grep while the doc says
+# exactly what the criterion asks for.
+labels_md_flat="$(tr '\n' ' ' <LABELS.md | tr -s ' ')"
+expect "LABELS.md says the precedence is the maintainer's, in the code's words" yes \
+  "$(grep -qF 'a maintainer pulling a PR to themselves early is a deliberate act' \
+    <<<"$labels_md_flat" && echo yes || echo no)"
+expect "...and that the machine's own ask is marked and withdrawn" yes \
+  "$(grep -qF "$HUMAN_REQUEST_MARKER" LABELS.md && echo yes || echo no)"
+
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
