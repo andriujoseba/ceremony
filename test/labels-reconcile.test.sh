@@ -3402,6 +3402,9 @@ expect "...and never re-asking in the same pass" 0 \
 expect "...leaving the board on the builder with the stall named" yes \
   "$(grep -q 'state:addressing' "$HR/edits-941" \
     && grep -q 'blocker:unrequested' "$HR/edits-941" && echo yes || echo no)"
+expect "...and logging the withdrawal against the state that caused it" yes \
+  "$(grep -q "#941: withdrew this machine's $HUMAN request (state is state:addressing)" \
+    <<<"$hr_wd" && echo yes || echo no)"
 
 # -- the SAME round with a maintainer's request: nothing is withdrawn -------
 # The discriminating twin. Every input but the mark is 941's.
@@ -3415,12 +3418,16 @@ expect "...and leaving the deliberate claim on the board" yes \
   "$(grep -q 'state:needs-human' "$HR/edits-942" && echo yes || echo no)"
 expect "...with no unrequested blocker against it" no \
   "$(grep -q 'blocker:unrequested' "$HR/edits-942" && echo yes || echo no)"
+expect "...and logging no withdrawal at all" no \
+  "$(grep -q '#942: withdrew' <<<"$hr_keep" && echo yes || echo no)"
 
 # -- a request this machine already withdrew is not withdrawn twice ---------
 hr_again_rc=0
 hr_again="$(hr_probe 943 missing "$HUMAN" withdrawn)" || hr_again_rc=$?
 expect "a superseded mark withdraws nothing" 0 "$(hr_calls 943 '--method DELETE')"
 expect "...and its sweep exits 0" 0 "$hr_again_rc"
+expect "...and logs no second withdrawal" no \
+  "$(grep -q '#943: withdrew' <<<"$hr_again" && echo yes || echo no)"
 
 # -- no standing request: nothing to withdraw, and nothing to read ----------
 hr_noop_rc=0
@@ -3433,6 +3440,8 @@ expect "...and reading no marks it has no request to judge" 0 \
   "$(hr_calls 944 'split(' )"
 expect "...while the stall is still named, the exemption having nothing to exempt" yes \
   "$(grep -q 'blocker:unrequested' "$HR/edits-944" && echo yes || echo no)"
+expect "...and the sweep runs to the end of its loop" 1 \
+  "$(grep -c '^labels: reconciled\.$' <<<"$hr_noop")"
 
 # -- an unreadable mark leaves the request exactly where it is --------------
 hr_blind_rc=0
@@ -3454,6 +3463,8 @@ expect "...requesting nobody a second time" 0 \
   "$(hr_calls 946 'requested_reviewers')"
 expect "...and marking nothing it did not ask for" 0 \
   "$(hr_marks 946 "$HUMAN_REQUEST_MARKER")"
+expect "...and logging no request it did not make" no \
+  "$(grep -q "#946: requested $HUMAN" <<<"$hr_dbl" && echo yes || echo no)"
 
 # -- D5: a refused DELETE logs and the sweep continues ----------------------
 hr_del_rc=0
