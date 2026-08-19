@@ -33,6 +33,19 @@ the reconciler takes it back. The author sets it at handoff (the one
 hand-set state); the `labeled` event fires the sweep that validates the
 write within seconds.
 
+**A request for the human's review outranks an unfinished round only when a
+maintainer made it** — a maintainer pulling a PR to themselves early is a
+deliberate act, and that is the whole of the precedence. The reconciler also
+asks the human, once, when the round passes, and that ask is its own and
+provisional. The two were one bit until the sweep began marking its own: it
+writes `<!-- ceremony:human-requested -->` in the comment it posts with the
+ask, and `<!-- ceremony:human-request-withdrawn -->` when it takes the ask
+back, which it does on the first sweep where the state is no longer
+`state:needs-human`. A marked request neither outranks a round with a verdict
+missing nor exempts that head from `blocker:unrequested`. An unmarked one is a
+maintainer's: it outranks, it exempts, and no machine withdraws it — through
+every push, and when the marks cannot be read at all (#479).
+
 ## PR blockers — what is in the way? (facts, as many as apply)
 
 | Label | Color | Means |
