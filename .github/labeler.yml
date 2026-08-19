@@ -55,6 +55,18 @@ scope:release-flow:
           - test/changelog-assemble.test.sh
           - .github/scripts/release-path.sh
           - test/release-path.test.sh
+          # the drill instrument and its guard (#484 D10). `drills/**` — the
+          # record — was here from the start while `drill/` — what writes it —
+          # was named nowhere, so the instrument, its libs, its suite and the
+          # round-trip guard all mapped to no scope: a wrong answer of the kind
+          # #476 is the standing precedent for, not a gap. All three are
+          # release-path evidence machinery. The two test/ rows are enumerated
+          # rather than folded into a test/** catch-all, for the reason the
+          # comment block above gives: test/ spans all four scopes, so a
+          # catch-all is the changelog.d/** defect again.
+          - drill/**
+          - test/drill-rehearsal.test.sh
+          - .github/scripts/record-roundtrip.sh
 scope:guards:
   - changed-files:
       - any-glob-to-any-file:

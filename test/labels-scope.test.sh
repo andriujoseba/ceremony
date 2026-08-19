@@ -277,6 +277,20 @@ EOF
   check "derive: the vendored test is scope:guards" 0 \
     "[scope:guards]" derives 'test/vendored.test.sh'
 
+  # #484 D10: the drill instrument. `drills/**` — the record — was mapped from
+  # the start while `drill/` — what writes it — was named nowhere, so the
+  # instrument and its guard derived NO scope at all: a wrong answer, the class
+  # #476 is the precedent for, not a gap. One case per file, because a single
+  # bundled case would pass on any one row matching.
+  check "derive: the drill instrument is scope:release-flow" 0 \
+    "[scope:release-flow]" derives 'drill/rehearsal.sh'
+  check "derive: the drill libs are scope:release-flow too" 0 \
+    "[scope:release-flow]" derives 'drill/lib/record.sh'
+  check "derive: the drill suite is scope:release-flow" 0 \
+    "[scope:release-flow]" derives 'test/drill-rehearsal.test.sh'
+  check "derive: the round-trip guard is scope:release-flow" 0 \
+    "[scope:release-flow]" derives '.github/scripts/record-roundtrip.sh'
+
   # D7: no test/** or .github/scripts/** catch-all — both directories span
   # all four scopes, so this pair reds under any catch-all row: each file
   # would gain the other's scope beside its own
