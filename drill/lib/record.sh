@@ -78,6 +78,47 @@ record_setup_rows() {
   done <"$tsv"
 }
 
+# The `## Known gaps` section's own prose, spelled once (#484 D5). Three
+# readers share it — `record_render` writes it, `record_parse` skips it, and
+# `record_check` greps it — and two spellers would drift, which is the same
+# reason `record_count_word` exists. A drifted copy would red the round trip
+# on a record nobody edited.
+#
+# The line breaks are part of the value: the render's own prose is hard-wrapped
+# and this is the render's own prose.
+RECORD_GAP_PREAMBLE='Declared before the run and rendered here as given. Each names something no
+probe drives, so the rehearsal establishes nothing about it; a probe that ran
+and failed is not a gap and is written in its own row above.'
+RECORD_GAP_NONE="None declared: every claim this record makes is a probe row's, and nothing was
+declared outside them."
+
+# record_gap_rows <gaps-tsv> — one line per declared gap, verbatim.
+#
+# Never re-wrapped (#484 D5). The renderer hard-wraps the prose it writes
+# itself, but a gap is declared INPUT: wrapping it would be a transformation
+# the parse has to invert exactly, and a re-wrap disagreeing with the original
+# by one space reds the round trip on a record nobody edited. Not wrapping is
+# the only shape that is invertible by construction, and a long line is the
+# price.
+record_gap_rows() {
+  local tsv="${1:?}" title body
+  while IFS=$'\t' read -r title body; do
+    [ -n "${title:-}" ] || continue
+    printf -- '- **%s** — %s\n' "$title" "$body"
+  done <"$tsv"
+}
+
+# record_gap_prose_line <line> <block> — 0 when <line> is one of <block>'s
+# lines. The section's fixed sentences are the render's, so the parse skips
+# them rather than reading one as a gap.
+record_gap_prose_line() {
+  local line="${1-}" known
+  while IFS= read -r known; do
+    [ "$line" != "$known" ] || return 0
+  done <<<"${2-}"
+  return 1
+}
+
 # record_abort_path <record-path> — reserve the first sibling abort path.
 # Setup failures cannot write the release record path: drill-recorded only
 # checks that path exists and is non-blank, so putting partial evidence there
@@ -309,9 +350,19 @@ EOF
   fi
 }
 
-# record_render <ctx-file> <probes-tsv> <setup-tsv> — the whole record.
+# record_render <ctx-file> <probes-tsv> <setup-tsv> [gaps-tsv] — the whole
+# record.
+#
+# The gaps TSV is `title<TAB>body`, one row per declared gap, in declaration
+# order (#484 D6). `ctx.tsv` is a single-line key/value lookup and cannot hold
+# a list, so gaps travel the way probes and setup rows do: their own file.
+# It is the one optional input, and absent means what an empty one means —
+# no gap was declared. That keeps every caller that has none to declare
+# writing the call it already wrote, and a caller that drops a gaps file it
+# should have passed is caught by the round trip, whose re-render then differs
+# from the record's own bytes.
 record_render() {
-  local ctx="${1:?}" probes="${2:?}" setup="${3:?}"
+  local ctx="${1:?}" probes="${2:?}" setup="${3:?}" gaps="${4:-}"
   local ver rc scratch attempt created private visibility candidate_sha candidate_ref fork_repo fork_ref
   local fork_head pin disposal runner stamp failed passed unestablished
   local unrun unrun_count word
@@ -485,6 +536,30 @@ record and this is one — what the run proved is claimed above, what it did
 not is named where it failed, and neither is smoothed into the other.
 EOF
   fi
+
+  # -- ## Known gaps, the sixth section and the LAST (#484 D1, D2) ----------
+  # It qualifies the conclusion, so it reads immediately after it, and
+  # appending to the parse's `want` array leaves the five existing sections'
+  # order and every field's bounded search unchanged.
+  #
+  # Rendered on every emission, empty or not. An optional section would make
+  # `record_parse`'s heading search conditional and give a record two legal
+  # shapes; a required one keeps the parse a fixed lookup and makes "this
+  # drill declared no gaps" a claim the record STATES rather than an absence
+  # a reader has to infer. `## Setup, and the runs that are not probes`
+  # already renders its own empty-state sentence for the same reason.
+  #
+  # A gap is COVERAGE, never a failed probe (D3), and the section's opening
+  # sentence says so: a failed or unrun probe already writes its own row, its
+  # own preamble sentence and the not-established tail above, and filing one
+  # here would soften it.
+  printf '\n## Known gaps\n\n'
+  if [ -n "$gaps" ] && [ -s "$gaps" ]; then
+    printf '%s\n\n' "$RECORD_GAP_PREAMBLE"
+    record_gap_rows "$gaps"
+  else
+    printf '%s\n' "$RECORD_GAP_NONE"
+  fi
 }
 
 # record_check <record-file> — the shape check the script runs on its own
@@ -583,6 +658,28 @@ record_check() {
   fi
   grep -qF "$doors" "$file" ||
     problems="$problems; the rows measure merge-door-ran=$merge tag-door-ran=$tag, but the conclusion does not say so (expected \"$doors\")"
+  # The sixth section is graded at emission time like every other (#484 D8),
+  # so a malformed one reds where it is WRITTEN rather than at the next cut.
+  # Either the record declares no gaps in the section's own words, or every
+  # gap line carries a non-empty title and a non-empty body.
+  local gap_section gap_all gap_ok
+  if ! grep -qx '## Known gaps' "$file"; then
+    problems="$problems; the record has no '## Known gaps' section"
+  else
+    gap_section="$(sed -n '/^## Known gaps$/,$p' "$file")"
+    gap_all="$(printf '%s\n' "$gap_section" | grep -c '^- \*\*' || true)"
+    # A well-formed line is `- **<title>** — <body>` with both halves
+    # non-empty; the regex refuses each empty half by requiring a character
+    # on either side of the separator.
+    gap_ok="$(printf '%s\n' "$gap_section" | grep -cE '^- \*\*.+\*\* — .+$' || true)"
+    if printf '%s\n' "$gap_section" | grep -qF "${RECORD_GAP_NONE%%$'\n'*}"; then
+      :
+    elif [ "$gap_all" = 0 ]; then
+      problems="$problems; the '## Known gaps' section carries neither the none-declared sentence nor a gap line"
+    elif [ "$gap_ok" != "$gap_all" ]; then
+      problems="$problems; $((gap_all - gap_ok)) of the $gap_all gap line(s) carry no title or no body"
+    fi
+  fi
   if [ -n "$problems" ]; then
     echo "record_check: ${problems#; }" >&2
     return 1
@@ -693,8 +790,13 @@ record_parse_run_cell() {
   RECORD_PARSE_OUT="$text"$'\t'"$attempt"
 }
 
-# record_parse <record-file> <ctx-out> <probes-out> <setup-out> — invert
-# `record_render` into the three TSVs the instrument writes (#373 D1).
+# record_parse <record-file> <ctx-out> <probes-out> <setup-out> <gaps-out> —
+# invert `record_render` into the four TSVs the instrument writes (#373 D1,
+# #484 D6).
+#
+# The gaps output is required rather than optional, unlike the render's
+# corresponding input: it is an OUT parameter, and a caller with nowhere to
+# put the gaps would be silently discarding what it just parsed.
 #
 # Only the render's INPUTS are recovered here. Everything the render computes
 # — the preamble's run count, the failed count, the door sentences, the
@@ -717,6 +819,7 @@ record_parse() {
   local ctx_out="${2:?record_parse: ctx output required}"
   local probes_out="${3:?record_parse: probes output required}"
   local setup_out="${4:?record_parse: setup output required}"
+  local gaps_out="${5:?record_parse: gaps output required}"
   if [ ! -f "$file" ]; then
     printf 'record_parse: %s: no such file\n' "$file" >&2
     return 1
@@ -766,12 +869,15 @@ record_parse() {
   candidate_sha="${BASH_REMATCH[1]}"
 
   # -- the sections ---------------------------------------------------------
-  # The five headings are constants in the render and they come in one order.
+  # The six headings are constants in the render and they come in one order.
   # Finding them first turns every field lookup below into a bounded search,
   # so a sentence added to one section cannot be answered by a line in
-  # another.
+  # another. `## Known gaps` joins as the LAST member (#484 D2): the list
+  # stays closed and gains one, so a seventh heading the renderer did not
+  # write is still a record this parse refuses.
   local -a want=('## Where' '## Candidate-ref deviation' '## Probes'
-    '## Setup, and the runs that are not probes' '## What the rehearsal establishes')
+    '## Setup, and the runs that are not probes' '## What the rehearsal establishes'
+    '## Known gaps')
   local -a at=()
   local h i seen
   for h in "${want[@]}"; do
@@ -797,7 +903,7 @@ record_parse() {
     fi
   done
   local where_at="${at[0]}" deviation_at="${at[1]}" probes_at="${at[2]}"
-  local setup_at="${at[3]}" establishes_at="${at[4]}"
+  local setup_at="${at[3]}" establishes_at="${at[4]}" gaps_at="${at[5]}"
 
   # -- ## Where -------------------------------------------------------------
   local attempt visibility private scratch created rc_version disposal
@@ -979,7 +1085,58 @@ record_parse() {
     return 1
   fi
 
-  # -- the three TSVs, in the shapes the instrument writes ------------------
+  # -- ## Known gaps (#484 D6) ----------------------------------------------
+  # Order is preserved, because determinism is what the round trip grades.
+  # The section's own fixed sentences are skipped rather than read as gaps,
+  # and anything that is neither is REFUSED by line number: a gap body
+  # hard-wrapped across two lines leaves a continuation this arm catches,
+  # which is a better diagnostic than the same edit surfacing as a diff two
+  # lines further down.
+  local -a declared=()
+  local gap_none_seen=0 gap_title gap_body gap_rest
+  for ((i = gaps_at + 1; i < total; i++)); do
+    line="${lines[i]}"
+    [ -n "$line" ] || continue
+    if record_gap_prose_line "$line" "$RECORD_GAP_NONE"; then
+      gap_none_seen=1
+      continue
+    fi
+    record_gap_prose_line "$line" "$RECORD_GAP_PREAMBLE" && continue
+    case "$line" in
+      '- **'*) ;;
+      *)
+        record_parse_die "$file" "$((i + 1))" \
+          "not a gap line, and not one of the section's own sentences" "$line" || return 1
+        ;;
+    esac
+    gap_rest="${line#- \*\*}"
+    # The FIRST separator, so a body may carry `** — ` and the split is still
+    # invertible byte for byte: whatever lands in the body is re-rendered
+    # after the same separator it was taken from.
+    gap_title="${gap_rest%%\*\* — *}"
+    if [ "$gap_title" = "$gap_rest" ]; then
+      record_parse_die "$file" "$((i + 1))" \
+        'the gap line has no `** — ` between its title and its body' "$line" || return 1
+    fi
+    gap_body="${gap_rest#"$gap_title"\*\* — }"
+    if [ -z "$gap_title" ] || [ -z "$gap_body" ]; then
+      record_parse_die "$file" "$((i + 1))" \
+        'a gap needs a non-empty title and a non-empty body' "$line" || return 1
+    fi
+    declared+=("$(printf '%s\t%s' "$gap_title" "$gap_body")")
+  done
+  if [ "${#declared[@]}" -gt 0 ] && [ "$gap_none_seen" = 1 ]; then
+    printf 'record_parse: %s: the Known gaps section says there are none and then declares some\n' \
+      "$file" >&2
+    return 1
+  fi
+  if [ "${#declared[@]}" -eq 0 ] && [ "$gap_none_seen" = 0 ]; then
+    printf 'record_parse: %s: the Known gaps section has neither a gap nor the none-declared sentence\n' \
+      "$file" >&2
+    return 1
+  fi
+
+  # -- the four TSVs, in the shapes the instrument writes -------------------
   {
     printf 'version\t%s\n' "$ver"
     printf 'rc_version\t%s\n' "$rc_version"
@@ -1000,6 +1157,8 @@ record_parse() {
   printf '%s\n' "${rows[@]}" >"$probes_out"
   : >"$setup_out"
   [ "${#setups[@]}" -eq 0 ] || printf '%s\n' "${setups[@]}" >"$setup_out"
+  : >"$gaps_out"
+  [ "${#declared[@]}" -eq 0 ] || printf '%s\n' "${declared[@]}" >"$gaps_out"
 }
 
 # record_parse_counts <cell> — `<before><TAB><after>` out of a `N → M` cell.
@@ -1135,13 +1294,15 @@ record_roundtrip() {
   # The parse's own refusal already names the line that defeated it, so
   # nothing is layered on top of it — the second sentence only says which
   # check was asking.
-  if ! record_parse "$file" "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv"; then
+  if ! record_parse "$file" "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv" \
+    "$work/gaps.tsv"; then
     rm -rf "$work"
     printf 'record_roundtrip: %s cannot be parsed back into the inputs that would render it, so it cannot be graded as this script'"'"'s emission.\n' \
       "$file" >&2
     return 1
   fi
-  if ! record_render "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv" >"$work/rendered.md"; then
+  if ! record_render "$work/ctx.tsv" "$work/probes.tsv" "$work/setup.tsv" \
+    "$work/gaps.tsv" >"$work/rendered.md"; then
     rm -rf "$work"
     printf 'record_roundtrip: %s: record_render refused the inputs parsed back out of it.\n' \
       "$file" >&2
