@@ -118,8 +118,8 @@ record_gap_rows() {
     [ -n "${title:-}" ] || continue
     case "$title" in
       *'** — '*)
-        printf 'record_gap_rows: the gap title %s carries the title/body separator `** — `, which record_parse cuts at, so this pair would not survive its own render. A body may carry it; a title may not.\n' \
-          "'$title'" >&2
+        printf 'record_gap_rows: the gap title %s carries the title/body separator %s, which record_parse cuts at, so this pair would not survive its own render. A body may carry it; a title may not.\n' \
+          "'$title'" "'** — '" >&2
         return 1
         ;;
     esac
