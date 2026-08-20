@@ -64,7 +64,10 @@ usage: drill/rehearsal.sh --owner <login> --version <X.Y.Z>
   --gap            a coverage gap the record declares under `## Known gaps`,
                    split at the FIRST `|`; repeatable, rendered in declaration
                    order. A gap is coverage no probe drives at all — never a
-                   probe that ran and failed, which writes its own row
+                   probe that ran and failed, which writes its own row. The
+                   record renders it as `- **<title>** — <body>` and parses
+                   back at the first `** — `, so a body may carry that
+                   sequence and a title may not
   --amend-record   add gaps to an already committed record and re-render it,
                    running no probe, creating no repository and making no
                    network call. It refuses a record that does not already
