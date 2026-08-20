@@ -88,6 +88,41 @@ Every issue you mint carries, in this order:
   the move; on a hand move, triage writes the comment in the same tick. In
   either case triage follows up with the remaining criteria, their owner, and
   the wake condition for completion.
+
+  **Classify each criterion at mint on a second axis as well: who can
+  produce its evidence.** A builder's session is not assumed to reach the
+  host it runs on, the hardware under it, or the network beyond itself.
+  Ask what command or observation proves the criterion and where that has
+  to run; where the answer is a surface a builder's session cannot reach —
+  a host, physical hardware, a credentialed or paid external service, a
+  production system — the criterion is **operator-owned**. The input to
+  that call is the evidence and never a builder's report or a particular
+  session's capabilities, a builder that has to report it having already
+  paid for the omission (#487).
+
+  **Everything else is builder-owned**, reach being measured against the
+  session's boundary and not its convenience: slowness, inconvenience, and a
+  fixture nobody has written yet are work rather than distance, and evidence
+  the board's own automation produces is reachable by anyone who can read it.
+
+  **An operator-owned criterion carries three things in its own text**, not
+  in a comment and not in a covering sentence: that it is operator-owned,
+  **its evidence** — the command, and the surface that command must run on —
+  and **its wake condition**, the event that brings someone back to tick it.
+  A criterion saying only that it is operator-owned is as incomplete as a
+  post-merge one naming no mechanism.
+
+  **The two axes are independent, and neither is read off the other.**
+  Operator-owned does not make a criterion post-merge, post-merge does not
+  make one operator-owned, and one that is both carries both mechanisms, the
+  post-merge mechanism above holding unchanged for every criterion it
+  already governed.
+
+  **A criterion whose evidence turns out at claim time to be beyond a
+  builder's reach is a defect in the issue, and the body is yours.**
+  Reclassify it where it stands, in the same tick — a comment that answers
+  the builder while the body still asks for proof no builder can produce
+  leaves the next reader the same issue (#149).
 - **Test plan**: what proves it, including the cases that must fail.
 - **Dependencies**: `Blocked by #N` / `Blocks #N`, and `Part of #E` when an
   epic organizes it. Name a cross-repo dependency the same way with its
