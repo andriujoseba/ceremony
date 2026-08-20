@@ -2655,6 +2655,37 @@ check "and reds a record with no such section at all" 1 "has no '## Known gaps' 
     source "$3/drill/lib/probes.sh"; source "$3/drill/lib/record.sh"
     record_check "$2"' _ "$TMP/gaps.md" "$TMP/gap-none-at-all.md" "$ROOT"
 
+# The empty-state sentence is graded WHOLE, and it is hard-wrapped across two
+# lines. Grading its first line alone greened a section carrying half a
+# sentence and no gap line — the exact shape D8 exists to red
+# (@codex-bot-andresmgsl, round 2). All three mutilations below leave the
+# first line intact, so each one passed before the fix.
+#
+# `$TMP/emitted.md` is the no-gap emission, so its section is the sentence and
+# nothing else; the failure has nowhere else to hide.
+sed '/^declared outside them\.$/d' "$TMP/emitted.md" >"$TMP/gap-half-sentence.md"
+check "record_check reds a TRUNCATED empty-state sentence" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-half-sentence.md"
+# The other end of the same sentence: the tail alone is not the claim either.
+sed "/^None declared: every claim this record makes is a probe row's, and nothing was$/d" \
+  "$TMP/emitted.md" >"$TMP/gap-tail-only.md"
+check "and reds one whose FIRST line is the missing half" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-tail-only.md"
+# Both lines present, no longer contiguous. This is what the newline-bracketed
+# match buys over two independent searches: the sentence is a wrapped whole,
+# not two lines that happen to be in the section.
+awk '/^declared outside them\.$/ { print ""; print; next } { print }' \
+  "$TMP/emitted.md" >"$TMP/gap-split-sentence.md"
+check "and reds one whose two lines are no longer contiguous" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-split-sentence.md"
+# The must-NOT-fire half, so the three above cannot be satisfied by a check
+# that reds everything: the untouched emission still passes.
+check "while the untouched emission still passes the shape check" 0 \
+  "eight probe rows" record_check "$TMP/emitted.md"
+
 # -- must-fail: the section list stays CLOSED --------------------------------
 # #484 adds one member to it and does not open it. A seventh heading the
 # renderer never wrote lands inside the last section, where the parse refuses

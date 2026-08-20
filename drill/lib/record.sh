@@ -577,6 +577,12 @@ EOF
     printf '%s\n\n' "$RECORD_GAP_PREAMBLE"
     # Propagated, never swallowed: a render that could not write an invertible
     # gap line must not return a record its caller will then commit.
+    #
+    # Deleting the `|| return 1` reds nothing TODAY, and that is not a coverage
+    # hole (@claude-bot-andresmgsl, round 2, measured): this `if` is the
+    # function's last statement, so the status already propagates. It becomes
+    # load-bearing the moment a seventh section is appended below, which is
+    # exactly the edit that would otherwise turn a refusal into a silent one.
     record_gap_rows "$gaps" || return 1
   else
     printf '%s\n' "$RECORD_GAP_NONE"
@@ -683,7 +689,7 @@ record_check() {
   # so a malformed one reds where it is WRITTEN rather than at the next cut.
   # Either the record declares no gaps in the section's own words, or every
   # gap line carries a non-empty title and a non-empty body.
-  local gap_section gap_all gap_ok
+  local gap_section gap_all gap_ok gap_none=0
   if ! grep -qx '## Known gaps' "$file"; then
     problems="$problems; the record has no '## Known gaps' section"
   else
@@ -693,7 +699,25 @@ record_check() {
     # non-empty; the regex refuses each empty half by requiring a character
     # on either side of the separator.
     gap_ok="$(printf '%s\n' "$gap_section" | grep -cE '^- \*\*.+\*\* — .+$' || true)"
-    if printf '%s\n' "$gap_section" | grep -qF "${RECORD_GAP_NONE%%$'\n'*}"; then
+    # The WHOLE sentence, as a contiguous run of complete lines. This used to
+    # be `grep -qF "${RECORD_GAP_NONE%%$'\n'*}"` — the first wrapped line
+    # alone — which greened a section whose second line had been deleted: it
+    # carries neither the empty-state sentence nor a gap line, and reding
+    # exactly that is what D8 is for (@codex-bot-andresmgsl, round 2).
+    #
+    # Bracketing both the section and the sentence with a newline is what makes
+    # the match line-exact and gap-free in one test: a truncation fails it, the
+    # two lines separated by anything fail it, and a longer line that merely
+    # CONTAINS one of them fails it too. The sentence is a claim the record
+    # makes — that nothing was declared — and half of it is not that claim.
+    # The section's other fixed prose, `RECORD_GAP_PREAMBLE`, is deliberately
+    # not graded here: `record_check` grades shape and lets a prose edit pass
+    # (see the round-trip comment below), and the preamble is prose where this
+    # sentence is the claim.
+    case $'\n'"$gap_section"$'\n' in
+      *$'\n'"$RECORD_GAP_NONE"$'\n'*) gap_none=1 ;;
+    esac
+    if [ "$gap_none" = 1 ]; then
       :
     elif [ "$gap_all" = 0 ]; then
       problems="$problems; the '## Known gaps' section carries neither the none-declared sentence nor a gap line"
