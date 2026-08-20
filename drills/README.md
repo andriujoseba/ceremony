@@ -122,6 +122,67 @@ record is the only thing that survives the drill, and 0.2.0's record shipped
 its first draft asserting a cleanup that had not happened (#135) — false
 evidence in the one file whose job is to be evidence.
 
+### Known gaps
+
+A rehearsal record's last section is `## Known gaps`, and the instrument
+renders it on **every** emission — with the gaps declared for that run, or
+with the sentence saying none were. It is not optional: a record that states
+"this drill declared no gaps" is making a claim, where a missing section is
+an absence a reader has to interpret.
+
+A gap is **coverage no probe drives at all**. The worked example is the one
+that motivated the section: the eight probes drive `push` and tag events, so
+a release gate with a `workflow_dispatch` entrance has that entrance driven
+by nothing here, and the rehearsal establishes nothing about it. A probe that
+**ran and failed** is not a gap and never goes here — it already writes its
+own row, its own preamble sentence, and the `**Not established: N of the
+eight**` tail in `## What the rehearsal establishes`. Filing a failure as a
+gap would soften a fact the record already states plainly.
+
+Gaps are **declared input to the instrument, not derived prose**. They are
+passed as repeatable `--gap '<title>|<body>'` arguments, split at the first
+`|`, and rendered one line each in declaration order, verbatim and never
+re-wrapped. Deriving the section from the probe set instead was considered
+and rejected: the dispatch entrance lives in `.github/workflows/release.yml`,
+outside anything `drill/` reads, so a derived section could not have
+expressed the one gap that motivated it.
+
+A gap line is `- **<title>** — <body>`, and the parse cuts at the **first**
+`** — ` on the line. So a **body** may carry that sequence and a **title** may
+not: the instrument refuses such a title before it does any work, and the
+renderer refuses to write one at all. This is the one rule that matters to
+anyone typing an entry by hand rather than passing `--gap`, because the round
+trip cannot enforce it — re-rendering a title cut at its own interior
+reproduces the same bytes, so the guard would green a record whose title had
+silently changed, and a later entry could then collide with a title nobody
+declared.
+
+A gap can be added **after** the run, without re-running it:
+
+```
+drill/rehearsal.sh --amend-record drills/X.Y.Z.md --gap '<title>|<body>'
+```
+
+That mode runs no probe, creates no repository and makes no network call: it
+parses the committed record, appends the gaps, re-renders, and writes it
+back. It **refuses to launder** — the record must already be the
+instrument's emission and must already pass the round trip, because a record
+that does not round-trip is stale or hand-touched and the unblock for that is
+re-running the instrument. A record amended this way is **still the
+renderer's bytes**: what is written back is `record_render`'s output from the
+record's own stated measurements, which is why the round trip still passes on
+it and why a release criterion may be written against it.
+
+**The honest cost, stated here rather than discovered later:
+a hand-added gap entry survives the round trip.** The parse reads gap lines
+back out and the render writes them again verbatim, so the guard cannot tell
+a declared gap from a typed one. This is the same category as the measurements below — it is
+*data*, and #373 D4 already priced the only cure (committing the render
+inputs beside the record) and rejected it. It is accepted for one further
+reason: **a gap entry is monotone in the safe direction.** It only ever
+subtracts from what the record claims, and no wording of one can manufacture
+a probe that passed.
+
 A record has one of three shapes. A **rehearsal** records the disposable-repo
 run above. **Doors unchanged** records the mechanically checked claim below
 when a new rehearsal would execute the same bytes as the last one. **WAIVED**
@@ -240,6 +301,13 @@ is:
   rejected — committing the render inputs beside the record puts an
   unguarded second file in the tree and reintroduces the same bug one level
   down. The run link is what a reader checks a run ID against.
+- **whether a declared gap was really declared.** A `## Known gaps` entry is
+  parsed back out and re-rendered verbatim, so a hand-typed one passes exactly
+  as a declared one does. It is data, like the measurements above, and it is
+  accepted for the reason stated under *Known gaps*: a gap entry only ever
+  subtracts from what the record claims. For the same reason it cannot see a
+  hand-typed title carrying `** — `, which is why that is refused where a gap
+  is written rather than where a record is graded.
 - **whether a probe's verdict is true.** That is what the probe's own
   before/after counts are for, and `record_check` grades that they are there.
 - **the other two record shapes.** *Doors unchanged* and *WAIVED* are

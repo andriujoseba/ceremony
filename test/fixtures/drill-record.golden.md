@@ -91,3 +91,8 @@ intention.
 
 Every refusal claim above is asserted on the before/after counts in the probe
 table, not on the prose beside them.
+
+## Known gaps
+
+None declared: every claim this record makes is a probe row's, and nothing was
+declared outside them.

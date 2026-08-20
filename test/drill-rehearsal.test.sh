@@ -193,6 +193,11 @@ The rc cut's ceremony PR carries \`drills/0.7.2-rc1.md\`.
 - ✅ eight
 
 It is **pending the operator's delete**.
+
+## Known gaps
+
+None declared: every claim this record makes is a probe row's, and nothing was
+declared outside them.
 EOF
 }
 record_fixture "[1003](https://github.com/o/n/actions/runs/1003)" >"$TMP/record-good.md"
@@ -2192,24 +2197,39 @@ check "the 0.7.0 fixture round-trips byte-identically — the base of every muta
   "byte-identical to record_render's output" record_roundtrip "$FIX"
 # The fixture's provenance, which is what makes it a re-render of a real
 # ceremony's measurements rather than an authoring (D7). The diff against the
-# shipped record must be the renderer's moves and nothing else. NOTE: D6 names
-# three renderer changes and this diff shows two hunks — `eb15988`'s
+# shipped record must be the renderer's moves and nothing else. NOTE: D6 named
+# three renderer changes and this diff showed two hunks — `eb15988`'s
 # `$visibility` substitution renders the word `private` here, which is the
 # same word the literal it replaced wrote, so it is present and invisible. The
 # assertion is on the diff's exact contents for exactly that reason: a hunk
 # count would be measuring the coincidence.
+#
+# #484 is the THIRD renderer move this block records, and it adds the third
+# hunk: `## Known gaps`, rendered on every emission and empty here. Two
+# details of the want-block below are measured at this head rather than
+# reasoned about. First, the count is 10 rather than 5. Second, the blank line
+# and the `Because this repo is private` line swapped places inside the second
+# hunk — the FIXTURE did not move (its diff against the pre-#484 fixture is
+# the new section and nothing else), `diff` simply chose the other of two
+# equally minimal alignments once the file grew. Re-measure both if a fourth
+# renderer move lands; neither is derivable from the change that caused it.
 diff "$SHIPPED" "$FIX" | grep '^[<>]' >"$TMP/fixture-provenance.txt"
 cat >"$TMP/fixture-provenance.want" <<'PROV'
 < Disposable **private** repo `cndgrr/ceremony-drill-0.7.0-a3`, created 2026-08-10T16:18:50Z. It carries the
 > Attempt **`3`** used disposable **private** repo `cndgrr/ceremony-drill-0.7.0-a3`, created
 > 2026-08-10T16:18:50Z. It carries the
-> 
 > Because this repo is private, its run links resolve only for the repo owner.
+> 
+> 
+> ## Known gaps
+> 
+> None declared: every claim this record makes is a probe row's, and nothing was
+> declared outside them.
 PROV
 check "the fixture differs from the shipped record by the renderer's moves alone" 0 "" \
   diff -u "$TMP/fixture-provenance.want" "$TMP/fixture-provenance.txt"
 check "every other line of the fixture is the shipped record's own measurement" 0 "" \
-  bash -c 'diff "$1" "$2" | grep -c "^[<>]" | grep -qx 5' _ "$SHIPPED" "$FIX"
+  bash -c 'diff "$1" "$2" | grep -c "^[<>]" | grep -qx 10' _ "$SHIPPED" "$FIX"
 
 check "a freshly rendered record from the stubbed rehearsal round-trips" 0 \
   "byte-identical to record_render's output" record_roundtrip "$TMP/emitted.md"
@@ -2224,12 +2244,14 @@ check "an aborted probe's record round-trips, dash and all" 0 \
 # mutation below edits. Derived from the FIXTURE's own inputs — parsed back
 # out of it, one verdict flipped, re-rendered — so the count case is a
 # mutation of the fixture's data and not of a record from somewhere else.
-record_parse "$FIX" "$TMP/fx-ctx.tsv" "$TMP/fx-probes.tsv" "$TMP/fx-setup.tsv"
+record_parse "$FIX" "$TMP/fx-ctx.tsv" "$TMP/fx-probes.tsv" "$TMP/fx-setup.tsv" \
+  "$TMP/fx-gaps.tsv"
 check "the fixture's own inputs parse back out of it" 0 "" \
   test -s "$TMP/fx-probes.tsv"
 sed 's/\tPASS\t1\t1\t1\t1\trefused at decide/\tFAIL\t1\t2\t1\t1\ttags moved 1→2, expected a delta of 0/' \
   "$TMP/fx-probes.tsv" >"$TMP/fx-failed.tsv"
-record_render "$TMP/fx-ctx.tsv" "$TMP/fx-failed.tsv" "$TMP/fx-setup.tsv" >"$TMP/rt-failed.md"
+record_render "$TMP/fx-ctx.tsv" "$TMP/fx-failed.tsv" "$TMP/fx-setup.tsv" \
+  "$TMP/fx-gaps.tsv" >"$TMP/rt-failed.md"
 check "a failed drill's record round-trips — a valid record is still an emission" 0 \
   "byte-identical to record_render's output" record_roundtrip "$TMP/rt-failed.md"
 
@@ -2354,17 +2376,29 @@ check "a record that is not one at all is refused, not skipped" 1 \
 
 # -- D6: no grandfathering --------------------------------------------------
 # The shipped 0.7.0 record is an emission at a SUPERSEDED render shape: three
-# commits moved `## Where` after it was committed. It is not re-rendered to
-# match (a guard never rewrites the evidence it grades) and it is not excused
-# either — `record_roundtrip` carries no version gate and no shape exemption,
-# so this failure IS the criterion. The fixture above is what carries this
-# record's measurements forward.
+# commits moved `## Where` after it was committed, and #484 added a section
+# after that. It is not re-rendered to match (a guard never rewrites the
+# evidence it grades) and it is not excused either — `record_roundtrip`
+# carries no version gate and no shape exemption, so this failure IS the
+# criterion. The fixture above is what carries this record's measurements
+# forward.
+#
+# What the failure SAYS moved with #484, and the assertions moved with it: the
+# parse locates every section heading before it reads a single field, so a
+# record predating `## Known gaps` is now refused one step earlier than the
+# `## Where` line it also disagrees about. The diagnosis names the heading it
+# wanted, which is the same class of answer and no less precise — and #373's
+# own "a record missing a whole section names the heading it wanted" case,
+# below, is what pinned that shape in the first place.
 check "the shipped 0.7.0 record is classified an emission, not excused as prose" 0 \
   "" bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
     record_class "$2"; [ "$RECORD_CLASS" = emission ]' _ "$ROOT" "$SHIPPED"
 check "and it FAILS the round trip — a superseded render shape is not grandfathered" 1 \
-  "not the scratch-repo line" record_roundtrip "$SHIPPED"
-check "the failure names the line the render moved" 1 "0.7.0.md:13" \
+  "no '## Known gaps' heading" record_roundtrip "$SHIPPED"
+check "the failure says it is not a rendered record, never that it is fine" 1 \
+  "not a rendered record" record_roundtrip "$SHIPPED"
+check "an unparseable shipped record is a failure and never a skip" 1 \
+  "cannot be parsed back into the inputs that would render it" \
   record_roundtrip "$SHIPPED"
 
 # -- D9: the class is read from the record, and it fails closed -------------
@@ -2386,10 +2420,15 @@ check "a record declaring neither shape is graded as an emission" 0 \
     record_class "$2"; printf "%s: %s\n" "$RECORD_CLASS" "$RECORD_CLASS_WHY"
     [ "$RECORD_CLASS" = emission ]' _ "$ROOT" "$ROOT/drills/0.1.0.md"
 # Appended rather than inserted, so the case isolates what it is about: the
-# heading lands after the conclusion, where nothing is parsed, so the parse
-# still succeeds and the failure is the round trip's rather than a displaced
-# line's. A record that declared both AND broke the parse would fail for two
-# reasons and measure neither.
+# heading lands past every section the record has, rather than displacing a
+# line some field lookup depends on. A record that declared both AND broke a
+# field's parse would fail for two reasons and measure neither.
+#
+# #484 moved WHERE the appended heading lands: the conclusion is no longer
+# last, so it falls inside `## Known gaps` and the parse refuses it by line
+# number instead of the re-render reporting it as a difference. The assertion
+# is unchanged and so is what it measures — a record declaring both shapes is
+# graded as an emission and fails.
 {
   cat "$FIX"
   printf '\n## Scope ruling — doors unchanged, no disposable-repo rehearsal\n'
@@ -2446,6 +2485,377 @@ check "a bare-version tree with no record at all fails" 1 \
   "there is no drill" bash "$GUARD" "$TMP/guard-missing"
 check "a tree with no version source is an error, never a silent pass" 1 \
   "cannot read the version" bash "$GUARD" "$TMP/guard-nonesuch"
+
+# ---------------------------------------------------------------------------
+# `## Known gaps` (#484) — the sixth section, and the first thing in the
+# record that is DECLARED rather than measured.
+#
+# The distinction the section exists to hold is D3's: a gap is coverage no
+# probe drives at all, never a probe that ran and failed. The failed probe
+# already has a row, a preamble sentence and the not-established tail, and all
+# three are asserted elsewhere in this suite; nothing below softens any of them.
+# ---------------------------------------------------------------------------
+# The empty state first, on the green public emission the suite already has.
+check "a fresh emission carries the section" 0 "## Known gaps" cat "$TMP/emitted.md"
+check "with the none-declared sentence when nothing was declared" 0 \
+  "None declared: every claim this record makes is a probe row's" cat "$TMP/emitted.md"
+check "and the section is the record's LAST" 0 "## Known gaps" \
+  bash -c 'grep "^## " "$1" | tail -n 1' _ "$TMP/emitted.md"
+check "an emission with no gaps declares none rather than omitting the section" 1 "" \
+  grep -qE '^- \*\*' <(sed -n '/^## Known gaps$/,$p' "$TMP/emitted.md")
+
+# Two gaps, through the CLI and the stub — the whole path, not record_render
+# alone: `--gap` has to survive argument parsing, the TSV and the render.
+stub_reset
+green_scenario "$TMP/gaps.scenario"
+gaps_out="$(run_rehearsal "$TMP/gaps.scenario" --out "$TMP/gaps.md" \
+  --gap 'the dispatch entrance|no probe drives release.yml at its workflow_dispatch entrance, so the push half is what this rehearsal establishes' \
+  --gap 'consumer callers|nothing here drives a consumer repository running the reusable workflow from its own tree' 2>&1)"
+gaps_rc=$?
+check "a rehearsal with two declared gaps completes" 0 "" test "$gaps_rc" -eq 0
+check "and still runs every probe" 0 "probes passed 8/8, failed 0" \
+  printf '%s\n' "$gaps_out"
+sed -n '/^## Known gaps$/,$p' "$TMP/gaps.md" | grep '^- ' >"$TMP/gaps.lines"
+cat >"$TMP/gaps.want" <<'GAPS'
+- **the dispatch entrance** — no probe drives release.yml at its workflow_dispatch entrance, so the push half is what this rehearsal establishes
+- **consumer callers** — nothing here drives a consumer repository running the reusable workflow from its own tree
+GAPS
+check "both gaps render, one line each, verbatim and in declaration order" 0 "" \
+  diff -u "$TMP/gaps.want" "$TMP/gaps.lines"
+check "a declared gap never re-wraps, however long the body" 0 "2" \
+  bash -c 'wc -l < "$1" | tr -d " "' _ "$TMP/gaps.lines"
+check "the declared record carries the preamble, not the none sentence" 1 "" \
+  grep -qF 'None declared' "$TMP/gaps.md"
+check "a record with declared gaps round-trips" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$TMP/gaps.md"
+check "and passes the shape check" 0 "eight probe rows" record_check "$TMP/gaps.md"
+
+# The fourth TSV: the parse hands back exactly the pairs that were declared,
+# in order. That is what makes the amend below a re-render rather than an edit.
+record_parse "$TMP/gaps.md" "$TMP/g-ctx.tsv" "$TMP/g-probes.tsv" "$TMP/g-setup.tsv" \
+  "$TMP/g-gaps.tsv"
+printf '%s\t%s\n%s\t%s\n' \
+  'the dispatch entrance' 'no probe drives release.yml at its workflow_dispatch entrance, so the push half is what this rehearsal establishes' \
+  'consumer callers' 'nothing here drives a consumer repository running the reusable workflow from its own tree' \
+  >"$TMP/g-gaps.want"
+check "record_parse writes the gaps back out as its fourth TSV, in order" 0 "" \
+  diff -u "$TMP/g-gaps.want" "$TMP/g-gaps.tsv"
+check "an emission with no gaps parses to an empty fourth TSV" 0 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_parse "$2" "$3/e-ctx.tsv" "$3/e-probes.tsv" "$3/e-setup.tsv" "$3/e-gaps.tsv"
+    [ ! -s "$3/e-gaps.tsv" ]' _ "$ROOT" "$TMP/emitted.md" "$TMP"
+
+# Nothing else moves. The gaps are their own section and change no other, so
+# the two emissions above are byte-identical everywhere above the heading — a
+# renderer change that quietly re-flowed an existing section would red every
+# consumer's stale record for the wrong reason.
+check "declaring a gap moves no other section of the record" 0 "" \
+  bash -c 'diff <(sed "/^## Known gaps$/,\$d" "$1") <(sed "/^## Known gaps$/,\$d" "$2")' \
+  _ "$TMP/emitted.md" "$TMP/gaps.md"
+
+# -- D6's refusals, every one of them, each before the scratch repo exists ---
+# The refusal is at argument-parse time on purpose: a typo rejected after the
+# repo existed would have burned a scratch name to say so.
+gap_refusal() { # <spec…> — a rehearsal that must die on its --gap
+  stub_reset
+  green_scenario "$TMP/gap-refusal.scenario"
+  local -a args=()
+  local spec
+  for spec in "$@"; do args+=(--gap "$spec"); done
+  run_rehearsal "$TMP/gap-refusal.scenario" --out "$TMP/gap-refusal.md" "${args[@]}"
+}
+check "a gap with no separator is refused" 1 "has no '|'" gap_refusal 'just a title'
+check "an empty title is refused" 1 "has an empty title" gap_refusal '|a body'
+check "an empty body is refused" 1 "has an empty body" gap_refusal 'a title|'
+check "a TAB anywhere in a gap is refused" 1 "carries a TAB" \
+  gap_refusal "$(printf 'a\ttitle|a body')"
+check "a newline in a gap is refused" 1 "carries a newline" \
+  gap_refusal "$(printf 'a title|a\nbody')"
+check "leading whitespace in a title is refused" 1 "leading or trailing whitespace in its title" \
+  gap_refusal ' a title|a body'
+check "trailing whitespace in a title is refused" 1 "leading or trailing whitespace in its title" \
+  gap_refusal 'a title |a body'
+check "leading whitespace in a body is refused" 1 "leading or trailing whitespace in its body" \
+  gap_refusal 'a title| a body'
+check "trailing whitespace in a body is refused" 1 "leading or trailing whitespace in its body" \
+  gap_refusal 'a title|a body '
+check "two gaps sharing a title are refused" 1 "which an earlier --gap already declared" \
+  gap_refusal 'same title|one' 'same title|two'
+# Each refusal names WHICH gap defeated it, so a run declaring several does not
+# leave its author grepping. Three gaps here and the duplicate is the THIRD:
+# the offender is the second `same`, not the first, because the first is what
+# it collides with. A refusal naming #2 would be pointing at the innocent one.
+check "the refusal names which gap defeated it" 1 "--gap #3" \
+  gap_refusal 'first|one' 'same|two' 'same|three'
+check "a body may carry the separator; the split is at the FIRST one" 1 "--gap #2" \
+  gap_refusal 'a title|a body | with a pipe in it' 'a title|and a duplicate'
+# The record's OWN separator in a title, which is the refusal round 1 found
+# missing (@codex-bot-andresmgsl, @claude-bot-andresmgsl). `record_parse` cuts
+# at the first `** — `, so this title would come back as `alpha` and the round
+# trip could not tell: re-rendering the re-cut pair recreates the same bytes.
+# The asymmetry is the point and both halves are pinned — the title is refused,
+# the identical sequence in a BODY is not, and the second case proves the
+# refusal is not just matching the substring anywhere in the argument.
+check "a title carrying the record's own separator is refused" 1 \
+  "carries '** — ' in its TITLE" gap_refusal 'alpha** — beta|gamma'
+check "and the refusal names which gap defeated it" 1 "--gap #2" \
+  gap_refusal 'fine|one' 'alpha** — beta|gamma'
+check "a BODY carrying the same separator is accepted" 0 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    printf "a title\ta body ** — with the separator in it\n" >"$2"
+    record_gap_rows "$2" | grep -qxF -- "- **a title** — a body ** — with the separator in it"' \
+  _ "$ROOT" "$TMP/gap-body-sep.tsv"
+# And the LIBRARY refuses it too, driven straight through `record_render` with
+# no CLI in the way. The CLI refusal is where an author wants to hear it; this
+# is where the invariant lives, because `record_gap_rows` is the only thing
+# that ever writes a gap line and `record_parse` cuts at the first separator.
+# A guard in `gap_add` alone would make render/parse inversion a property of
+# one argument parser rather than of the pair.
+printf 'alpha** — beta\tgamma\n' >"$TMP/gap-ambiguous.tsv"
+check "record_gap_rows refuses such a title with no CLI in the way" 1 \
+  "carries the title/body separator" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_gap_rows "$2"' _ "$ROOT" "$TMP/gap-ambiguous.tsv"
+check "and record_render propagates it instead of returning the record" 1 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_render "$2" "$3" "$4" "$5" >/dev/null 2>&1' \
+  _ "$ROOT" "$TMP/g-ctx.tsv" "$TMP/g-probes.tsv" "$TMP/g-setup.tsv" "$TMP/gap-ambiguous.tsv"
+# The measurement behind "before the scratch repo is created": the last
+# refusal above ran under the stub, and the stub records every call it is
+# asked to make.
+#
+# It is asserted for the last refusal only, and that is enough because the
+# property is STRUCTURAL rather than per-case: `gap_add` runs inside the
+# argument-parsing loop at the top of `drill/rehearsal.sh`, which completes
+# before the first remote read — so no ordering of `--gap` arguments can put a
+# refusal after a call. Each case above additionally calls `stub_reset`, so
+# the log read here is the last case's alone
+# (@claude-bot-andresmgsl, round 1).
+check "no gh call was made before the refusal" 0 "0" \
+  bash -c 'wc -l < "$1" | tr -d " "' _ "$TMP/state/calls"
+check "and no scratch repo was created" 1 "" test -d "$TMP/state/$(san "$SCRATCH")"
+
+# -- D8: record_check grades the section at emission time --------------------
+# A malformed section reds where it is WRITTEN rather than at the next cut.
+sed 's/^- \*\*the dispatch entrance\*\* — .*$/- **the dispatch entrance** — /' \
+  "$TMP/gaps.md" >"$TMP/gap-nobody.md"
+check "record_check reds a gap line with no body" 1 "carry no title or no body" \
+  record_check "$TMP/gap-nobody.md"
+sed 's/^- \*\*the dispatch entrance\*\* — /- ** — /' "$TMP/gaps.md" >"$TMP/gap-notitle.md"
+check "record_check reds a gap line with no title" 1 "carry no title or no body" \
+  record_check "$TMP/gap-notitle.md"
+# Neither sentence nor line: the section is there and says nothing at all.
+awk '/^## Known gaps$/ { print; print ""; exit } { print }' "$TMP/gaps.md" \
+  >"$TMP/gap-silent.md"
+check "record_check reds a section carrying neither the sentence nor a gap" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-silent.md"
+check "and reds a record with no such section at all" 1 "has no '## Known gaps' section" \
+  bash -c 'sed "/^## Known gaps$/,\$d" "$1" >"$2"
+    source "$3/drill/lib/probes.sh"; source "$3/drill/lib/record.sh"
+    record_check "$2"' _ "$TMP/gaps.md" "$TMP/gap-none-at-all.md" "$ROOT"
+
+# The empty-state sentence is graded WHOLE, and it is hard-wrapped across two
+# lines. Grading its first line alone greened a section carrying half a
+# sentence and no gap line — the exact shape D8 exists to red
+# (@codex-bot-andresmgsl, round 2). All three mutilations below leave the
+# first line intact, so each one passed before the fix.
+#
+# `$TMP/emitted.md` is the no-gap emission, so its section is the sentence and
+# nothing else; the failure has nowhere else to hide.
+sed '/^declared outside them\.$/d' "$TMP/emitted.md" >"$TMP/gap-half-sentence.md"
+check "record_check reds a TRUNCATED empty-state sentence" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-half-sentence.md"
+# The other end of the same sentence: the tail alone is not the claim either.
+sed "/^None declared: every claim this record makes is a probe row's, and nothing was$/d" \
+  "$TMP/emitted.md" >"$TMP/gap-tail-only.md"
+check "and reds one whose FIRST line is the missing half" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-tail-only.md"
+# Both lines present, no longer contiguous. This is what the newline-bracketed
+# match buys over two independent searches: the sentence is a wrapped whole,
+# not two lines that happen to be in the section.
+awk '/^declared outside them\.$/ { print ""; print; next } { print }' \
+  "$TMP/emitted.md" >"$TMP/gap-split-sentence.md"
+check "and reds one whose two lines are no longer contiguous" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-split-sentence.md"
+# A line CONTAINING the sentence is not the sentence. The old check was a
+# substring grep, so quoting the first line inside a longer one satisfied it;
+# the bracketed match is line-exact, which is the second thing it buys.
+sed "s/^None declared: /> quoting the record: None declared: /" \
+  "$TMP/emitted.md" >"$TMP/gap-quoted-sentence.md"
+check "and reds one where the sentence is only CONTAINED in a longer line" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-quoted-sentence.md"
+# The must-NOT-fire half, so the four above cannot be satisfied by a check
+# that reds everything: the untouched emission still passes.
+check "while the untouched emission still passes the shape check" 0 \
+  "eight probe rows" record_check "$TMP/emitted.md"
+
+# -- must-fail: the section list stays CLOSED --------------------------------
+# #484 adds one member to it and does not open it. A seventh heading the
+# renderer never wrote lands inside the last section, where the parse refuses
+# it by line number.
+{
+  cat "$TMP/gaps.md"
+  printf '\n## Something\n\nA section no renderer writes.\n'
+} >"$TMP/rt-seventh.md"
+check "a section the renderer did not write is refused, by line" 1 \
+  "not a gap line, and not one of the section's own sentences" \
+  record_roundtrip "$TMP/rt-seventh.md"
+# Measured off the mutated file rather than hard-coded: the line moves with
+# every earlier section, and a stale literal here would pass on the wrong line.
+seventh_line="$(grep -n '^## Something' "$TMP/rt-seventh.md" | cut -d: -f1)"
+check "and the refusal names the line it is on" 1 "rt-seventh.md:$seventh_line" \
+  record_roundtrip "$TMP/rt-seventh.md"
+
+# -- must-fail: a mangled gap line ------------------------------------------
+# The separator dropped. The parse must RED by line number rather than
+# silently read an empty body and re-render a record it invented.
+sed 's/^- \*\*consumer callers\*\* — /- **consumer callers** /' "$TMP/gaps.md" \
+  >"$TMP/rt-mangled.md"
+check "a gap line with no separator is a parse failure, not an empty body" 1 \
+  'the gap line has no `** — ` between its title and its body' \
+  record_roundtrip "$TMP/rt-mangled.md"
+mangled_line="$(grep -n '^- \*\*consumer callers\*\* ' "$TMP/rt-mangled.md" | cut -d: -f1)"
+check "and it names the line rather than the section" 1 "rt-mangled.md:$mangled_line" \
+  record_roundtrip "$TMP/rt-mangled.md"
+
+# -- must-fail: a re-wrapped gap --------------------------------------------
+# D5's decision, held by a case, so the next reader who wants pretty output
+# finds out here why it was refused: a wrap is a transformation the parse
+# would have to invert exactly, and one disagreeing by a single space would
+# red the round trip on a record nobody edited.
+awk '/^- \*\*consumer callers\*\* — / {
+       print "- **consumer callers** — nothing here drives a consumer"
+       print "repository running the reusable workflow from its own tree"
+       next
+     } { print }' "$TMP/gaps.md" >"$TMP/rt-wrapped.md"
+check "a hard-wrapped gap body is refused" 1 \
+  "not a gap line, and not one of the section's own sentences" \
+  record_roundtrip "$TMP/rt-wrapped.md"
+
+# -- D4's honest cost, PINNED rather than left unstated ----------------------
+# The round trip cannot tell a declared gap from a typed one: the parse reads
+# gap lines back out and the render writes them again verbatim. That is not a
+# hole nobody noticed — it is accepted, with its reason, in drills/README.md,
+# and this case is what stops a later reader mistaking it for one. #373 D4
+# already priced the only cure, committing the render inputs beside the
+# record, and rejected it. The reason it is safe is monotonicity: a gap entry
+# only ever subtracts from what the record claims, and no wording of one can
+# manufacture a probe that passed.
+{
+  sed '/^## Known gaps$/,$d' "$TMP/emitted.md"
+  printf '## Known gaps\n\n'
+  printf 'Declared before the run and rendered here as given. Each names something no\n'
+  printf 'probe drives, so the rehearsal establishes nothing about it; a probe that ran\n'
+  printf 'and failed is not a gap and is written in its own row above.\n\n'
+  printf -- '- **typed by hand** — nobody passed --gap for this one\n'
+} >"$TMP/rt-typed-gap.md"
+check "a HAND-ADDED gap entry passes the round trip — the accepted cost, pinned" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$TMP/rt-typed-gap.md"
+check "and drills/README.md states that cost rather than leaving it to be found" 0 \
+  "a hand-added gap entry survives the round trip" cat "$ROOT/drills/README.md"
+check "with the monotonicity reason it is accepted for" 0 \
+  "monotone in the safe direction" cat "$ROOT/drills/README.md"
+
+# -- D7: --amend-record ------------------------------------------------------
+# Without this mode the section is nearly unusable: a reviewer asking for a
+# disclosure mid-panel would cost a full eight-probe rehearsal against a fresh
+# scratch repo, which is the cost that made the second-document option
+# unacceptable on #482.
+amend() { (cd "$ROOT" && ./drill/rehearsal.sh --amend-record "$@"); }
+cp "$TMP/emitted.md" "$TMP/amend-target.md"
+sed '/^## Known gaps$/,$d' "$TMP/amend-target.md" >"$TMP/amend-before.txt"
+check "--amend-record adds a gap to a round-tripping emission" 0 "amended" \
+  amend "$TMP/amend-target.md" --gap 'the dispatch entrance|no probe drives it'
+check "the amended record round-trips" 0 "byte-identical to record_render's output" \
+  record_roundtrip "$TMP/amend-target.md"
+check "the amended record carries the gap" 0 \
+  '- **the dispatch entrance** — no probe drives it' cat "$TMP/amend-target.md"
+check "and no longer claims none were declared" 1 "" \
+  grep -qF 'None declared' "$TMP/amend-target.md"
+sed '/^## Known gaps$/,$d' "$TMP/amend-target.md" >"$TMP/amend-after.txt"
+check "the record's five other sections are byte-unchanged by the amend" 0 "" \
+  diff -u "$TMP/amend-before.txt" "$TMP/amend-after.txt"
+check "a second amend appends beside the first, in order" 0 "amended" \
+  amend "$TMP/amend-target.md" --gap 'consumer callers|nothing drives one'
+sed -n '/^## Known gaps$/,$p' "$TMP/amend-target.md" | grep '^- ' >"$TMP/amend.lines"
+cat >"$TMP/amend.want" <<'AMEND'
+- **the dispatch entrance** — no probe drives it
+- **consumer callers** — nothing drives one
+AMEND
+check "both amended gaps stand, in the order they were added" 0 "" \
+  diff -u "$TMP/amend.want" "$TMP/amend.lines"
+check "a title the record already declares is refused" 1 "already declares" \
+  amend "$TMP/amend-target.md" --gap 'consumer callers|a second time'
+check "--amend-record with no --gap refuses rather than rewriting for nothing" 1 \
+  "needs at least one --gap" amend "$TMP/amend-target.md"
+
+# ROUND 1's reachable state, pinned step by step. @claude-bot-andresmgsl drove
+# this exact sequence against a copy of the golden record and it went all the
+# way through: `alpha** — beta` was accepted and written, `alpha` — a title
+# NOBODY had declared — was then refused as a duplicate because the parse had
+# cut the stored title down to it, and a second `alpha** — beta` was accepted,
+# leaving a record with two gap lines whose parsed titles were both `alpha`.
+# The round trip greened all of it. D6 says in as many words that two gaps may
+# not share a title, so the tool was writing a record that broke a stated
+# invariant. It now stops at step 1, and the two steps that followed from it
+# are asserted as no longer reachable rather than merely unlikely.
+cp "$TMP/emitted.md" "$TMP/amend-round1.md"
+check "step 1: the ambiguous title is refused, and not written" 1 \
+  "carries '** — ' in its TITLE" \
+  amend "$TMP/amend-round1.md" --gap 'alpha** — beta|gamma'
+check "and the record is byte-unchanged by the refusal" 0 "" \
+  cmp "$TMP/emitted.md" "$TMP/amend-round1.md"
+check "step 2: 'alpha' is therefore still a title anybody may declare" 0 "amended" \
+  amend "$TMP/amend-round1.md" --gap 'alpha|a title nothing stole'
+check "step 3: and a SECOND 'alpha' is refused, as D6 requires" 1 "already declares" \
+  amend "$TMP/amend-round1.md" --gap 'alpha|a second body'
+# The invariant the sequence used to defeat, measured on the record itself:
+# every gap line's parsed title is distinct. Read through `record_parse`, not
+# by eye, because the parsed title is exactly what the old bug disagreed with
+# the rendered line about.
+check "no two gap lines in the amended record share a parsed title" 0 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_parse "$2" "$3/r1-ctx.tsv" "$3/r1-probes.tsv" "$3/r1-setup.tsv" "$3/r1-gaps.tsv"
+    all=$(cut -f1 "$3/r1-gaps.tsv" | wc -l)
+    uniq=$(cut -f1 "$3/r1-gaps.tsv" | sort -u | wc -l)
+    [ "$all" -gt 0 ] && [ "$all" = "$uniq" ]' _ "$ROOT" "$TMP/amend-round1.md" "$TMP"
+
+# It refuses to LAUNDER, which is the point of the mode's preconditions. Both
+# refusals must leave the file byte-identical: the unblock for a record that
+# does not round-trip is to re-run the instrument, never to amend it green.
+cp "$SHIPPED" "$TMP/amend-stale.md"
+check "--amend-record refuses a record that does not already round-trip" 1 \
+  "does not round-trip as committed" amend "$TMP/amend-stale.md" --gap 'a|b'
+check "and says the unblock is to re-run the instrument" 1 \
+  "RE-RUN the instrument and commit what it writes" \
+  amend "$TMP/amend-stale.md" --gap 'a|b'
+check "the stale record is left byte-unchanged" 0 "" cmp "$SHIPPED" "$TMP/amend-stale.md"
+cp "$ROOT/drills/0.6.3.md" "$TMP/amend-ruling.md"
+check "--amend-record refuses a scope ruling" 1 "is not the instrument's emission" \
+  amend "$TMP/amend-ruling.md" --gap 'a|b'
+check "naming the class it read off the record" 1 "it declares a scope ruling" \
+  amend "$TMP/amend-ruling.md" --gap 'a|b'
+check "the scope ruling is left byte-unchanged" 0 "" \
+  cmp "$ROOT/drills/0.6.3.md" "$TMP/amend-ruling.md"
+
+# No network, no repository — ASSERTED, not asserted by inspection. The stub
+# records every call it is asked to make, and the amend must make none.
+stub_reset
+cp "$TMP/emitted.md" "$TMP/amend-offline.md"
+(
+  export PATH="$STUB_BIN:$PATH" DRILL_STUB_STATE="$TMP/state"
+  cd "$ROOT" && ./drill/rehearsal.sh --amend-record "$TMP/amend-offline.md" \
+    --gap 'offline|no call was made'
+) >"$TMP/amend-offline.out" 2>&1
+check "the amend under the gh stub succeeds" 0 "amended" cat "$TMP/amend-offline.out"
+check "and made no gh call whatsoever" 0 "0" \
+  bash -c 'wc -l < "$1" | tr -d " "' _ "$TMP/state/calls"
+check "and created no repository" 1 "" test -d "$TMP/state/$(san "$SCRATCH")"
 
 # ---------------------------------------------------------------------------
 # Argument refusals: the CLI is a door too.
