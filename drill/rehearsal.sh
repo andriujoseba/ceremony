@@ -125,6 +125,20 @@ gap_add() { # <'title|body'> — every D6 refusal, each naming which gap defeate
       refuse "--gap #$n ('$title') has leading or trailing whitespace in its body, which would not survive a re-render."
       ;;
   esac
+  # The record's own separator, and the one refusal whose absence the round
+  # trip could not see. `record_render` writes `- **<title>** — <body>` and
+  # `record_parse` cuts at the FIRST `** — `, so a title carrying it comes back
+  # cut at its own interior — and re-rendering that re-cut pair recreates the
+  # identical bytes, which is why `record_roundtrip` passed over it. The pair
+  # is what was lost, not the line. A body may still carry the separator, for
+  # the same reason a body may carry a `|` above: the split is at the first
+  # one, so only the left half has to stay clear of it
+  # (@codex-bot-andresmgsl, @claude-bot-andresmgsl, round 1).
+  case "$title" in
+    *'** — '*)
+      refuse "--gap #$n ('$title') carries '** — ' in its TITLE, which is the record's own separator between a title and its body. record_parse splits at the FIRST one, so this title would come back cut and the record could then declare two gaps sharing a parsed title (#484 D6). A body may carry it; a title may not."
+      ;;
+  esac
   for seen in ${gap_specs[@]+"${gap_specs[@]}"}; do
     [ "${seen%%$'\t'*}" != "$title" ] ||
       refuse "--gap #$n declares the title '$title', which an earlier --gap already declared. Two gaps may not share a title."

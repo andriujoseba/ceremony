@@ -100,10 +100,29 @@ declared outside them."
 # by one space reds the round trip on a record nobody edited. Not wrapping is
 # the only shape that is invertible by construction, and a long line is the
 # price.
+#
+# It REFUSES a title carrying `** — `, the separator the next `printf` is about
+# to write. This is the library's half of the round-1 fix: `drill/rehearsal.sh`
+# refuses the same title at argument-parse time, before a scratch repo exists,
+# which is where an author wants to hear it — but the invariant belongs here,
+# because this function is the only thing that ever writes a gap line and
+# `record_parse` cuts at the FIRST separator. Guarding only the CLI would make
+# "what the renderer writes, the parse inverts exactly" a property of one
+# argument parser rather than of the pair. The round trip cannot stand in for
+# it: re-rendering the re-cut pair recreates the identical bytes, so a record
+# whose declared title was lost passes byte-identity
+# (@codex-bot-andresmgsl, @claude-bot-andresmgsl, round 1).
 record_gap_rows() {
   local tsv="${1:?}" title body
   while IFS=$'\t' read -r title body; do
     [ -n "${title:-}" ] || continue
+    case "$title" in
+      *'** — '*)
+        printf 'record_gap_rows: the gap title %s carries the title/body separator `** — `, which record_parse cuts at, so this pair would not survive its own render. A body may carry it; a title may not.\n' \
+          "'$title'" >&2
+        return 1
+        ;;
+    esac
     printf -- '- **%s** — %s\n' "$title" "$body"
   done <"$tsv"
 }
@@ -556,7 +575,9 @@ EOF
   printf '\n## Known gaps\n\n'
   if [ -n "$gaps" ] && [ -s "$gaps" ]; then
     printf '%s\n\n' "$RECORD_GAP_PREAMBLE"
-    record_gap_rows "$gaps"
+    # Propagated, never swallowed: a render that could not write an invertible
+    # gap line must not return a record its caller will then commit.
+    record_gap_rows "$gaps" || return 1
   else
     printf '%s\n' "$RECORD_GAP_NONE"
   fi
@@ -1110,9 +1131,20 @@ record_parse() {
         ;;
     esac
     gap_rest="${line#- \*\*}"
-    # The FIRST separator, so a body may carry `** — ` and the split is still
-    # invertible byte for byte: whatever lands in the body is re-rendered
-    # after the same separator it was taken from.
+    # The FIRST separator, so a body may carry `** — `.
+    #
+    # Byte-identity is NOT what makes that safe, and this comment used to say
+    # it was: re-rendering any pair this split produces recreates the line it
+    # came from, including a pair cut out of the middle of a title, so the
+    # round trip greens a record whose declared title was lost
+    # (@claude-bot-andresmgsl, round 1). What makes the DECLARED pair
+    # recoverable is that a title may not carry the separator at all —
+    # `record_gap_rows` refuses to write such a line and `gap_add` refuses to
+    # accept one — so the first separator is always the boundary the writer
+    # meant. Nothing is checkable here: after the cut, a title never contains
+    # the sequence and a body carrying it is legitimate input D5 requires be
+    # rendered verbatim, so a refusal at this site could only fire on correct
+    # records. The guard has to live where a pair becomes a line.
     gap_title="${gap_rest%%\*\* — *}"
     if [ "$gap_title" = "$gap_rest" ]; then
       record_parse_die "$file" "$((i + 1))" \
