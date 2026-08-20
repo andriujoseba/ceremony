@@ -119,11 +119,11 @@ Every issue you mint carries, in this order:
   post-merge mechanism above holding unchanged for every criterion it
   already governed.
 
-  **A criterion whose evidence turns out to be beyond a builder's reach is a
-  defect in the issue, and the body is yours.** Reclassify it where it
-  stands, in the same tick — a comment that answers the builder while the
-  body still asks for proof no builder can produce leaves the next reader the
-  same issue (#149).
+  **A criterion whose evidence turns out at claim time to be beyond a
+  builder's reach is a defect in the issue, and the body is yours.**
+  Reclassify it where it stands, in the same tick — a comment that answers
+  the builder while the body still asks for proof no builder can produce
+  leaves the next reader the same issue (#149).
 - **Test plan**: what proves it, including the cases that must fail.
 - **Dependencies**: `Blocked by #N` / `Blocks #N`, and `Part of #E` when an
   epic organizes it. Name a cross-repo dependency the same way with its
