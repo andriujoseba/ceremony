@@ -2681,7 +2681,15 @@ awk '/^declared outside them\.$/ { print ""; print; next } { print }' \
 check "and reds one whose two lines are no longer contiguous" 1 \
   "carries neither the none-declared sentence nor a gap line" \
   record_check "$TMP/gap-split-sentence.md"
-# The must-NOT-fire half, so the three above cannot be satisfied by a check
+# A line CONTAINING the sentence is not the sentence. The old check was a
+# substring grep, so quoting the first line inside a longer one satisfied it;
+# the bracketed match is line-exact, which is the second thing it buys.
+sed "s/^None declared: /> quoting the record: None declared: /" \
+  "$TMP/emitted.md" >"$TMP/gap-quoted-sentence.md"
+check "and reds one where the sentence is only CONTAINED in a longer line" 1 \
+  "carries neither the none-declared sentence nor a gap line" \
+  record_check "$TMP/gap-quoted-sentence.md"
+# The must-NOT-fire half, so the four above cannot be satisfied by a check
 # that reds everything: the untouched emission still passes.
 check "while the untouched emission still passes the shape check" 0 \
   "eight probe rows" record_check "$TMP/emitted.md"
