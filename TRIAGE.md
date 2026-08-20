@@ -91,15 +91,14 @@ Every issue you mint carries, in this order:
 
   **Classify each criterion at mint on a second axis as well: who can
   produce its evidence.** A builder's session is not assumed to reach the
-  host it runs on, the hardware under it, or the network beyond itself,
-  governed boards running their builders in isolation. Ask what command or
-  observation proves the criterion and where that has to run; where the
-  answer is a surface a builder's session cannot reach — a host, physical
-  hardware, a credentialed or paid external service, a production system —
-  the criterion is **operator-owned**. The input to that call is the
-  evidence and never a builder's report or a particular session's
-  capabilities, a builder that has to report it having already paid for the
-  omission (#487).
+  host it runs on, the hardware under it, or the network beyond itself.
+  Ask what command or observation proves the criterion and where that has
+  to run; where the answer is a surface a builder's session cannot reach —
+  a host, physical hardware, a credentialed or paid external service, a
+  production system — the criterion is **operator-owned**. The input to
+  that call is the evidence and never a builder's report or a particular
+  session's capabilities, a builder that has to report it having already
+  paid for the omission (#487).
 
   **Everything else is builder-owned**, reach being measured against the
   session's boundary and not its convenience: slowness, inconvenience, and a
