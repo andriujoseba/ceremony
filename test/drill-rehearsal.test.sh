@@ -2589,9 +2589,48 @@ check "the refusal names which gap defeated it" 1 "--gap #3" \
   gap_refusal 'first|one' 'same|two' 'same|three'
 check "a body may carry the separator; the split is at the FIRST one" 1 "--gap #2" \
   gap_refusal 'a title|a body | with a pipe in it' 'a title|and a duplicate'
+# The record's OWN separator in a title, which is the refusal round 1 found
+# missing (@codex-bot-andresmgsl, @claude-bot-andresmgsl). `record_parse` cuts
+# at the first `** — `, so this title would come back as `alpha` and the round
+# trip could not tell: re-rendering the re-cut pair recreates the same bytes.
+# The asymmetry is the point and both halves are pinned — the title is refused,
+# the identical sequence in a BODY is not, and the second case proves the
+# refusal is not just matching the substring anywhere in the argument.
+check "a title carrying the record's own separator is refused" 1 \
+  "carries '** — ' in its TITLE" gap_refusal 'alpha** — beta|gamma'
+check "and the refusal names which gap defeated it" 1 "--gap #2" \
+  gap_refusal 'fine|one' 'alpha** — beta|gamma'
+check "a BODY carrying the same separator is accepted" 0 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    printf "a title\ta body ** — with the separator in it\n" >"$2"
+    record_gap_rows "$2" | grep -qxF -- "- **a title** — a body ** — with the separator in it"' \
+  _ "$ROOT" "$TMP/gap-body-sep.tsv"
+# And the LIBRARY refuses it too, driven straight through `record_render` with
+# no CLI in the way. The CLI refusal is where an author wants to hear it; this
+# is where the invariant lives, because `record_gap_rows` is the only thing
+# that ever writes a gap line and `record_parse` cuts at the first separator.
+# A guard in `gap_add` alone would make render/parse inversion a property of
+# one argument parser rather than of the pair.
+printf 'alpha** — beta\tgamma\n' >"$TMP/gap-ambiguous.tsv"
+check "record_gap_rows refuses such a title with no CLI in the way" 1 \
+  "carries the title/body separator" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_gap_rows "$2"' _ "$ROOT" "$TMP/gap-ambiguous.tsv"
+check "and record_render propagates it instead of returning the record" 1 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_render "$2" "$3" "$4" "$5" >/dev/null 2>&1' \
+  _ "$ROOT" "$TMP/g-ctx.tsv" "$TMP/g-probes.tsv" "$TMP/g-setup.tsv" "$TMP/gap-ambiguous.tsv"
 # The measurement behind "before the scratch repo is created": the last
 # refusal above ran under the stub, and the stub records every call it is
 # asked to make.
+#
+# It is asserted for the last refusal only, and that is enough because the
+# property is STRUCTURAL rather than per-case: `gap_add` runs inside the
+# argument-parsing loop at the top of `drill/rehearsal.sh`, which completes
+# before the first remote read — so no ordering of `--gap` arguments can put a
+# refusal after a call. Each case above additionally calls `stub_reset`, so
+# the log read here is the last case's alone
+# (@claude-bot-andresmgsl, round 1).
 check "no gh call was made before the refusal" 0 "0" \
   bash -c 'wc -l < "$1" | tr -d " "' _ "$TMP/state/calls"
 check "and no scratch repo was created" 1 "" test -d "$TMP/state/$(san "$SCRATCH")"
@@ -2715,6 +2754,37 @@ check "a title the record already declares is refused" 1 "already declares" \
   amend "$TMP/amend-target.md" --gap 'consumer callers|a second time'
 check "--amend-record with no --gap refuses rather than rewriting for nothing" 1 \
   "needs at least one --gap" amend "$TMP/amend-target.md"
+
+# ROUND 1's reachable state, pinned step by step. @claude-bot-andresmgsl drove
+# this exact sequence against a copy of the golden record and it went all the
+# way through: `alpha** — beta` was accepted and written, `alpha` — a title
+# NOBODY had declared — was then refused as a duplicate because the parse had
+# cut the stored title down to it, and a second `alpha** — beta` was accepted,
+# leaving a record with two gap lines whose parsed titles were both `alpha`.
+# The round trip greened all of it. D6 says in as many words that two gaps may
+# not share a title, so the tool was writing a record that broke a stated
+# invariant. It now stops at step 1, and the two steps that followed from it
+# are asserted as no longer reachable rather than merely unlikely.
+cp "$TMP/emitted.md" "$TMP/amend-round1.md"
+check "step 1: the ambiguous title is refused, and not written" 1 \
+  "carries '** — ' in its TITLE" \
+  amend "$TMP/amend-round1.md" --gap 'alpha** — beta|gamma'
+check "and the record is byte-unchanged by the refusal" 0 "" \
+  cmp "$TMP/emitted.md" "$TMP/amend-round1.md"
+check "step 2: 'alpha' is therefore still a title anybody may declare" 0 "amended" \
+  amend "$TMP/amend-round1.md" --gap 'alpha|a title nothing stole'
+check "step 3: and a SECOND 'alpha' is refused, as D6 requires" 1 "already declares" \
+  amend "$TMP/amend-round1.md" --gap 'alpha|a second body'
+# The invariant the sequence used to defeat, measured on the record itself:
+# every gap line's parsed title is distinct. Read through `record_parse`, not
+# by eye, because the parsed title is exactly what the old bug disagreed with
+# the rendered line about.
+check "no two gap lines in the amended record share a parsed title" 0 "" \
+  bash -c 'source "$1/drill/lib/probes.sh"; source "$1/drill/lib/record.sh"
+    record_parse "$2" "$3/r1-ctx.tsv" "$3/r1-probes.tsv" "$3/r1-setup.tsv" "$3/r1-gaps.tsv"
+    all=$(cut -f1 "$3/r1-gaps.tsv" | wc -l)
+    uniq=$(cut -f1 "$3/r1-gaps.tsv" | sort -u | wc -l)
+    [ "$all" -gt 0 ] && [ "$all" = "$uniq" ]' _ "$ROOT" "$TMP/amend-round1.md" "$TMP"
 
 # It refuses to LAUNDER, which is the point of the mode's preconditions. Both
 # refusals must leave the file byte-identical: the unblock for a record that

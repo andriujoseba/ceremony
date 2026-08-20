@@ -147,6 +147,16 @@ and rejected: the dispatch entrance lives in `.github/workflows/release.yml`,
 outside anything `drill/` reads, so a derived section could not have
 expressed the one gap that motivated it.
 
+A gap line is `- **<title>** — <body>`, and the parse cuts at the **first**
+`** — ` on the line. So a **body** may carry that sequence and a **title** may
+not: the instrument refuses such a title before it does any work, and the
+renderer refuses to write one at all. This is the one rule that matters to
+anyone typing an entry by hand rather than passing `--gap`, because the round
+trip cannot enforce it — re-rendering a title cut at its own interior
+reproduces the same bytes, so the guard would green a record whose title had
+silently changed, and a later entry could then collide with a title nobody
+declared.
+
 A gap can be added **after** the run, without re-running it:
 
 ```
@@ -295,7 +305,9 @@ is:
   parsed back out and re-rendered verbatim, so a hand-typed one passes exactly
   as a declared one does. It is data, like the measurements above, and it is
   accepted for the reason stated under *Known gaps*: a gap entry only ever
-  subtracts from what the record claims.
+  subtracts from what the record claims. For the same reason it cannot see a
+  hand-typed title carrying `** — `, which is why that is refused where a gap
+  is written rather than where a record is graded.
 - **whether a probe's verdict is true.** That is what the probe's own
   before/after counts are for, and `record_check` grades that they are there.
 - **the other two record shapes.** *Doors unchanged* and *WAIVED* are
