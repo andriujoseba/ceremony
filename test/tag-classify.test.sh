@@ -26,19 +26,23 @@ classifier_gate_count() {
   awk '
     BEGIN { quote = sprintf("%c", 39) }
     /^  release-on-tag:$/ { tag = 1 }
-    tag && index($0, "if: steps.classify.outputs.release == " quote "yes" quote) { count++ }
+    tag && index($0, "if: steps.classify.outputs.classification == " quote "release" quote) { count++ }
     END { print count + 0 }
   ' "$WORKFLOW"
 }
 
-check "a final version remains a release" 0 "release=yes" \
+assertion_gate() {
+  assert_step_head | grep -F "if: steps.classify.outputs.classification != 'non-release'"
+}
+
+check "a final version remains a release" 0 "classification=release" \
   classify 1.2.3 ""
-check "an rc remains a release" 0 "release=yes" \
+check "an rc remains a release" 0 "classification=release" \
   classify 1.2.3-rc4 ""
-check "a version wins even over an all-matching namespace" 0 "release=yes" \
+check "a version wins even over an all-matching namespace" 0 "classification=release" \
   classify 1.2.3 '**'
 
-check "a declared drill namespace is a clean no-op" 0 "release=no" \
+check "a declared drill namespace is a clean no-op" 0 "classification=non-release" \
   classify drill/0.1.2-a877cd9 'drill/**'
 check "the no-op log names the namespace" 0 \
   "matched declared non-release namespace 'drill/**'" \
@@ -48,18 +52,18 @@ check "the no-op log names why no release work runs" 0 \
   classify drill/0.1.2-a877cd9 'drill/**'
 
 check "the same drill tag without a declaration reaches the assertion" 0 \
-  "release=yes" classify drill/0.1.2-a877cd9 ""
+  "classification=invalid" classify drill/0.1.2-a877cd9 ""
 check "a non-matching declaration cannot create a fallthrough no-op" 0 \
-  "release=yes" classify malformed-tag 'drill/**'
+  "classification=invalid" classify malformed-tag 'drill/**'
 check "a malformed tag with no declaration preserves the assertion path" 0 \
-  "release=yes" classify malformed-tag ""
+  "classification=invalid" classify malformed-tag ""
 
 # The classifier runs before the version assertion; every release-side step
 # is then explicitly gated. This makes the no-op perform no version read,
 # notes assembly, artifact hook, or publish rather than relying on fallthrough.
 check "the tree-version assertion is gated by classification" 0 \
-  "if: steps.classify.outputs.release == 'yes'" assert_step_head
-check "all four release-side steps carry the classifier gate" 0 "4" \
+  "if: steps.classify.outputs.classification != 'non-release'" assertion_gate
+check "all three publication-side steps require release classification" 0 "3" \
   classifier_gate_count
 
 summary

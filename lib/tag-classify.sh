@@ -8,7 +8,7 @@ tag="${TAG:?tag-classify: TAG required}"
 namespace="${NON_RELEASE_NAMESPACE:-}"
 
 if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]]; then
-  printf 'release=yes\n'
+  printf 'classification=release\n'
   exit 0
 fi
 
@@ -18,7 +18,7 @@ fi
 # shellcheck disable=SC2053
 if [ -n "$namespace" ] && [[ "$tag" == $namespace ]]; then
   echo "NOTICE: tag '$tag' matched declared non-release namespace '$namespace' — skipping release publication and version assertion; creating nothing." >&2
-  printf 'release=no\n'
+  printf 'classification=non-release\n'
 else
-  printf 'release=yes\n'
+  printf 'classification=invalid\n'
 fi
