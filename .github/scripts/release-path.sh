@@ -9,6 +9,7 @@ set -euo pipefail
 printf '%s\n' \
   .github/workflows/release.yml \
   bin/ \
+  lib/tag-classify.sh \
   lib/version.sh \
   lib/decide.sh \
   lib/facts.sh \

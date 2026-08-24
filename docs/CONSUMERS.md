@@ -554,11 +554,24 @@ runner: '"ubuntu-22.04"'
 runner: '["self-hosted","ci-runner"]' # choose one; do not repeat the key
 ```
 
+To declare a tag namespace that is intentionally not a release, add this line
+under the same `with:` key. Omit it to keep the empty default:
+
+```yaml
+non-release-namespace: drill/**
+```
+
 `version-source` selects `file` (a `VERSION` file — box, rig, incubator) or
 `package-json` (the version field, lockfile kept in sync on the post-release
 bump — cast). `runner` is the shared scheduling input described above.
-Everything else a repo might vary is a change to the ceremony itself, made
-in this repo, once.
+`non-release-namespace` is an optional shell glob naming one tag namespace
+that is deliberately not a release, for example `drill/**`. It defaults to
+empty. A matching non-version tag exits successfully before the tree-version
+assertion, release notes, artifact hook, or publication, and logs both the
+matched namespace and that no release was created. With the empty default,
+every tag follows the pre-existing release-or-loud-failure behavior unchanged.
+Everything else a repo might vary is a change to the ceremony itself, made in
+this repo, once.
 
 Keep the merge door on `push` to `main` — never `pull_request`: a
 `pull_request` run from a public fork gets a read-only `GITHUB_TOKEN` that

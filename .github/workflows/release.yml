@@ -26,9 +26,11 @@ name: release
 # * The TAG door: a bare X.Y.Z tag push (no 'v' prefix — box's 0.6.0 set
 #   the scheme) is the documented manual fallback and backfill. The tag must
 #   name the tree's own version; a mismatch fails loudly and creates
-#   nothing. No decide and no label check — the tag is the operator's
-#   explicit act — and no bump: the fallback does not rewrite main (cast's
-#   precedent).
+#   nothing. A caller may declare one non-release namespace glob (for example
+#   drill/**); a matching non-version tag is a logged green no-op before any
+#   version assertion or publication. No decide and no label check — the tag
+#   is the operator's explicit act — and no bump: the fallback does not
+#   rewrite main (cast's precedent).
 #
 # Both doors publish curated changelog prose, never the generated PR list.
 # A final reads its stamped CHANGELOG.md section through lib/changelog.sh;
@@ -62,6 +64,7 @@ name: release
 #       uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>
 #       with:
 #         version-source: file   # or: package-json
+#         non-release-namespace: drill/** # optional; empty keeps loud failure
 #
 # The called workflow runs in the CALLER's context: the caller's event
 # payload (github.ref / github.sha / github.event.before), the caller's
@@ -133,6 +136,14 @@ on:
           For a workflow_dispatch caller: declare a matching input and pass it
           through as the full 40-character lowercase commit SHA that merged.
           An empty value keeps the merge door shut on every non-push event.
+        type: string
+        required: false
+        default: ""
+      non-release-namespace:
+        description: >-
+          Optional glob for a declared tag namespace that is not a release,
+          such as "drill/**". A matching non-version tag is a logged no-op.
+          Empty preserves the loud failure for every non-version tag.
         type: string
         required: false
         default: ""
@@ -373,8 +384,15 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/release-assets"
           echo "RELEASE_ASSETS_DIR=$RUNNER_TEMP/release-assets" >> "$GITHUB_ENV"
+      - name: classify release tag or declared non-release namespace
+        id: classify
+        env:
+          TAG: ${{ github.ref_name }}
+          NON_RELEASE_NAMESPACE: ${{ inputs.non-release-namespace }}
+        run: bash "$CEREMONY_DIR/lib/tag-classify.sh" >> "$GITHUB_OUTPUT"
       - name: the tag must name the tree's own version
         id: assert
+        if: steps.classify.outputs.classification != 'non-release'
         run: |
           # shellcheck source=/dev/null
           . "$CEREMONY_DIR/lib/version.sh"
@@ -386,6 +404,7 @@ jobs:
           fi
           echo "ver=$ver" >> "$GITHUB_OUTPUT"
       - name: release notes — final section or rc fragments
+        if: steps.classify.outputs.classification != 'non-release'
         env:
           VER: ${{ steps.assert.outputs.ver }}
         run: |
@@ -407,11 +426,12 @@ jobs:
       - name: artifact hook — the consumer's own release-artifact action
         # After the tag exists (it fired this door), before the publish —
         # the same contract as the merge door's twin step.
-        if: hashFiles('.github/actions/release-artifact/action.yml') != ''
+        if: steps.classify.outputs.classification != 'non-release' && hashFiles('.github/actions/release-artifact/action.yml') != ''
         uses: ./.github/actions/release-artifact
         with:
           version: ${{ steps.assert.outputs.ver }}
       - name: publish the release
+        if: steps.classify.outputs.classification != 'non-release'
         env:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ steps.assert.outputs.ver }}
