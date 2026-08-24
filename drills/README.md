@@ -94,6 +94,7 @@ so partial setup evidence cannot satisfy the release gate.
    10. a tag inside the caller's declared non-release namespace is a green
        no-op;
    11. a tag outside every namespace refuses, creating nothing.
+
    Every refusal must refuse **creating nothing** — a probe that leaves a
    tag or a release behind on a refusal path is a failed probe.
 
