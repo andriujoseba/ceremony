@@ -2244,24 +2244,33 @@ FIX_SOURCE="$ROOT/drills/0.7.6.md"
 SHIPPED="$ROOT/drills/0.7.0.md"
 
 # -- must pass --------------------------------------------------------------
-check "the 0.7.0 fixture round-trips byte-identically — the base of every mutation" 0 \
+check "the fixture round-trips byte-identically — the base of every mutation" 0 \
   "byte-identical to record_render's output" record_roundtrip "$FIX"
 # The fixture's provenance, which is what makes it a re-render of a real
-# ceremony's measurements rather than an authoring (D7). Re-based on 0.7.6,
-# the fixture is its source's own bytes and the want-block of renderer moves
-# standing between them is EMPTY — which is the state a re-base starts in and
-# the next renderer move is what fills it. Two files rather than one because
-# the mutations below are line-addressed, and a guard must never be pointed at
-# the evidence it grades.
-check "the fixture is the shipped 0.7.6 record, byte for byte" 0 "" \
-  cmp -s "$FIX_SOURCE" "$FIX"
-check "no renderer move stands between the record and the fixture" 0 "0" \
-  bash -c 'diff "$1" "$2" | grep -c "^[<>]" || :' _ "$FIX_SOURCE" "$FIX"
-# And it is the current shape rather than merely a copy: the source record is
-# itself an emission this tree's renderer writes back byte-identically, which
-# is the property the whole section is mutations of.
-check "the record the fixture copies round-trips in this tree" 0 \
-  "byte-identical to record_render's output" record_roundtrip "$FIX_SOURCE"
+# ceremony's measurements rather than an authoring (D7). The diff against the
+# record it copies must be the RENDERER's moves and nothing else, and it is
+# held as a want-block rather than as a byte-identity for one reason: the
+# fixture is what absorbs a renderer move, so it has to be ALLOWED to differ.
+# Re-based on 0.7.6 the block starts EMPTY — today the fixture is its source's
+# own bytes — and the next renderer move is what fills it. That move reds the
+# round trip directly above, which is the "reds on the PR that makes the
+# change rather than at the next cut" drills/README.md rules for; the unblock
+# is re-rendering the FIXTURE to the new shape and writing the difference
+# here, while the shipped record stays history. Two files rather than one
+# because the mutations below are line-addressed, and a guard must never be
+# pointed at the evidence it grades.
+#
+# What is deliberately NOT asserted here: that the SHIPPED record still
+# round-trips in this tree. Today it is byte-identical to the fixture, so the
+# check above already says it; after a renderer move it is unsatisfiable by
+# anything short of re-running a live destructive rehearsal, which is not a
+# renderer change's price. The shipped record is graded where a stale one
+# actually matters — `.github/scripts/record-roundtrip.sh`, which grades the
+# committed record on a bare-VERSION tree, i.e. at the cut that ships it.
+diff "$FIX_SOURCE" "$FIX" | grep '^[<>]' >"$TMP/fixture-provenance.txt" || :
+: >"$TMP/fixture-provenance.want"
+check "the fixture differs from the record it copies by the renderer's moves alone" 0 "" \
+  diff -u "$TMP/fixture-provenance.want" "$TMP/fixture-provenance.txt"
 
 check "a freshly rendered record from the stubbed rehearsal round-trips" 0 \
   "byte-identical to record_render's output" record_roundtrip "$TMP/emitted.md"
