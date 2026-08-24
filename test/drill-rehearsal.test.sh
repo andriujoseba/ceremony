@@ -2222,53 +2222,46 @@ check "it never files an answered read as one that never answered" 1 "" \
 # still passes it, and that the round trip does not — because a check which
 # passes everything would pass these too, and only the pair measures the gap.
 #
-# Every mutation is taken from the 0.7.0 FIXTURE and never from
-# `drills/0.7.0.md` (D6, D7). The shipped record fails before any mutation is
-# applied — it is an emission at a superseded render shape — so a mutation of
-# it would pass for the wrong reason and prove nothing. That is why the
-# unmutated fixture is asserted to pass in this same suite, immediately below.
+# Every mutation is taken from the FIXTURE and never from the shipped record
+# it copies (D6, D7): a guard never rewrites the evidence it grades, and the
+# fixture is what absorbs a renderer move so the suite can keep measuring
+# while the shipped record stays history.
+#
+# The fixture re-based from 0.7.0 to 0.7.6 when the probe set grew (#499). It
+# had to: a record is graded against the instrument in the tree, and an
+# eight-row emission is not what an eleven-probe renderer writes — the
+# preamble differs and three `⬜` lines appear, so it stopped round-tripping
+# and could not be repaired, `record_check` wanting a row per probe and three
+# invented rows being exactly the authoring D7 forbids. drills/README.md
+# rules that case: "a record emitted before a render change is stale, and the
+# guard reds on the PR that makes the change rather than at the next cut."
 # ---------------------------------------------------------------------------
-FIX="$ROOT/test/fixtures/drill-record-0.7.0.golden.md"
+FIX="$ROOT/test/fixtures/drill-record-0.7.6.golden.md"
+# The record the fixture copies, for the provenance assertions below. The
+# SUPERSEDED record — 0.7.0 — is a different variable and a different job; see
+# D6 further down, which needs a record that FAILS.
+FIX_SOURCE="$ROOT/drills/0.7.6.md"
 SHIPPED="$ROOT/drills/0.7.0.md"
 
 # -- must pass --------------------------------------------------------------
 check "the 0.7.0 fixture round-trips byte-identically — the base of every mutation" 0 \
   "byte-identical to record_render's output" record_roundtrip "$FIX"
 # The fixture's provenance, which is what makes it a re-render of a real
-# ceremony's measurements rather than an authoring (D7). The diff against the
-# shipped record must be the renderer's moves and nothing else. NOTE: D6 named
-# three renderer changes and this diff showed two hunks — `eb15988`'s
-# `$visibility` substitution renders the word `private` here, which is the
-# same word the literal it replaced wrote, so it is present and invisible. The
-# assertion is on the diff's exact contents for exactly that reason: a hunk
-# count would be measuring the coincidence.
-#
-# #484 is the THIRD renderer move this block records, and it adds the third
-# hunk: `## Known gaps`, rendered on every emission and empty here. Two
-# details of the want-block below are measured at this head rather than
-# reasoned about. First, the count is 10 rather than 5. Second, the blank line
-# and the `Because this repo is private` line swapped places inside the second
-# hunk — the FIXTURE did not move (its diff against the pre-#484 fixture is
-# the new section and nothing else), `diff` simply chose the other of two
-# equally minimal alignments once the file grew. Re-measure both if a fourth
-# renderer move lands; neither is derivable from the change that caused it.
-diff "$SHIPPED" "$FIX" | grep '^[<>]' >"$TMP/fixture-provenance.txt"
-cat >"$TMP/fixture-provenance.want" <<'PROV'
-< Disposable **private** repo `cndgrr/ceremony-drill-0.7.0-a3`, created 2026-08-10T16:18:50Z. It carries the
-> Attempt **`3`** used disposable **private** repo `cndgrr/ceremony-drill-0.7.0-a3`, created
-> 2026-08-10T16:18:50Z. It carries the
-> Because this repo is private, its run links resolve only for the repo owner.
-> 
-> 
-> ## Known gaps
-> 
-> None declared: every claim this record makes is a probe row's, and nothing was
-> declared outside them.
-PROV
-check "the fixture differs from the shipped record by the renderer's moves alone" 0 "" \
-  diff -u "$TMP/fixture-provenance.want" "$TMP/fixture-provenance.txt"
-check "every other line of the fixture is the shipped record's own measurement" 0 "" \
-  bash -c 'diff "$1" "$2" | grep -c "^[<>]" | grep -qx 10' _ "$SHIPPED" "$FIX"
+# ceremony's measurements rather than an authoring (D7). Re-based on 0.7.6,
+# the fixture is its source's own bytes and the want-block of renderer moves
+# standing between them is EMPTY — which is the state a re-base starts in and
+# the next renderer move is what fills it. Two files rather than one because
+# the mutations below are line-addressed, and a guard must never be pointed at
+# the evidence it grades.
+check "the fixture is the shipped 0.7.6 record, byte for byte" 0 "" \
+  cmp -s "$FIX_SOURCE" "$FIX"
+check "no renderer move stands between the record and the fixture" 0 "0" \
+  bash -c 'diff "$1" "$2" | grep -c "^[<>]" || :' _ "$FIX_SOURCE" "$FIX"
+# And it is the current shape rather than merely a copy: the source record is
+# itself an emission this tree's renderer writes back byte-identically, which
+# is the property the whole section is mutations of.
+check "the record the fixture copies round-trips in this tree" 0 \
+  "byte-identical to record_render's output" record_roundtrip "$FIX_SOURCE"
 
 check "a freshly rendered record from the stubbed rehearsal round-trips" 0 \
   "byte-identical to record_render's output" record_roundtrip "$TMP/emitted.md"
@@ -2313,22 +2306,22 @@ check "and names the line it is on" 1 "first difference at line 8" \
 # back — which is the point. The file must be what the renderer writes, not
 # merely something the parse can read.
 {
-  sed -n '1,25p' "$FIX"
-  sed -n '33p' "$FIX"
-  sed -n '26,32p' "$FIX"
-  sed -n '34,$p' "$FIX"
+  sed -n '1,27p' "$FIX"
+  sed -n '35,36p' "$FIX"
+  sed -n '28,34p' "$FIX"
+  sed -n '37,$p' "$FIX"
 } >"$TMP/rt-reordered.md"
 check "a reordered context field still passes the shape check" 0 \
   "eleven probe rows" record_check "$TMP/rt-reordered.md"
 check "the round trip fails a reordered context field" 1 \
-  "first difference at line 26" record_roundtrip "$TMP/rt-reordered.md"
+  "first difference at line 28" record_roundtrip "$TMP/rt-reordered.md"
 
 # The same, one field deeper: the candidate ref and the candidate SHA swapped
 # in the run sentence. Nothing local catches it — both are free-form strings —
 # but the render writes the SHA twice, and the second copy no longer follows
 # from the first.
-sed -e '4s/`build\/367-cut-0-7-0`/`e6caf31d2c102532efa897ea52903b8a79dd6a65`/' \
-  -e '5s/`e6caf31d2c102532efa897ea52903b8a79dd6a65`/`build\/367-cut-0-7-0`/' \
+sed -e '4s/`build\/499-release-0-7-6`/`cb7a061e71555f47987859f5d769289780eb514e`/' \
+  -e '5s/`cb7a061e71555f47987859f5d769289780eb514e`/`build\/499-release-0-7-6`/' \
   "$FIX" >"$TMP/rt-swapped.md"
 check "the round trip fails a ref and a SHA swapped in the run sentence" 1 \
   "first difference at line" record_roundtrip "$TMP/rt-swapped.md"
@@ -2339,17 +2332,17 @@ check "the round trip fails a ref and a SHA swapped in the run sentence" 1 \
 # side is asserted alone, because "an edited run ID fails" would otherwise be
 # read as more than it proved. It is caught in the PARSE, which is a better
 # diagnostic than the same edit surfacing as a diff.
-sed '66s/\[31408496126\]/[31409999999]/' "$FIX" >"$TMP/rt-runid-text.md"
+sed '66s/\[32766515180\]/[32766999999]/' "$FIX" >"$TMP/rt-runid-text.md"
 check "an edited run ID passes the shape check, which only greps for one" 0 \
   "eleven probe rows" record_check "$TMP/rt-runid-text.md"
 check "the round trip fails a run ID edited in the link text alone" 1 \
-  "link text (31409999999) and its URL's run ID (31408496126) disagree" \
+  "link text (32766999999) and its URL's run ID (32766515180) disagree" \
   record_roundtrip "$TMP/rt-runid-text.md"
 check "and names the line that defeated the parse" 1 \
   "rt-runid-text.md:66" record_roundtrip "$TMP/rt-runid-text.md"
-sed '66s|runs/31408496126|runs/31409999999|' "$FIX" >"$TMP/rt-runid-url.md"
+sed '66s|runs/32766515180|runs/32766999999|' "$FIX" >"$TMP/rt-runid-url.md"
 check "the round trip fails a run ID edited in the URL alone" 1 \
-  "link text (31408496126) and its URL's run ID (31409999999) disagree" \
+  "link text (32766515180) and its URL's run ID (32766999999) disagree" \
   record_roundtrip "$TMP/rt-runid-url.md"
 check "and names that line too" 1 \
   "rt-runid-url.md:66" record_roundtrip "$TMP/rt-runid-url.md"
@@ -2358,7 +2351,7 @@ check "and names that line too" 1 \
 # what the renderer emits for that data, and no self-describing record can say
 # otherwise — D4 rejects the committed-inputs design that could. The run link
 # is what a reader checks that against, and drills/README.md says so.
-sed '66s/31408496126/31409999999/g' "$FIX" >"$TMP/rt-runid-both.md"
+sed '66s/32766515180/32766999999/g' "$FIX" >"$TMP/rt-runid-both.md"
 check "a run ID rewritten on both sides is data, and the round trip says so" 0 \
   "byte-identical to record_render's output" record_roundtrip "$TMP/rt-runid-both.md"
 
@@ -2374,12 +2367,13 @@ check "a changed conclusion count still passes the shape check" 0 \
 check "the round trip fails a changed conclusion count" 1 \
   "Not established: 3 of the eleven" record_roundtrip "$TMP/rt-count.md"
 
-# A truncated record: the probe table cut in half. The rows that remain still
-# parse, and the render then writes the conclusion those four rows imply —
-# four claims and four "nothing established" lines — which is not this file.
+# A truncated record: four rows cut out of the probe table. The rows that
+# remain still parse, and the render then writes the conclusion those seven
+# imply — seven claims and four "nothing established" lines — which is not
+# this file.
 grep -vE '^\| [5678] \|' "$FIX" >"$TMP/rt-halved.md"
-check "a halved probe table reds the shape check as it always did" 1 \
-  "the probe table has 4 rows, expected 8" record_check "$TMP/rt-halved.md"
+check "a truncated probe table reds the shape check as it always did" 1 \
+  "the probe table has 7 rows, expected 11" record_check "$TMP/rt-halved.md"
 check "the round trip fails a halved probe table" 1 \
   "first difference at line" record_roundtrip "$TMP/rt-halved.md"
 
@@ -2388,7 +2382,7 @@ check "the round trip fails a halved probe table" 1 \
 # therefore fine". Both cases below pass `record_check` — they are shaped like
 # records — and both are refused by the parse, by line number.
 check "a pipe in a probe row's note passes the shape check" 0 "eleven probe rows" \
-  bash -c 'sed "66s/refused at decide/refused at decide | by the door/" "$1" >"$2"
+  bash -c 'sed "68s/refused at decide/refused at decide | by the door/" "$1" >"$2"
     source "$3/drill/lib/probes.sh"; source "$3/drill/lib/record.sh"
     record_check "$2"' _ "$FIX" "$TMP/rt-pipe.md" "$ROOT"
 check "the parse refuses it, naming the line and the cell count" 1 \
@@ -2397,9 +2391,9 @@ check "an unparseable record is a failure and never a skip" 1 \
   "cannot be parsed back into the inputs that would render it" \
   record_roundtrip "$TMP/rt-pipe.md"
 # A count column turned into prose: shaped like a table, not a measurement.
-sed '68s/| 1 → 2 | 1 → 2 |/| many | more |/' "$FIX" >"$TMP/rt-prose-counts.md"
+sed '70s/| 1 → 2 | 1 → 2 |/| many | more |/' "$FIX" >"$TMP/rt-prose-counts.md"
 check "the parse refuses a count cell that is prose, naming the line" 1 \
-  "rt-prose-counts.md:68: the tags cell is not a before/after pair" \
+  "rt-prose-counts.md:70: the tags cell is not a before/after pair" \
   record_roundtrip "$TMP/rt-prose-counts.md"
 # A record whose sections are gone entirely is refused before any line number
 # can be meaningful, and says which heading it wanted.
@@ -2419,8 +2413,10 @@ check "a record that is not one at all is refused, not skipped" 1 \
 # after that. It is not re-rendered to match (a guard never rewrites the
 # evidence it grades) and it is not excused either — `record_roundtrip`
 # carries no version gate and no shape exemption, so this failure IS the
-# criterion. The fixture above is what carries this record's measurements
-# forward.
+# criterion. Nothing carries its measurements forward any more: the fixture
+# above re-based onto 0.7.6 when the probe set grew (#499), and 0.7.0's
+# measurements live where they always did, in `drills/0.7.0.md`, which is
+# history and not a fixture.
 #
 # What the failure SAYS moved with #484, and the assertions moved with it: the
 # parse locates every section heading before it reads a single field, so a
