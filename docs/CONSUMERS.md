@@ -1249,10 +1249,10 @@ somewhere real:
 
 **Bring three of the four and you are still triaged**, and triage asks for the
 fourth. These are the shape of a good ask, written here where someone
-preparing one will read them, and deliberately not gates at the door: this
-repository's discussion form is light on purpose, because discussions are
-where ambiguity is allowed and a form demanding rigor at the door defeats the
-room (#24 D4).
+preparing one will read them, and deliberately not gates at the door: the
+ideas form these asks arrive through is light on purpose, because discussions
+are where ambiguity is allowed and a form demanding rigor at the door defeats
+the room (#24 D4).
 
 **Your half is one link, and it is what makes the debt visible**: the local
 workaround **names the upstream discussion or issue, in the body where the
