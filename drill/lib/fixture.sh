@@ -43,12 +43,6 @@ fixture_paths() {
     changelog.d/1.md changelog.d/2.md changelog.d/3.md "drills/$ver.md"
 }
 
-# The tag namespace the drill's caller declares as deliberately not a release
-# (#499 D6). It is the glob docs/CONSUMERS.md uses in its own add-on block,
-# and the probe that pushes a matching tag reads it from here rather than
-# spelling it a second time.
-DRILL_NON_RELEASE_NAMESPACE='drill/**'
-
 # caller_write <dir> <fork-repo> <fork-ref> — docs/CONSUMERS.md's entire
 # release.yml, verbatim but for the pin, which is the drill's whole point,
 # plus the one add-on line that guide documents under the same `with:` key.

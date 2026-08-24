@@ -458,7 +458,11 @@ EOF
 
 Attempt **\`$attempt\`** used disposable **$visibility** repo \`$scratch\`, created
 $created. It carries the
-\`docs/CONSUMERS.md\` release caller verbatim (\`version-source: file\`) over a
+\`docs/CONSUMERS.md\` release caller — that guide's entire \`release.yml\`
+plus the one add-on line it documents under the same \`with:\` key, so
+\`version-source: file\` and
+\`non-release-namespace: $DRILL_NON_RELEASE_NAMESPACE\`, without which the
+tag door's non-release classification is unreachable — over a
 fragment-mode fixture armed at \`$ver-dev\`: a preamble-only
 \`CHANGELOG.md\`, \`changelog.d/README.md\` plus three fragments, and a
 non-blank \`drills/$ver.md\`. The \`release\` label was created there before

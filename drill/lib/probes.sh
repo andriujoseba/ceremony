@@ -32,6 +32,14 @@
 # record, and a record that stops at the first surprise hides every probe
 # nobody then ran.
 
+# The tag namespace the drill's caller declares as deliberately not a release
+# (#499 D6). It is the glob docs/CONSUMERS.md uses in its own add-on block,
+# and it lives HERE rather than beside caller_write because the record names
+# it too: record.sh refuses to load without this file, and the round-trip
+# guard sources exactly these two.
+# shellcheck disable=SC2034 # read by drill/lib/fixture.sh and drill/lib/record.sh
+DRILL_NON_RELEASE_NAMESPACE='drill/**'
+
 DRILL_PROBE_NAMES="merge-door ceremony
 mislabeled ordinary PR
 bare-version PR without \`release\`
