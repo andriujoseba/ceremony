@@ -545,9 +545,6 @@ jobs:
     uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>
     with:
       version-source: file   # or: package-json
-      # Optional: make this declared tag namespace a logged non-release no-op.
-      # Omit it (the default is empty) to keep every non-version tag loud.
-      # non-release-namespace: drill/**
 ```
 
 To route this caller, add one of these lines under its existing `with:` key:
@@ -555,6 +552,13 @@ To route this caller, add one of these lines under its existing `with:` key:
 ```yaml
 runner: '"ubuntu-22.04"'
 runner: '["self-hosted","ci-runner"]' # choose one; do not repeat the key
+```
+
+To declare a tag namespace that is intentionally not a release, add this line
+under the same `with:` key. Omit it to keep the empty default:
+
+```yaml
+non-release-namespace: drill/**
 ```
 
 `version-source` selects `file` (a `VERSION` file — box, rig, incubator) or
