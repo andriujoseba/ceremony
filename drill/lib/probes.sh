@@ -2,6 +2,11 @@
 # The probes, in doctrine order (#313 D1, D3; #321 D1; #499 D6). Sourced,
 # never run.
 #
+# The last three are the tag door's classifications, one probe each. They run
+# after the rc ladder rather than beside probes 5 and 6 because probe 9 needs
+# a version nothing has released yet, which only exists on the far side of
+# the promotion (#499 D6).
+#
 # The list is drills/README.md's, byte-faithful:
 #
 #   1. a merge-door ceremony publishes exactly one release and re-arms main
@@ -13,16 +18,11 @@
 #   6. a mismatched tag refuses;
 #   7. an rc cut publishes a prerelease and stamps nothing;
 #   8. the promotion after it ships the final version;
-#   9. an rc tag through the tag door publishes a prerelease from its
-#      fragments;
-#  10. a tag inside the caller's declared non-release namespace is a green
-#      no-op;
-#  11. a tag outside every namespace refuses, creating nothing.
-#
-# The last three are the tag door's classifications, one probe each (#499 D6).
-# They run after the rc ladder rather than beside probes 5 and 6 because probe
-# 9 needs a version nothing has released yet, which only exists on the far
-# side of the promotion.
+#   9. an rc tag through the tag door publishes a prerelease from its own
+#      tagged tree;
+#   10. a tag inside the caller's declared non-release namespace is a green
+#       no-op;
+#   11. a tag outside every namespace refuses, creating nothing.
 #
 # Every probe reads the tag count and the release count before and after
 # itself. A refusal that leaves a tag or a release behind is a failed probe,

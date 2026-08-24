@@ -88,8 +88,12 @@ so partial setup evidence cannot satisfy the release gate.
    5. a tag-door release from a manual tag;
    6. a mismatched tag refuses;
    7. an rc cut publishes a prerelease and stamps nothing;
-   8. the promotion after it ships the final version.
-
+   8. the promotion after it ships the final version;
+   9. an rc tag through the tag door publishes a prerelease from its own
+      tagged tree;
+   10. a tag inside the caller's declared non-release namespace is a green
+       no-op;
+   11. a tag outside every namespace refuses, creating nothing.
    Every refusal must refuse **creating nothing** — a probe that leaves a
    tag or a release behind on a refusal path is a failed probe.
 
@@ -108,6 +112,23 @@ so partial setup evidence cannot satisfy the release gate.
    release list that does not read back reds its probe and makes no claim
    about what the unread list contains; a failed branch-SHA setup read reds
    only that probe, so the remaining probes and the record survive.
+
+   **The last three are the tag door's classifications, one probe each**, and
+   they run after the rc ladder because the rc tag needs a version nothing
+   has released yet. `lib/tag-classify.sh` answers `release`, `non-release`
+   or `invalid`, and each answer is a different path through the door: a
+   version-shaped tag is asserted against the tree and published — as a
+   prerelease where it is an rc, from the fragments in its own tagged tree
+   rather than from a stamped section; a tag matching the glob the caller
+   declared in `non-release-namespace` exits green **before** the version
+   assertion, the notes, the artifact hook and the publication; anything else
+   falls through to the assertion and refuses loudly. The declared-namespace
+   probe is why the drill's caller stub carries that input at all — with the
+   empty default the classification is unreachable, and a drill cannot
+   rehearse a branch its own fixture has turned off. The namespace probe and
+   the malformed probe differ only in the door's verdict, green against red,
+   over the same *created nothing*: that pair is the classification, and
+   either alone would not be (#499).
 
 ## The record
 
@@ -131,12 +152,12 @@ with the sentence saying none were. It is not optional: a record that states
 an absence a reader has to interpret.
 
 A gap is **coverage no probe drives at all**. The worked example is the one
-that motivated the section: the eight probes drive `push` and tag events, so
+that motivated the section: the probes drive `push` and tag events, so
 a release gate with a `workflow_dispatch` entrance has that entrance driven
 by nothing here, and the rehearsal establishes nothing about it. A probe that
 **ran and failed** is not a gap and never goes here — it already writes its
 own row, its own preamble sentence, and the `**Not established: N of the
-eight**` tail in `## What the rehearsal establishes`. Filing a failure as a
+eleven**` tail in `## What the rehearsal establishes`. Filing a failure as a
 gap would soften a fact the record already states plainly.
 
 Gaps are **declared input to the instrument, not derived prose**. They are
