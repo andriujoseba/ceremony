@@ -1213,6 +1213,63 @@ asserts only that it exists.
 Bumping the pin re-syncs the mirror in the same PR —
 [the pin-bump procedure](#the-pin-bump-procedure).
 
+## Requesting a doctrine change
+
+The section above is how a document **reaches** you, and it is one-way by
+construction: the marker in every `.ceremony/README.md` says these files are
+never edited where they land. That leaves the opposite question unanswered —
+what you do when the doctrine you were handed is itself the problem. This
+section is the answer. It is a **route and not a mechanism**: nothing
+automated crosses a repository boundary, and this repository is never told
+who its consumers are or what they run.
+
+**The address is a discussion here**, the door everything else already comes
+through — `TRIAGE.md` opens *"You are the only door issues come through.
+Humans and agents open discussions."* A request that arrives from a consumer
+is not special enough to earn a second door, and a second door is how one of
+them rots. Open it in
+[this repository's discussions](https://github.com/heavy-duty/ceremony/discussions);
+triage converges it to one of its five outcomes like anything else.
+
+**A good ask carries four things**, and each is here because it was missing
+somewhere real:
+
+1. **The rule, quoted from the vendored file at your pin, naming the pin** —
+   because doctrine moves, and an ask argued against a remembered rule spends
+   its first round establishing which text is under discussion.
+2. **The case the rule cannot express**, concretely, naming the issue or pull
+   request in your own repo where it is visible — because that is the
+   evidence, and it is what makes the ask triageable rather than an opinion.
+3. **The local workaround now in force** — because there always is one, you
+   had to ship something, and triage needs to know what is holding while the
+   fix is written.
+4. **What retires the workaround**, the condition in your own words — because
+   that is what turns a workaround into a debt somebody can pay, rather than
+   a paragraph indistinguishable from a decision.
+
+**Bring three of the four and you are still triaged**, and triage asks for the
+fourth. These are the shape of a good ask, written here where someone
+preparing one will read them, and deliberately not gates at the door: this
+repository's discussion form is light on purpose, because discussions are
+where ambiguity is allowed and a form demanding rigor at the door defeats the
+room (#24 D4).
+
+**Your half is one link, and it is what makes the debt visible**: the local
+workaround **names the upstream discussion or issue, in the body where the
+workaround lives**. A workaround citing nothing reads exactly like a
+decision, so a correct and complete finding can sit on a board for days while
+the work around it copies the workaround forward. That link is the only
+obligation this route places on you.
+
+**The return path is the ordinary pin bump, and neither side polls.** The
+upstream issue names in prose the consumers waiting on it, as any issue names
+anything; your workaround names that issue; and the fix arrives the way every
+other doctrine change arrives — at your next pin bump and re-sync
+([the pin-bump procedure](#the-pin-bump-procedure)), the same carrier that
+gives the manifest its zero-list-edits property. Retire the workaround and
+drop its citation in that same PR, where the rule that replaced it is already
+in the diff.
+
 ## Version pinning
 
 - **Pin an exact ceremony release tag** — `@0.1.0`, never a branch and
