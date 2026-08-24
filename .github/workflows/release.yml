@@ -404,7 +404,7 @@ jobs:
           fi
           echo "ver=$ver" >> "$GITHUB_OUTPUT"
       - name: release notes — final section or rc fragments
-        if: steps.classify.outputs.classification == 'release'
+        if: steps.classify.outputs.classification != 'non-release'
         env:
           VER: ${{ steps.assert.outputs.ver }}
         run: |
@@ -426,12 +426,12 @@ jobs:
       - name: artifact hook — the consumer's own release-artifact action
         # After the tag exists (it fired this door), before the publish —
         # the same contract as the merge door's twin step.
-        if: steps.classify.outputs.classification == 'release' && hashFiles('.github/actions/release-artifact/action.yml') != ''
+        if: steps.classify.outputs.classification != 'non-release' && hashFiles('.github/actions/release-artifact/action.yml') != ''
         uses: ./.github/actions/release-artifact
         with:
           version: ${{ steps.assert.outputs.ver }}
       - name: publish the release
-        if: steps.classify.outputs.classification == 'release'
+        if: steps.classify.outputs.classification != 'non-release'
         env:
           GH_TOKEN: ${{ github.token }}
           VER: ${{ steps.assert.outputs.ver }}

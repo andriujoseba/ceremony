@@ -22,11 +22,11 @@ assert_step_head() {
   sed -n "$line,$((line + 4))p" "$WORKFLOW"
 }
 
-classifier_gate_count() {
+non_release_gate_count() {
   awk '
     BEGIN { quote = sprintf("%c", 39) }
     /^  release-on-tag:$/ { tag = 1 }
-    tag && index($0, "if: steps.classify.outputs.classification == " quote "release" quote) { count++ }
+    tag && index($0, "if: steps.classify.outputs.classification != " quote "non-release" quote) { count++ }
     END { print count + 0 }
   ' "$WORKFLOW"
 }
@@ -60,6 +60,25 @@ assertion_failure_is_exact() {
   [ "$rc" -eq 1 ] && [ "$output" = "$expected" ]
 }
 
+invalid_equal_version_preserves_release_path() {
+  local tree body output
+  tree="$TMP/invalid-equal-version"
+  mkdir -p "$tree"
+  printf '1.2.3-dev\n' >"$tree/VERSION"
+
+  [ "$(classify 1.2.3-dev "")" = "classification=invalid" ] || return
+  body="$(assertion_body)"
+  (
+    cd "$tree" || exit
+    env CEREMONY_DIR="$ROOT" VERSION_SOURCE=file \
+      GITHUB_REF_NAME=1.2.3-dev GITHUB_OUTPUT="$tree/output" \
+      bash -c "$body"
+  ) || return
+
+  output="$(cat "$tree/output")"
+  [ "$output" = "ver=1.2.3-dev" ] && [ "$(non_release_gate_count)" = "4" ]
+}
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 printf '1.2.3\n' >"$TMP/VERSION"
@@ -88,13 +107,15 @@ check "a malformed tag with no declaration preserves the assertion path" 0 \
   "classification=invalid" classify malformed-tag ""
 check "the invalid-tag failure remains byte-identical" 0 "" \
   assertion_failure_is_exact
+check "an invalid-shaped tag equal to the tree version keeps the legacy release path" 0 "" \
+  invalid_equal_version_preserves_release_path
 
 # The classifier runs before the version assertion; every release-side step
 # is then explicitly gated. This makes the no-op perform no version read,
 # notes assembly, artifact hook, or publish rather than relying on fallthrough.
 check "the tree-version assertion is gated by classification" 0 \
   "if: steps.classify.outputs.classification != 'non-release'" assertion_gate
-check "all three publication-side steps require release classification" 0 "3" \
-  classifier_gate_count
+check "assertion and all publication-side steps skip only a declared non-release tag" 0 "4" \
+  non_release_gate_count
 
 summary
