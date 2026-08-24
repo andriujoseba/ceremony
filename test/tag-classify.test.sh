@@ -35,6 +35,35 @@ assertion_gate() {
   assert_step_head | grep -F "if: steps.classify.outputs.classification != 'non-release'"
 }
 
+assertion_body() {
+  awk '
+    /- name: the tag must name the tree.s own version/ { step = 1; next }
+    step && /^        run: \|$/ { body = 1; next }
+    body && /^          / { print substr($0, 11); next }
+    body { exit }
+  ' "$WORKFLOW"
+}
+
+assertion_failure_is_exact() {
+  local body output rc expected
+  body="$(assertion_body)"
+  output="$(
+    cd "$TMP" || exit
+    env CEREMONY_DIR="$ROOT" VERSION_SOURCE=file \
+      GITHUB_REF_NAME=malformed-tag GITHUB_OUTPUT="$TMP/output" \
+      bash -c "$body" 2>&1
+  )"
+  rc=$?
+  expected="$(printf '%s\n' \
+    "tag 'malformed-tag' does not match the tree's version '1.2.3' — creating nothing." \
+    "A release is a PR, then a tag: the release PR bumps the version and stamps the changelog; the tag goes on its MERGE commit. Delete this tag and re-tag the right commit.")"
+  [ "$rc" -eq 1 ] && [ "$output" = "$expected" ]
+}
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+printf '1.2.3\n' >"$TMP/VERSION"
+
 check "a final version remains a release" 0 "classification=release" \
   classify 1.2.3 ""
 check "an rc remains a release" 0 "classification=release" \
@@ -57,6 +86,8 @@ check "a non-matching declaration cannot create a fallthrough no-op" 0 \
   "classification=invalid" classify malformed-tag 'drill/**'
 check "a malformed tag with no declaration preserves the assertion path" 0 \
   "classification=invalid" classify malformed-tag ""
+check "the invalid-tag failure remains byte-identical" 0 "" \
+  assertion_failure_is_exact
 
 # The classifier runs before the version assertion; every release-side step
 # is then explicitly gated. This makes the no-op perform no version read,
