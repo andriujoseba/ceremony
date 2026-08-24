@@ -98,8 +98,8 @@ so partial setup evidence cannot satisfy the release gate.
    Every refusal must refuse **creating nothing** — a probe that leaves a
    tag or a release behind on a refusal path is a failed probe.
 
-   The last two are the rc ladder, and they run one rung further along it
-   than the probes above them: a labeled ceremony PR bumping to
+   **Probes 7 and 8 are the rc ladder**, and they run one rung further along
+   it than the probes above them: a labeled ceremony PR bumping to
    `X.Y.Z-rc1` must publish a release marked prerelease, leave
    `CHANGELOG.md` byte-identical, leave every fragment where it is, and
    re-arm main to `X.Y.Z-rc2-dev`; the ceremony PR to bare `X.Y.Z` after it

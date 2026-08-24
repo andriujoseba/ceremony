@@ -134,6 +134,24 @@ rule_predecessor() { # the line before the rule, bracketed, or the rule's absenc
 }
 check "a blank line scopes the creating-nothing rule to all eleven probes" 0 "[]" \
   rule_predecessor
+# The far side of that same boundary (#499 round 3). The extraction stops AT the
+# rule, so every line of explanatory prose below it is outside the byte-faithful
+# diff — including the two paragraphs that say which probes are the rc ladder
+# and which are the tag door's. A position stated there drifts silently when the
+# list grows, and it did: the edit that took the list to eleven left "The last
+# two are the rc ladder" naming probes 10 and 11, the tag door's, while the
+# paragraph below it called 9-11 "The last three". The ladder is named by number
+# now, so appending a probe cannot move it; re-flowing the phrase across the
+# line break reds this row, which is the reading it is asking for.
+ladder_opening() { # the paragraph's first line, or the paragraph's absence
+  awk '/^   Every refusal must refuse/ { on = 1; next }
+       on && !NF { gap = 1; next }
+       on && gap { print; exit }
+       END { if (!gap) print "no paragraph follows the creating-nothing rule" }' \
+    "$ROOT/drills/README.md"
+}
+check "the rc ladder is named by probe number, not by a position in the list" 0 \
+  "**Probes 7 and 8 are the rc ladder**" ladder_opening
 
 check "the probe names are the doctrine's own" 0 "" \
   test "$(probe_name 4)" = "re-run of the completed ceremony"
