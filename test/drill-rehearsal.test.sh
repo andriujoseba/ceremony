@@ -120,6 +120,20 @@ check "the instrument's probe list is the doctrine's, byte-faithful" 0 "" \
   diff -u "$TMP/doctrine.list" "$TMP/probes.list"
 check "and it is not an empty comparison" 0 "11" \
   bash -c 'grep -c "^   [0-9][0-9]*\." "$1"' _ "$TMP/doctrine.list"
+# The boundary line's own scope (#499 round 2). The extraction above stops AT
+# the creating-nothing rule and skips blank lines, so it can see that the rule
+# is there but never that a blank line precedes it — and that blank line is the
+# whole difference between a rule over all eleven probes and, at the list's
+# 3-space indent, a lazy continuation rendering as probe 11's own bullet. It was
+# lost once already, by the edit that added the three tag-door probes.
+rule_predecessor() { # the line before the rule, bracketed, or the rule's absence
+  awk '/^   Every refusal must refuse/ { found = 1; printf "[%s]\n", prev; exit }
+       { prev = $0 }
+       END { if (!found) print "the creating-nothing rule is gone from the doctrine" }' \
+    "$ROOT/drills/README.md"
+}
+check "a blank line scopes the creating-nothing rule to all eleven probes" 0 "[]" \
+  rule_predecessor
 
 check "the probe names are the doctrine's own" 0 "" \
   test "$(probe_name 4)" = "re-run of the completed ceremony"
