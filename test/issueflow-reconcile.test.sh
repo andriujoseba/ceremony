@@ -987,39 +987,42 @@ check "a fresh issue comment resets the operator clock" 1 "" \
   grep -q 'operator work nudge' <<<"$fresh_operator"
 
 # D9's additive proof: each required queue shape runs twice from identical
-# fixtures. The operator half may add its comment, but every label write must
-# remain byte-identical — ownership is a second axis and cannot move the queue.
+# fixtures. The operator half may add its own nudge, but every other decision
+# trace and every label write must remain byte-identical — ownership is a
+# second axis and cannot move the queue (#491).
 printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_999.json"
-additive_label_writes() { # $1 issue, $2 labels, $3 assignees, $4 open-pr, $5 body
-  local n="$1" labels="$2" assignees="$3" open_pr="$4" body="$5" base with_operator
+additive_effects() { # $1 issue, $2 labels, $3 assignees, $4 open-pr, $5 body
+  local n="$1" labels="$2" assignees="$3" open_pr="$4" body="$5"
+  local base_trace operator_trace base_edits operator_edits
   printf '[]\n' >"$(cfix "$n")"
   printf '[]\n' >"$(tfix "$n")"
   : >"$TMP/issue-edits"
-  issue_probe "$n" "$labels" "$assignees" "$open_pr" "" "$body" >/dev/null
-  base="$(cat "$TMP/issue-edits")"
+  base_trace="$(issue_probe "$n" "$labels" "$assignees" "$open_pr" "" "$body")"
+  base_edits="$(cat "$TMP/issue-edits")"
   rm -f "$TMP/posted-$n"
   printf '[]\n' >"$(cfix "$n")"
   printf '[]\n' >"$(tfix "$n")"
   : >"$TMP/issue-edits"
-  issue_probe "$n" "$labels"$'\noperator' "$assignees" "$open_pr" "" "$body" >/dev/null
-  with_operator="$(cat "$TMP/issue-edits")"
-  [ "$base" = "$with_operator" ]
+  operator_trace="$(issue_probe "$n" "$labels"$'\noperator' "$assignees" "$open_pr" "" "$body" \
+    | sed '/operator work nudge/d')"
+  operator_edits="$(cat "$TMP/issue-edits")"
+  [ "$base_trace" = "$operator_trace" ] && [ "$base_edits" = "$operator_edits" ]
 }
 
-check "operator preserves ready label writes" 0 "" \
-  additive_label_writes 500 ready 0 false ""
+check "operator preserves ready decisions and label writes" 0 "" \
+  additive_effects 500 ready 0 false ""
 check "operator preserves a stale claimed reclaim" 0 "" \
-  additive_label_writes 501 claimed 1 false ""
+  additive_effects 501 claimed 1 false ""
 check "operator preserves parseable blocked behavior" 0 "" \
-  additive_label_writes 502 blocked 0 false 'Blocked by #999.'
+  additive_effects 502 blocked 0 false 'Blocked by #999.'
 check "operator preserves unparseable blocked behavior" 0 "" \
-  additive_label_writes 503 blocked 0 false 'waiting, with no declaration'
+  additive_effects 503 blocked 0 false 'waiting, with no declaration'
 check "operator preserves epic behavior" 0 "" \
-  additive_label_writes 504 epic 0 false $'## Task list\n- [ ] #999'
+  additive_effects 504 epic 0 false $'## Task list\n- [ ] #999'
 check "operator preserves post-merge behavior past 7 quiet days" 0 "" \
-  additive_label_writes 505 post-merge 0 false ""
+  additive_effects 505 post-merge 0 false ""
 check "operator preserves needs-triage behavior" 0 "" \
-  additive_label_writes 506 needs-triage 0 false ""
+  additive_effects 506 needs-triage 0 false ""
 
 builder_pick="$(sed -n '/Pick from issues labeled/,/Inside an epic take/p' "$ROOT/BUILDER.md")"
 # shellcheck disable=SC2016 # positional parameter belongs to the isolated shell

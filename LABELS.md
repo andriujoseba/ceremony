@@ -66,7 +66,7 @@ strips it on sight).
 | Label | Color | Means | Set by |
 |---|---|---|---|
 | `needs-triage` | `#FBCA04` | an issue that did not come through triage — it owes normalization or conversion back to a discussion | anyone who spots one; cleared by triage |
-| `ready` | `#0E8A16` | triaged, spec complete, unblocked; its owner can start now and succeed | triage |
+| `ready` | `#0E8A16` | Triaged, spec complete, unblocked; its owner can start now and succeed | triage |
 | `claimed` | `#1D76DB` | a builder owns it: assignee set, a draft PR expected shortly | the claiming builder |
 | `blocked` | `#6A737D` | waiting on another issue or PR (`Blocked by #N` in the body names it) | triage; anyone may correct it |
 | `post-merge` | `#006B75` | the Refs-linked PR merged; post-merge acceptance criteria remain; the claim is released — nothing here is buildable and nobody owes a draft | the sweep or triage |

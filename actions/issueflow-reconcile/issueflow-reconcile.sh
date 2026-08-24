@@ -1468,9 +1468,13 @@ reconcile_issue() {
     # because the assignment IS the claim; the ruling waits on a human, and
     # an assignment says nothing about whether the decider answered.
     if has_issue_label needs-ruling; then
-      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-      guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
-        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      if [ -n "${operator_age:-}" ]; then
+        ruling_age="$operator_age"
+      else
+        created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+        guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
+          || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      fi
     fi
     merged_ref_pr="$(post_merge_pr_for_issue "$n")"
     if [ -n "$merged_ref_pr" ]; then
@@ -1555,9 +1559,13 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     # would let the assigned-flag comment silence the nudge for another 7
     # days — the same self-silencing the ruling nudge avoids by taking its
     # clock from this same read, below.
-    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-    guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
-      || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    if [ -n "${operator_age:-}" ]; then
+      evidence_age="$operator_age"
+    else
+      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+      guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
+        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    fi
     # On this surface the ruling clock IS this read (#284 D6): both nudges
     # wait on comments and nothing else, so the evidence clock is handed to
     # the ruling block rather than read again — and handed HERE, before the
@@ -1741,9 +1749,13 @@ judges that prose; the link is the payload.
     # `ruling_age` already, read before anything they post; the fresh read
     # serves the paths that arrive empty-handed.
     if [ -z "${ruling_age:-}" ]; then
-      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-      guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
-        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      if [ -n "${operator_age:-}" ]; then
+        ruling_age="$operator_age"
+      else
+        created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+        guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
+          || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      fi
     fi
     reconcile_ruling "$n" "$ruling_age" "$NOW"
   fi
