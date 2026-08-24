@@ -118,6 +118,14 @@ Every issue you mint carries, in this order:
   post-merge mechanism above holding unchanged for every criterion it
   already governed.
 
+  **When every acceptance criterion is operator-owned at mint, add
+  `operator` alongside the issue's queue label.** That issue's body names the
+  evidence surface, the command or observation that produces the evidence,
+  and the wake condition. A single operator-owned criterion among
+  builder-owned criteria does not mark the issue `operator`; it keeps the
+  per-criterion mechanism above, because criterion reach and issue ownership
+  are separate axes (#491).
+
   **A criterion whose evidence turns out at claim time to be beyond a
   builder's reach is a defect in the issue, and the body is yours.**
   Reclassify it where it stands, in the same tick — a comment that answers

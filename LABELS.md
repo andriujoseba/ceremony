@@ -66,7 +66,7 @@ strips it on sight).
 | Label | Color | Means | Set by |
 |---|---|---|---|
 | `needs-triage` | `#FBCA04` | an issue that did not come through triage — it owes normalization or conversion back to a discussion | anyone who spots one; cleared by triage |
-| `ready` | `#0E8A16` | triaged, spec complete, unblocked — a builder can start now and succeed | triage |
+| `ready` | `#0E8A16` | triaged, spec complete, unblocked; its owner can start now and succeed | triage |
 | `claimed` | `#1D76DB` | a builder owns it: assignee set, a draft PR expected shortly | the claiming builder |
 | `blocked` | `#6A737D` | waiting on another issue or PR (`Blocked by #N` in the body names it) | triage; anyone may correct it |
 | `post-merge` | `#006B75` | the Refs-linked PR merged; post-merge acceptance criteria remain; the claim is released — nothing here is buildable and nobody owes a draft | the sweep or triage |
@@ -112,10 +112,20 @@ and re-entry does not set `attention`.
 | `blocked` | `#6A737D` | (see above — same label serves PRs waiting on another PR/issue; legitimately quiet, the staleness sweep skips it). The reconciler refuses `state:needs-human` while `blocked` stands — the PR falls to `state:addressing` (#180) |
 | `offsite` | `#CFD3D7` | issue deliverable is a PR in another repository; set by the builder with the draft link and cleared by the builder at handoff |
 | `needs-ruling` | `#D4C5F9` | a human-owned decision is required; use BUILDER.md's ruling template and ladder. Set by triage or the builder; a state, not a signal — it clears on agreement, not on a reply |
+| `operator` | `#A371F7` | issue-only: an operator owns the work; the body names its evidence surface, command or observation, and wake condition |
 | `rerun-owed` | `#D4C5F9` | PR-only: the head is red on a rerun no agent may start, so the builder owes nothing until it is made. Set by the builder with its evidence; cleared by `ci-rerun` when it starts the attempt, and by the reconciler when the head recovers or moves (#424) |
 | `attention` | `#D93F0B` | issue-only demand parked for the assignee; hand-set, and never written by the machine |
 | `release` | `#0E8A16` | release flow, versioning, packaging work — and the ceremony PR itself |
 | `merge-next` | `#0E8A16` | head of the merge queue — merge this one next. Queue order is *intent*: never set by the reconciler, only cleared by it — and never read by it, so where a repository's own sweep caller passes either merge toggle (`auto_merge` or `auto_merge_release`, both `off` by default and set by the consumer, not ceremony), the order this label expresses is not honoured: two confirmed PRs merge in whatever order the sweep reaches them, and a real conflict then disqualifies the loser with `blocker:conflict` on the next pass |
+
+`operator` is the human axis's third member: `needs-ruling` says a human owes
+a decision, `operator` says an operator owes the work, and
+`state:needs-human` says a human can merge a PR now. It composes with every
+issue queue label, and the one-of-four queue invariant ignores it. An
+operator-owned issue normally reads `ready` + `operator`: the work is
+triaged, spec-complete and unblocked, while the second label names its owner.
+The body's evidence surface, command or observation, and wake condition keep
+that availability actionable (#491).
 
 `needs-ruling` marks where the human's turn is when the pending thing is a
 *decision*, not a merge ([#50 D1–D14](https://github.com/heavy-duty/ceremony/issues/50)).
