@@ -261,7 +261,7 @@ check "the routing rule points at the marker carrying the address" 0 \
 check "the routing rule keeps the local half local — decidable both ways" 0 \
   "is one of the five above" routing_rule "$ROOT"
 check "the routing rule carries the consumer-side citation (D3)" 0 \
-  "cites that discussion" routing_rule "$ROOT"
+  "cite that discussion" routing_rule "$ROOT"
 
 check_absent "without #492 TRIAGE.md routes nothing upstream" 0 \
   "not a sixth outcome" routing_rule "$STRIPPED"

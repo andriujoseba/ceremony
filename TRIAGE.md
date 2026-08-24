@@ -73,10 +73,9 @@ mechanism — the fix has exactly one legal address and it is not here, so do
 not settle for prose in the repo you serve: raise it as a discussion in the
 repository the vendored set is mirrored from, which `.ceremony/README.md`
 names and links, carrying the rule quoted at this repo's pin, the case it
-cannot express, the workaround now in force and what would retire it; and
-whatever ships that workaround cites that discussion, because a workaround
-citing nothing reads as a decision. A finding whose fix is in the tree you
-serve is not this: it stays here and is one of the five above (#492).
+cannot express, the workaround now in force and what would retire it, and
+cite that discussion wherever that workaround ships — while a finding whose
+fix is in the tree you serve stays here and is one of the five above (#492).
 
 ## The issue contract
 
