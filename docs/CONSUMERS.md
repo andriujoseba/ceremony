@@ -545,6 +545,9 @@ jobs:
     uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>
     with:
       version-source: file   # or: package-json
+      # Optional: make this declared tag namespace a logged non-release no-op.
+      # Omit it (the default is empty) to keep every non-version tag loud.
+      # non-release-namespace: drill/**
 ```
 
 To route this caller, add one of these lines under its existing `with:` key:
@@ -557,8 +560,14 @@ runner: '["self-hosted","ci-runner"]' # choose one; do not repeat the key
 `version-source` selects `file` (a `VERSION` file — box, rig, incubator) or
 `package-json` (the version field, lockfile kept in sync on the post-release
 bump — cast). `runner` is the shared scheduling input described above.
-Everything else a repo might vary is a change to the ceremony itself, made
-in this repo, once.
+`non-release-namespace` is an optional shell glob naming one tag namespace
+that is deliberately not a release, for example `drill/**`. It defaults to
+empty. A matching non-version tag exits successfully before the tree-version
+assertion, release notes, artifact hook, or publication, and logs both the
+matched namespace and that no release was created. With the empty default,
+every tag follows the pre-existing release-or-loud-failure behavior unchanged.
+Everything else a repo might vary is a change to the ceremony itself, made in
+this repo, once.
 
 Keep the merge door on `push` to `main` — never `pull_request`: a
 `pull_request` run from a public fork gets a read-only `GITHUB_TOKEN` that

@@ -106,6 +106,7 @@ fixture() {
     "\$ROOT/lib/changelog.sh" >"$tree/bin/assemble"
   printf '#!/usr/bin/env bash\n' >"$tree/lib/changelog.sh"
   printf '#!/usr/bin/env bash\n' >"$tree/lib/decide.sh"
+  printf '#!/usr/bin/env bash\n' >"$tree/lib/tag-classify.sh"
   printf '#!/usr/bin/env bash\n# shellcheck source=lib/version.sh\n. "%s"\n' \
     "\$(cd \"\$(dirname \"\${BASH_SOURCE[0]}\")\" && pwd)/version.sh" \
     >"$tree/lib/facts.sh"
@@ -115,14 +116,15 @@ fixture() {
 
 # Exact output is the record author's copy-paste source.
 check "manifest prints the specified ordered release path" 0 \
-  $'.github/workflows/release.yml\nbin/\nlib/version.sh\nlib/decide.sh\nlib/facts.sh\nlib/changelog.sh' \
+  $'.github/workflows/release.yml\nbin/\nlib/tag-classify.sh\nlib/version.sh\nlib/decide.sh\nlib/facts.sh\nlib/changelog.sh' \
   bash "$PATH_SCRIPT"
 check "real workflow and transitive dependencies match the manifest" 0 "" \
   path_check "$ROOT"
 
 # A door growing a dependency must name the missing path (#237 D7).
 tree="$(fixture missing)"
-printf 'run: bash "%s"\nrun: bash "%s"\nrun: . "%s"\nrun: . "%s"\nrun: . "%s"\n' \
+printf 'run: bash "%s"\nrun: bash "%s"\nrun: bash "%s"\nrun: . "%s"\nrun: . "%s"\nrun: . "%s"\n' \
+  "\$CEREMONY_DIR/lib/tag-classify.sh" \
   "\$CEREMONY_DIR/lib/facts.sh" "\$CEREMONY_DIR/lib/decide.sh" \
   "\$CEREMONY_DIR/lib/changelog.sh" "\$CEREMONY_DIR/lib/version.sh" \
   "\$CEREMONY_DIR/lib/ruling.sh" \
@@ -134,7 +136,8 @@ check "a new workflow library fails with its missing path" 1 \
 # A library growing a sibling dependency in the production idiom must also
 # name the missing path; a literal lib/ marker in a comment is not evidence.
 tree="$(fixture missing-transitive)"
-printf 'run: bash "%s"\nrun: bash "%s"\nrun: . "%s"\n' \
+printf 'run: bash "%s"\nrun: bash "%s"\nrun: bash "%s"\nrun: . "%s"\n' \
+  "\$CEREMONY_DIR/lib/tag-classify.sh" \
   "\$CEREMONY_DIR/lib/facts.sh" "\$CEREMONY_DIR/lib/decide.sh" \
   "\$CEREMONY_DIR/lib/changelog.sh" \
   >"$tree/.github/workflows/release.yml"
@@ -147,7 +150,8 @@ check "a new sibling library fails with its missing path" 1 \
 
 # A manifest may not rot into a safe-looking superset.
 tree="$(fixture extra)"
-printf 'run: bash "%s"\nrun: bash "%s"\nrun: . "%s"\n' \
+printf 'run: bash "%s"\nrun: bash "%s"\nrun: bash "%s"\nrun: . "%s"\n' \
+  "\$CEREMONY_DIR/lib/tag-classify.sh" \
   "\$CEREMONY_DIR/lib/facts.sh" "\$CEREMONY_DIR/lib/decide.sh" \
   "\$CEREMONY_DIR/lib/changelog.sh" \
   >"$tree/.github/workflows/release.yml"
@@ -160,7 +164,8 @@ check "a path no door reads fails as stale" 1 "stale path: lib/ruling.sh" \
 
 # Transitive sourcing is part of the derivation, not decoration.
 tree="$(fixture transitive)"
-printf 'run: bash "%s"\nrun: bash "%s"\nrun: . "%s"\n' \
+printf 'run: bash "%s"\nrun: bash "%s"\nrun: bash "%s"\nrun: . "%s"\n' \
+  "\$CEREMONY_DIR/lib/tag-classify.sh" \
   "\$CEREMONY_DIR/lib/facts.sh" "\$CEREMONY_DIR/lib/decide.sh" \
   "\$CEREMONY_DIR/lib/changelog.sh" \
   >"$tree/.github/workflows/release.yml"
