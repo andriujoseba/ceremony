@@ -16,11 +16,6 @@ section here (`bin/changelog-assemble`, #112).
 
 ### Added
 
-- The release drill rehearses all three of the tag door's classifications:
-  probes 9, 10 and 11 push an rc tag, a tag inside the caller's declared
-  non-release namespace, and a tag outside every namespace (#499, #497).
-- The drill's caller stub declares `non-release-namespace`, without which the
-  classification it turns on is unreachable in a rehearsal (#499).
 - Let release callers declare a logged non-release tag namespace while the
   empty default keeps every unmatched tag failure unchanged (#497).
 - Document the return path for doctrine: a consumer blocked by the vendored
