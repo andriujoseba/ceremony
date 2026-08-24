@@ -352,7 +352,7 @@ check "a probe that never ran is named, not skipped" 0 \
 # trimmed is as unreadable as one whose rows were.
 grep -v '^- ✅ The tag door' "$TMP/rendered.md" >"$TMP/record-short-claims.md"
 check "a conclusion missing a probe line reds the shape check" 1 \
-  "the conclusion has 6 probe lines, expected 8" \
+  "the conclusion has 6 probe lines, expected 11" \
   record_check "$TMP/record-short-claims.md"
 
 # ---------------------------------------------------------------------------
@@ -403,7 +403,7 @@ record_render "$TMP/ctx.tsv" "$TMP/nine.tsv" "$TMP/setup.tsv" >"$TMP/nine.md"
 check "a duplicated probe row never renders a negative count" 1 "" \
   grep -qE 'Not established: -' "$TMP/nine.md"
 check "the duplicated row is still what reds the shape check" 1 \
-  "the probe table has 9 rows, expected 8" record_check "$TMP/nine.md"
+  "the probe table has 12 rows, expected 11" record_check "$TMP/nine.md"
 
 # ---------------------------------------------------------------------------
 # Round 2 measured the top preamble and stopped there, and two sentences below
@@ -415,11 +415,13 @@ check "the duplicated row is still what reds the shape check" 1 \
 # now, and both are graded by the shape check so they cannot come back.
 # ---------------------------------------------------------------------------
 abort_probes() { # <merge|tag|all> — that door's probes never reached a run
-  # The rc legs are the merge door's: 5 and 6 are the tag door's, and every
-  # other probe is a labeled ceremony PR merging to main (#321).
+  # The rc legs are the merge door's; the tag door's are 5 and 6 and the three
+  # classifications after the ladder, and every other probe is a labeled
+  # ceremony PR merging to main (#321, #499).
   awk -F'\t' -v OFS='\t' -v door="$1" \
-    '(door == "all") || (door == "tag" && ($1 == 5 || $1 == 6)) ||
-     (door == "merge" && ($1 <= 4 || $1 >= 7)) {
+    '(door == "all") ||
+     (door == "tag" && ($1 == 5 || $1 == 6 || $1 >= 9)) ||
+     (door == "merge" && ($1 <= 4 || $1 == 7 || $1 == 8)) {
        $3 = "—"; $4 = 1; $5 = "FAIL"
        $10 = "aborted before it reached a verdict (exit 1)"
      } { print }' "$TMP/probes.tsv"
@@ -460,7 +462,7 @@ check "the door that did run is still claimed" 0 \
 check "the door that did not run is stated as no evidence" 0 \
   "this record is no evidence about that door either way" cat "$TMP/tag-aborted.md"
 check "the unrun door names the probes that never got a run" 0 \
-  "(probes 5, 6 never got one)" cat "$TMP/tag-aborted.md"
+  "(probes 5, 6, 9, 10, 11 never got one)" cat "$TMP/tag-aborted.md"
 check "the same holds with the doors the other way round" 0 \
   "The tag door ran live against the 0.7.0 candidate's own machinery" \
   cat "$TMP/merge-aborted.md"
@@ -476,19 +478,22 @@ check "a record where nothing ran establishes nothing" 0 \
 # The shape check grades both sentences, so a renderer that stopped measuring
 # them — or a hand-touched record — reds rather than shipping.
 check "a record with a whole door unrun still passes the shape check" 0 \
-  "2 aborted before reaching a run and carry the aborted mark" \
+  "5 aborted before reaching a run and carry the aborted mark" \
   record_check "$TMP/tag-aborted.md"
 check "a record where nothing ran at all is still a valid record" 0 \
-  "8 aborted before reaching a run and carry the aborted mark" \
+  "11 aborted before reaching a run and carry the aborted mark" \
   record_check "$TMP/all-aborted.md"
 check "the excused-row count agrees in number at one row" 0 \
   "1 aborted before reaching a run and carries the aborted mark" \
   record_check "$TMP/one-aborted.md"
 record_fixture "[1003](https://github.com/o/n/actions/runs/1003)" \
-  '**2 of the eleven probes never reached a run** (probe 5, 6): those rows are
+  '**5 of the eleven probes never reached a run** (probe 5, 6, 9, 10, 11): those rows are
 written from the abort itself.' |
   sed -e 's#\[1005\](https://github.com/o/n/actions/runs/1005)#—#' \
     -e 's#\[1006\](https://github.com/o/n/actions/runs/1006)#—#' \
+    -e 's#\[1009\](https://github.com/o/n/actions/runs/1009)#—#' \
+    -e 's#\[1010\](https://github.com/o/n/actions/runs/1010)#—#' \
+    -e 's#\[1011\](https://github.com/o/n/actions/runs/1011)#—#' \
     -e '/| — |/ s/| ✅ ok |/| ❌ aborted before it reached a verdict |/' \
     >"$TMP/record-door-lie.md"
 check "a record claiming both doors ran when a whole door aborted reds" 1 \
@@ -1171,7 +1176,7 @@ check "the drill never deleted any repository" 1 "" \
   grep -qE "^api (-X|--method) DELETE repos/[^/]+/[^/]+$" "$TMP/state/calls"
 check "the operator's delete step is printed, not run" 0 \
   "gh api -X DELETE repos/$SCRATCH" printf '%s\n' "$green_out"
-check "the emitted record keeps exactly eleven run links" 0 "11" \
+check "the emitted record keeps exactly fourteen run links" 0 "14" \
   bash -c 'grep -oE "/actions/runs/[0-9]+" "$1" | wc -l | tr -d " "' \
   _ "$TMP/emitted.md"
 check "the drill contains no post-create visibility flip" 1 "" \
@@ -1193,7 +1198,7 @@ green_scenario "$TMP/leaky.scenario"
 awk 'NR == 4 { print "failure\ttag:0.7.1-leak"; next } { print }' \
   "$TMP/leaky.scenario" >"$TMP/leaky.tmp" && mv "$TMP/leaky.tmp" "$TMP/leaky.scenario"
 leaky_out="$(run_rehearsal "$TMP/leaky.scenario" --out "$TMP/leaky.md" 2>&1)"
-check "a refusal that created a tag reds its probe" 0 "probes passed 7/8, failed 1" \
+check "a refusal that created a tag reds its probe" 0 "probes passed 10/11, failed 1" \
   printf '%s\n' "$leaky_out"
 check "the record says which probe failed and how" 0 "tags moved 1→2, expected a delta of 0" \
   bash -c 'awk -F"|" "/^\\| 3 \\|/ { print }" "$1"' _ "$TMP/leaky.md"
@@ -1231,7 +1236,7 @@ check "a one-byte edit to CHANGELOG.md reds the rc cut" 0 \
   probe_row "$TMP/rc-stamped.md" 7
 check "the changelog claim is the comparison, not the prose beside it" 0 \
   "an rc is tag-only and stamps no section" probe_row "$TMP/rc-stamped.md" 7
-check "the run reports the rc cut as the one failure" 0 "probes passed 7/8, failed 1" \
+check "the run reports the rc cut as the one failure" 0 "probes passed 10/11, failed 1" \
   printf '%s\n' "$rc_stamped_out"
 check "the record still emits, and says which leg failed" 0 \
   "probe 7 (rc cut, tag-only and marked prerelease) failed" cat "$TMP/rc-stamped.md"
@@ -1252,7 +1257,7 @@ check "an rc cut that left a tag behind reds on the count" 0 \
 # promotion looks at it, so this run reds two legs rather than one. The
 # cascade is real and the record states it where it happened, which is the
 # shape a failed drill is supposed to have.
-check "the two legs it broke are both reported failed" 0 "probes passed 6/8, failed 2" \
+check "the two legs it broke are both reported failed" 0 "probes passed 9/11, failed 2" \
   printf '%s\n' "$rc_final_out"
 check "the promotion reds on a candidate that was never a prerelease" 0 \
   "the '0.7.2-rc1' release reports isPrerelease: false after the promotion" \
@@ -1266,7 +1271,7 @@ check "a promotion that relabels its candidate reds the promotion" 0 \
   "promoting must not retroactively relabel the candidate" \
   probe_row "$TMP/relabel.md" 8
 check "the rc cut before it still passed" 0 "✅" probe_row "$TMP/relabel.md" 7
-check "the run reports the promotion as the one failure" 0 "probes passed 7/8, failed 1" \
+check "the run reports the promotion as the one failure" 0 "probes passed 10/11, failed 1" \
   printf '%s\n' "$relabel_out"
 check "a failed promotion withdraws its claim from the conclusion" 1 "" \
   grep -qF 'while the candidate stayed a prerelease' "$TMP/relabel.md"
@@ -1284,24 +1289,27 @@ check "a failed rc leg is still a whole record" 0 "eleven probe rows" \
 # ---------------------------------------------------------------------------
 stub_reset
 green_scenario "$TMP/aborted.scenario"
-head -n 10 "$TMP/aborted.scenario" >"$TMP/aborted.tmp" &&
+# The LAST probe, because running out of scenario starves every door event
+# after the cut: truncating before the promotion would abort probes 8 through
+# 11 together and this case is about one probe aborting alone (#499).
+head -n 13 "$TMP/aborted.scenario" >"$TMP/aborted.tmp" &&
   mv "$TMP/aborted.tmp" "$TMP/aborted.scenario"
 aborted_out="$(run_rehearsal "$TMP/aborted.scenario" --out "$TMP/aborted.md" 2>&1)"
 aborted_rc=$?
 check "an aborted probe does not abort the rehearsal" 0 "" test "$aborted_rc" -eq 0
-check "the aborted probe is reported as the one failure" 0 "probes passed 7/8, failed 1" \
+check "the aborted probe is reported as the one failure" 0 "probes passed 10/11, failed 1" \
   printf '%s\n' "$aborted_out"
 check "the record exists at all after an abort" 0 "" test -s "$TMP/aborted.md"
 check "the aborted probe's row says it aborted" 0 "❌ aborted before it reached a verdict" \
-  bash -c 'awk "/^\\| 8 \\|/" "$1"' _ "$TMP/aborted.md"
+  bash -c 'awk "/^\\| 11 \\|/" "$1"' _ "$TMP/aborted.md"
 check "the aborted probe's row links no run it never had" 0 "| — |" \
-  bash -c 'awk "/^\\| 8 \\|/" "$1"' _ "$TMP/aborted.md"
+  bash -c 'awk "/^\\| 11 \\|/" "$1"' _ "$TMP/aborted.md"
 check "the record after an abort still passes the shape check" 0 "eleven probe rows" \
   record_check "$TMP/aborted.md"
 check "the end-to-end aborted record's preamble names the probe that never ran" 0 \
-  "**1 of the eleven probes never reached a run** (probe 8)" cat "$TMP/aborted.md"
+  "**1 of the eleven probes never reached a run** (probe 11)" cat "$TMP/aborted.md"
 check "the aborted probe establishes nothing in the conclusion" 1 "" \
-  grep -qF 'promoted `0.7.2-rc1` to `0.7.2`' "$TMP/aborted.md"
+  grep -qF 'neither version-shaped nor inside that namespace' "$TMP/aborted.md"
 check "the probes before the abort still stand" 0 \
   "✅ The tag door published from a matching manual tag without touching main." \
   cat "$TMP/aborted.md"
@@ -1897,7 +1905,7 @@ green_scenario "$TMP/changelog.scenario"
 faults "1	99	GET repos/$SCRATCH/contents/CHANGELOG.md*	404	Not Found"
 changelog_out="$(run_rehearsal "$TMP/changelog.scenario" --out "$TMP/changelog.md" 2>&1)"
 check "a changelog read that never answers fails its probe and no more" 0 \
-  "probes passed 6/8, failed 2" printf '%s\n' "$changelog_out"
+  "probes passed 9/11, failed 2" printf '%s\n' "$changelog_out"
 check "probe 7 says the comparison was never taken" 0 \
   "CHANGELOG.md did not read back after the rc cut" cat "$TMP/changelog.md"
 check "probe 8 says the same of the stamped section" 0 \
