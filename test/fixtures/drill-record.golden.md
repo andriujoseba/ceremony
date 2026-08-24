@@ -12,7 +12,11 @@ its own run by the script that drove it.
 
 Attempt **`1`** used disposable **public** repo `drillowner/ceremony-drill-0.7.0-1`, created
 2026-08-09T00:00:00Z. It carries the
-`docs/CONSUMERS.md` release caller verbatim (`version-source: file`) over a
+`docs/CONSUMERS.md` release caller — that guide's entire `release.yml`
+plus the one add-on line it documents under the same `with:` key, so
+`version-source: file` and
+`non-release-namespace: drill/**`, without which the
+tag door's non-release classification is unreachable — over a
 fragment-mode fixture armed at `0.7.0-dev`: a preamble-only
 `CHANGELOG.md`, `changelog.d/README.md` plus three fragments, and a
 non-blank `drills/0.7.0.md`. The `release` label was created there before
