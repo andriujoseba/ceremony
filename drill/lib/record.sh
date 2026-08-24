@@ -26,6 +26,7 @@ record_count_word() {
     8) printf 'eight' ;;
     9) printf 'nine' ;;
     10) printf 'ten' ;;
+    11) printf 'eleven' ;;
     *) printf '%s' "$DRILL_PROBE_COUNT" ;;
   esac
 }
@@ -222,6 +223,9 @@ record_claim() {
     6) printf 'The tag door refused a mismatched tag before creating anything.' ;;
     7) printf "The merge door cut \`%s-rc1\` as a prerelease from its surviving fragments, left \`CHANGELOG.md\` byte-identical, and re-armed main to \`%s-rc2-dev\`." "${3:?record_claim: rc version required}" "$3" ;;
     8) printf "The merge door promoted \`%s-rc1\` to \`%s\`, stamping the section its fragments assemble to and consuming them, while the candidate stayed a prerelease." "${3:?record_claim: rc version required}" "$3" ;;
+    9) printf 'The tag door published an rc tag as a prerelease, from the fragments in its own tagged tree, without touching main.' ;;
+    10) printf "The tag door treated a tag inside the caller's declared non-release namespace as a green no-op, asserting no version and creating nothing." ;;
+    11) printf 'The tag door refused a tag that is neither version-shaped nor inside that namespace, before creating anything.' ;;
     *) return 1 ;;
   esac
 }
@@ -282,7 +286,9 @@ record_unrun() {
 # merge door's too: an rc cut and its promotion are both labeled ceremony
 # PRs merging to main (#321).
 DRILL_MERGE_PROBES='1 2 3 4 7 8'
-DRILL_TAG_PROBES='5 6'
+# The tag door's own list grew with the classifications #497 gave it: an rc
+# tag, a declared non-release namespace, and everything else (#499 D6).
+DRILL_TAG_PROBES='5 6 9 10 11'
 
 # record_ran <probes-tsv> — the probe numbers whose row was written from a run.
 # The complement of record_unrun, and the measurement the door sentence stands
