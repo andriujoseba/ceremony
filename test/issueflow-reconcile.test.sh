@@ -399,6 +399,13 @@ check "offsite alone still needs triage" 0 "ADD_NEEDS_TRIAGE" \
   queue_decision <<<"offsite"
 check "claimed plus attention is a healthy issue" 0 "KEEP" \
   queue_decision <<< $'claimed\nattention'
+check "ready plus operator is one legal queue state" 0 "KEEP" \
+  queue_decision <<< $'ready\noperator'
+check "operator alone still has no queue state" 0 "ADD_NEEDS_TRIAGE" \
+  queue_decision <<< operator
+# shellcheck disable=SC2016 # positional parameters belong to the isolated shell
+check "operator is not a queue label" 1 "" \
+  bash -c 'printf "%s\n" "$@" | grep -qxF operator' _ "${QUEUE_LABELS[@]}"
 
 # ---------------------------------------------------------------------------
 # The ruling pass on the issue surface (#52), against a recording stub: the
@@ -619,6 +626,7 @@ attention_edits_before="$(wc -l <"$TMP/issue-edits")"
 for n in 61 62 63; do
   attention_episode "$n" "$(iso_at $((INOW - 60)))"
 done
+
 # The assignment event is the claim clock's own activity fact. The live issue
 # has since lost its assignee, which is exactly the claimed-unassigned shape.
 jq --arg at "$(iso_at $((INOW - 60)))" \
@@ -936,6 +944,98 @@ for spec in "${non_post_merge[@]}"; do
     grep -q 'post-merge evidence nudge' \
     <<<"$(issue_probe "$n" "$state" "$probe_assignees" "$probe_pr")"
 done
+
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the pre-operator evidence-nudge probes perform no issue edits" 0 "$nudge_edits_before" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+
+# -- the operator-owned work nudge (#491), on the same quiet clock ----------
+operator_edits_before="$(wc -l <"$TMP/issue-edits")"
+quiet_comment 491 $((8 * 86400))
+operator_nudged="$(issue_probe 491 $'ready\noperator' 0)"
+check "ready plus operator stays legal through the reconcile body" 1 "" \
+  grep -q 'needs-triage\|conflicting queue labels' <<<"$operator_nudged"
+check "8 quiet days on operator-owned work draws its nudge" 0 "" \
+  grep -q 'operator work nudge' <<<"$operator_nudged"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the operator nudge addresses the operator and links the issue" 0 "" \
+  bash -c 'grep -qF "@danmt" "$1" && grep -qF "https://github.com/owner/repo/issues/491" "$1"' \
+    _ "$TMP/posted-491"
+check "the operator nudge names the body contract without parsing it" 0 "" \
+  grep -qF 'evidence surface and command or observation' "$TMP/posted-491"
+check "the operator nudge carries no idempotency marker" 1 "" \
+  grep -qF '<!-- issueflow:' "$TMP/posted-491"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the operator nudge writes no label" 0 "$operator_edits_before" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+
+operator_again="$(PROBE_NOW=$((INOW + 86400)) issue_probe 491 $'ready\noperator' 0)"
+check "the sweep one day after an operator nudge stays silent" 1 "" \
+  grep -q 'operator work nudge' <<<"$operator_again"
+check "the operator nudge self-rate-limits to one comment" 0 "1" \
+  grep -c -- '^----$' "$TMP/posted-491"
+
+quiet_comment 492 $((8 * 86400))
+plain_ready="$(issue_probe 492 ready 0)"
+check "a plain ready issue of the same age draws no operator nudge" 1 "" \
+  grep -q 'operator work nudge' <<<"$plain_ready"
+check "the plain ready control posts no comment" 1 "" test -f "$TMP/posted-492"
+
+quiet_comment 493 3600
+fresh_operator="$(issue_probe 493 $'ready\noperator' 0)"
+check "a fresh issue comment resets the operator clock" 1 "" \
+  grep -q 'operator work nudge' <<<"$fresh_operator"
+
+# D9's additive proof: each required queue shape runs twice from identical
+# fixtures. The operator half may add its comment, but every label write must
+# remain byte-identical — ownership is a second axis and cannot move the queue.
+printf '{"state":"open"}\n' >"$TMP/repos_owner_repo_issues_999.json"
+additive_label_writes() { # $1 issue, $2 labels, $3 assignees, $4 open-pr, $5 body
+  local n="$1" labels="$2" assignees="$3" open_pr="$4" body="$5" base with_operator
+  printf '[]\n' >"$(cfix "$n")"
+  printf '[]\n' >"$(tfix "$n")"
+  : >"$TMP/issue-edits"
+  issue_probe "$n" "$labels" "$assignees" "$open_pr" "" "$body" >/dev/null
+  base="$(cat "$TMP/issue-edits")"
+  rm -f "$TMP/posted-$n"
+  printf '[]\n' >"$(cfix "$n")"
+  printf '[]\n' >"$(tfix "$n")"
+  : >"$TMP/issue-edits"
+  issue_probe "$n" "$labels"$'\noperator' "$assignees" "$open_pr" "" "$body" >/dev/null
+  with_operator="$(cat "$TMP/issue-edits")"
+  [ "$base" = "$with_operator" ]
+}
+
+check "operator preserves ready label writes" 0 "" \
+  additive_label_writes 500 ready 0 false ""
+check "operator preserves a stale claimed reclaim" 0 "" \
+  additive_label_writes 501 claimed 1 false ""
+check "operator preserves parseable blocked behavior" 0 "" \
+  additive_label_writes 502 blocked 0 false 'Blocked by #999.'
+check "operator preserves unparseable blocked behavior" 0 "" \
+  additive_label_writes 503 blocked 0 false 'waiting, with no declaration'
+check "operator preserves epic behavior" 0 "" \
+  additive_label_writes 504 epic 0 false $'## Task list\n- [ ] #999'
+check "operator preserves post-merge behavior past 7 quiet days" 0 "" \
+  additive_label_writes 505 post-merge 0 false ""
+check "operator preserves needs-triage behavior" 0 "" \
+  additive_label_writes 506 needs-triage 0 false ""
+
+builder_pick="$(sed -n '/Pick from issues labeled/,/Inside an epic take/p' "$ROOT/BUILDER.md")"
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the builder picking sentence refuses operator beside epic" 0 "" \
+  bash -c 'grep -qF "never \`blocked\`, \`claimed\`, \`operator\`," <<<"$1" && grep -qF "or an \`epic\`" <<<"$1"' \
+    _ "$builder_pick"
+check "triage marks only an all-operator-owned criterion set" 0 "" \
+  grep -qF 'When every acceptance criterion is operator-owned at mint' "$ROOT/TRIAGE.md"
+check "triage keeps a mixed-reach issue on the criterion mechanism" 0 "" \
+  grep -qF 'A single operator-owned criterion among' "$ROOT/TRIAGE.md"
+
+# The additive corpus deliberately exercises label writes (notably stale
+# claim reclamation). Start a fresh recorder for the remaining post-merge
+# no-write probes; the earlier half was checked immediately above.
+: >"$TMP/issue-edits"
+nudge_edits_before=0
 
 # The machine never judges prose: which criterion starved is not a fact the
 # sweep reads, so a body it could not parse if it tried still nudges.
@@ -1610,6 +1710,18 @@ pass_probe() { # $1 issue; $2 non-empty makes reconcile_issue crash
     printf 'rc=%s count=%s issues=%s\n' "$?" "$SKIPPED_COUNT" "$SKIPPED_ISSUES"
   )
 }
+printf '%s\n' '{"number":62,"created_at":"2026-01-01T00:00:00Z","labels":[{"name":"ready"},{"name":"operator"}],"assignees":[],"body":"Surface: host. Evidence: run probe. Wake: operator comment."}' \
+  >"$TMP/repos_owner_repo_issues_62.json"
+printf '[]\n' >"$(cfix 62)"
+printf '[]\n' >"$(tfix 62)"
+: >"$TMP/issue-edits"
+operator_pass="$(pass_probe 62)"
+check "a staged full pass accepts ready plus operator" 1 "" \
+  grep -q 'needs-triage\|conflicting queue labels' <<<"$operator_pass"
+check "the staged full pass posts the operator nudge" 0 "" \
+  grep -q 'operator work nudge' <<<"$operator_pass"
+check "the staged full pass takes no label action" 1 "" \
+  grep -qF 'issue edit 62' "$TMP/issue-edits"
 check "a genuine non-read crash still names the failure byte-identically" 0 \
   "issueflow: #60: reconcile failed — continuing with the remaining issues" \
   pass_probe 60 crash

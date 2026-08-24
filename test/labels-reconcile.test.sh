@@ -342,6 +342,18 @@ core_names="$(cut -d'|' -f1 <<<"$core_rows")"
 expect "post-merge core row is byte-exact" \
   "post-merge|006B75|Refs-linked PR merged; post-merge criteria remain and triage owns completion" \
   "$(grep '^post-merge|' <<<"$core_rows")"
+expect "operator core row is byte-exact" \
+  "operator|A371F7|An operator owns the work; the body names its evidence surface, command or observation, and wake condition" \
+  "$(grep '^operator|' <<<"$core_rows")"
+ready_core="$(grep '^ready|' <<<"$core_rows" | cut -d'|' -f3-)"
+# shellcheck disable=SC2016 # backticks are LABELS.md literals
+ready_doctrine="$(sed -n 's/^| `ready` | `#0E8A16` | \(.*\) | triage |$/\1/p' LABELS.md)"
+expect "ready doctrine and registry glosses agree byte-for-byte" \
+  "$ready_doctrine" "$ready_core"
+expect "the owner-neutral ready gloss never says builder" no \
+  "$(grep -qi builder <<<"$ready_core" && echo yes || echo no)"
+expect "operator is absent from the consumer registry" no \
+  "$(grep -q '^operator|' .github/labels.conf && echo yes || echo no)"
 expect "a complete core taxonomy does not warn" "" \
   "$(missing_core_labels_warning "$core_rows" "$core_names")"
 expect "one missing core label is named exactly" \
@@ -1586,6 +1598,8 @@ expect "a dispatch deletes the six in the same run as the upserts" \
 expect "...and the recorded upsert set is unchanged from today's" \
   "$expected_upserts" \
   "$(sed -n 's/^gh label create \([^ ]*\) .*/\1/p' "$BOOT/happy")"
+expect "the bootstrap upserts operator from the central registry" 1 \
+  "$(grep -cF 'gh label create operator -R owner/repo --color A371F7 --description An operator owns the work; the body names its evidence surface, command or observation, and wake condition --force' "$BOOT/happy")"
 
 # -- a missing label is success: gh exits non-zero with not-found, and the
 #    guard keeps that from aborting the dispatch. Red without the guard.

@@ -95,6 +95,13 @@ it carries no idempotency marker on purpose — the comment is itself activity,
 so the rule self-rate-limits to one nudge per 7 quiet days — and it writes no
 label.
 
+`operator` has the same legitimate-quiet shape and the same clock. After 7
+days with no comment on an issue carrying it, the sweep posts one nudge naming
+the operator, linking the issue, and saying the body's wake condition is still
+owed. A plain `ready` issue never draws this nudge. Only a comment resets the
+clock; the nudge carries no marker and writes no label, so its own comment
+self-rate-limits it to once per 7 quiet days (#491).
+
 `post-merge` never composes with `blocked`; the transition comment carries the
 wait. It never composes with `attention`, because releasing the claim clears
 the assignee and leaves nobody parked-for. An assigned `post-merge` issue is
