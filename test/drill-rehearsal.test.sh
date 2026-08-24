@@ -118,16 +118,23 @@ awk '/^# The list is drills\/README\.md/ { on = 1; next }
   "$ROOT/drill/lib/probes.sh" >"$TMP/probes.list"
 check "the instrument's probe list is the doctrine's, byte-faithful" 0 "" \
   diff -u "$TMP/doctrine.list" "$TMP/probes.list"
-check "and it is not an empty comparison" 0 "8" \
-  bash -c 'grep -c "^   [1-8]\." "$1"' _ "$TMP/doctrine.list"
+check "and it is not an empty comparison" 0 "11" \
+  bash -c 'grep -c "^   [0-9][0-9]*\." "$1"' _ "$TMP/doctrine.list"
 
-check "the probe names are the doctrine's eight" 0 "" \
+check "the probe names are the doctrine's own" 0 "" \
   test "$(probe_name 4)" = "re-run of the completed ceremony"
 check "the rc cut is the seventh probe, in doctrine order" 0 "" \
   test "$(probe_name 7)" = "rc cut, tag-only and marked prerelease"
 check "the promotion is the eighth" 0 "" \
   test "$(probe_name 8)" = "promotion of the rc to the final version"
-check "the doctrine list is what the record counts" 0 "8" \
+# The tag door's classifications close the list, one probe each (#499 D6).
+check "the rc tag is the ninth probe, in doctrine order" 0 "" \
+  test "$(probe_name 9)" = "rc tag through the tag door"
+check "the declared namespace is the tenth" 0 "" \
+  test "$(probe_name 10)" = "declared non-release namespace tag"
+check "the malformed tag is the eleventh" 0 "" \
+  test "$(probe_name 11)" = "malformed tag outside every namespace"
+check "the doctrine list is what the record counts" 0 "11" \
   printf '%s\n' "$DRILL_PROBE_COUNT"
 
 # The rc legs' second measurement: a release's prerelease flag. A tag nobody
@@ -159,7 +166,7 @@ check "trailing blanks are dropped, inner ones are content" 0 $'- one\n\n- two' 
 # ---------------------------------------------------------------------------
 record_fixture() { # <run-cell-for-probe-3> [preamble] [result-cell-for-probe-3]
   local three="$1"
-  local preamble="${2:-All eight probes ran; every row was written from its own run.}"
+  local preamble="${2:-All eleven probes ran; every row was written from its own run.}"
   local three_result="${3:-✅ ok}"
   cat <<EOF
 # 0.7.0 — drill record
@@ -178,6 +185,9 @@ Both doors ran live against the 0.7.0 candidate's own machinery.
 | 6 | mismatched tag | [1006](https://github.com/o/n/actions/runs/1006) | 2 → 2 | 2 → 2 | ✅ ok |
 | 7 | rc cut, tag-only and marked prerelease | [1007](https://github.com/o/n/actions/runs/1007) | 2 → 3 | 2 → 3 | ✅ ok |
 | 8 | promotion of the rc to the final version | [1008](https://github.com/o/n/actions/runs/1008) | 3 → 4 | 3 → 4 | ✅ ok |
+| 9 | rc tag through the tag door | [1009](https://github.com/o/n/actions/runs/1009) | 4 → 5 | 4 → 5 | ✅ ok |
+| 10 | declared non-release namespace tag | [1010](https://github.com/o/n/actions/runs/1010) | 5 → 5 | 5 → 5 | ✅ ok |
+| 11 | malformed tag outside every namespace | [1011](https://github.com/o/n/actions/runs/1011) | 5 → 5 | 5 → 5 | ✅ ok |
 
 The rc cut's ceremony PR carries \`drills/0.7.2-rc1.md\`.
 
@@ -191,6 +201,9 @@ The rc cut's ceremony PR carries \`drills/0.7.2-rc1.md\`.
 - ✅ six
 - ✅ seven
 - ✅ eight
+- ✅ nine
+- ✅ ten
+- ✅ eleven
 
 It is **pending the operator's delete**.
 
@@ -202,7 +215,7 @@ EOF
 }
 record_fixture "[1003](https://github.com/o/n/actions/runs/1003)" >"$TMP/record-good.md"
 record_fixture "run 3, by hand" >"$TMP/record-no-run.md"
-check "a whole record passes the shape check" 0 "eight probe rows" \
+check "a whole record passes the shape check" 0 "eleven probe rows" \
   record_check "$TMP/record-good.md"
 check "a probe row with no run ID reds the shape check" 1 "probe 3 has no run ID" \
   record_check "$TMP/record-no-run.md"
@@ -217,12 +230,12 @@ sed 's#| \[1003\](https://github.com/o/n/actions/runs/1003) |#| — |#' \
   "$TMP/record-good.md" >"$TMP/record-dash-pass.md"
 check "a dash run cell on a passing row still reds the shape check" 1 \
   "probe 3 has no run ID" record_check "$TMP/record-dash-pass.md"
-ABORTED_PREAMBLE='**1 of the eight probes never reached a run** (probe 3): that row is written
+ABORTED_PREAMBLE='**1 of the eleven probes never reached a run** (probe 3): that row is written
 from the abort itself.'
 record_fixture "—" "$ABORTED_PREAMBLE" "❌ aborted before it reached a verdict" \
   >"$TMP/record-aborted.md"
 check "a probe that aborted before any run is the one row exempt" 0 \
-  "eight probe rows" record_check "$TMP/record-aborted.md"
+  "eleven probe rows" record_check "$TMP/record-aborted.md"
 head -n 8 "$TMP/record-good.md" >"$TMP/record-short.md"
 printf 'It is **pending the operator'"'"'s delete**.\n' >>"$TMP/record-short.md"
 check "a record missing probes reds the shape check" 1 "probe 5 has no row" \
@@ -265,12 +278,15 @@ check "a probe row whose counts are prose reds the shape check" 1 \
   printf '6\tmismatched tag\t1006\t1\tPASS\t2\t2\t2\t2\trefused before publication\n'
   printf '7\trc cut, tag-only and marked prerelease\t1007\t1\tPASS\t2\t3\t2\t3\tpublished as a prerelease, changelog byte-identical\n'
   printf '8\tpromotion of the rc to the final version\t1008\t1\tPASS\t3\t4\t3\t4\tthe assembled section stamped, the candidate still a prerelease\n'
+  printf '9\trc tag through the tag door\t1009\t1\tPASS\t4\t5\t4\t5\tpublished as a prerelease from its own tagged tree\n'
+  printf '10\tdeclared non-release namespace tag\t1010\t1\tPASS\t5\t5\t5\t5\tgreen no-op against the declared namespace\n'
+  printf '11\tmalformed tag outside every namespace\t1011\t1\tPASS\t5\t5\t5\t5\trefused before publication\n'
 } >"$TMP/probes.tsv"
 printf '1000\tsuccess\tthe caller landing on an armed tree\n' >"$TMP/setup.tsv"
 record_render "$TMP/ctx.tsv" "$TMP/probes.tsv" "$TMP/setup.tsv" >"$TMP/rendered.md"
 check "the rendered record matches its golden shape" 0 "" \
   diff -u "$ROOT/test/fixtures/drill-record.golden.md" "$TMP/rendered.md"
-check "the rendered record passes its own shape check" 0 "eight probe rows" \
+check "the rendered record passes its own shape check" 0 "eleven probe rows" \
   record_check "$TMP/rendered.md"
 # "Removing either probe reds the golden-shape check" — both halves of it:
 # the emission stops matching the golden, and the shape check names the row
@@ -321,10 +337,10 @@ check "a passing probe's claim still stands beside the failures" 0 \
   "✅ The merge door refused a re-run of its own completed ceremony." \
   cat "$TMP/two-failed.md"
 check "the conclusion counts what the run did not establish" 0 \
-  "Not established: 2 of the eight" cat "$TMP/two-failed.md"
+  "Not established: 2 of the eleven" cat "$TMP/two-failed.md"
 check "the clean-run closing sentence is not on a failed record" 1 "" \
   grep -qF 'Every refusal claim above is asserted' "$TMP/two-failed.md"
-check "a two-failure record still passes the shape check" 0 "eight probe rows" \
+check "a two-failure record still passes the shape check" 0 "eleven probe rows" \
   record_check "$TMP/two-failed.md"
 # A probe that never wrote a row establishes nothing either, and the
 # conclusion counts it with the failures rather than passing over it.
@@ -348,18 +364,18 @@ check "a conclusion missing a probe line reds the shape check" 1 \
 # six run IDs one line after excusing a row that had none.
 # ---------------------------------------------------------------------------
 check "a clean run's preamble still claims all six ran" 0 "" \
-  grep -qF 'All eight probes ran' "$TMP/rendered.md"
+  grep -qF 'All eleven probes ran' "$TMP/rendered.md"
 sed 's/\t1006\t1\tPASS\t2\t2\t2\t2\trefused before publication/\t—\t1\tFAIL\t2\t2\t2\t2\taborted before it reached a verdict (exit 1)/' \
   "$TMP/probes.tsv" >"$TMP/one-aborted.tsv"
 record_render "$TMP/ctx.tsv" "$TMP/one-aborted.tsv" "$TMP/setup.tsv" >"$TMP/one-aborted.md"
 check "an aborted probe withdraws the preamble's claim that all six ran" 1 "" \
-  grep -qF 'All eight probes ran' "$TMP/one-aborted.md"
+  grep -qF 'All eleven probes ran' "$TMP/one-aborted.md"
 check "the preamble counts the probes that never reached a run" 0 \
-  "**1 of the eight probes never reached a run** (probe 6)" \
+  "**1 of the eleven probes never reached a run** (probe 6)" \
   cat "$TMP/one-aborted.md"
 check "the preamble still stands behind the rows that did run" 0 \
   "Every other row in the table was written" cat "$TMP/one-aborted.md"
-check "an aborted record still passes the shape check" 0 "eight probe rows" \
+check "an aborted record still passes the shape check" 0 "eleven probe rows" \
   record_check "$TMP/one-aborted.md"
 record_check "$TMP/one-aborted.md" >"$TMP/one-aborted.check"
 check "the shape check stops claiming a run ID for the row it excused" 1 "" \
@@ -374,7 +390,7 @@ sed -e 's/\t1003\t1\tPASS\t1\t1\t1\t1\trefused at decide/\t—\t1\tFAIL\t1\t1\t1
   -e 's/\t1006\t1\tPASS\t2\t2\t2\t2\trefused before publication/\t—\t1\tFAIL\t2\t2\t2\t2\taborted before it reached a verdict (exit 1)/' \
   "$TMP/probes.tsv" >"$TMP/two-aborted.tsv"
 check "two aborted probes are both named in the preamble" 0 \
-  "**2 of the eight probes never reached a run** (probe 3, 6)" \
+  "**2 of the eleven probes never reached a run** (probe 3, 6)" \
   record_render "$TMP/ctx.tsv" "$TMP/two-aborted.tsv" "$TMP/setup.tsv"
 # `unestablished` is a subtraction, and a duplicated row would have rendered
 # it negative. The shape check's row count catches that before the emission
@@ -455,7 +471,7 @@ check "a record where nothing ran claims neither door" 0 \
 check "a record where nothing ran claims no door ran live" 1 "" \
   grep -qF 'ran live against the' "$TMP/all-aborted.md"
 check "a record where nothing ran establishes nothing" 0 \
-  "Not established: 8 of the eight" cat "$TMP/all-aborted.md"
+  "Not established: 11 of the eleven" cat "$TMP/all-aborted.md"
 
 # The shape check grades both sentences, so a renderer that stopped measuring
 # them — or a hand-touched record — reds rather than shipping.
@@ -469,7 +485,7 @@ check "the excused-row count agrees in number at one row" 0 \
   "1 aborted before reaching a run and carries the aborted mark" \
   record_check "$TMP/one-aborted.md"
 record_fixture "[1003](https://github.com/o/n/actions/runs/1003)" \
-  '**2 of the eight probes never reached a run** (probe 5, 6): those rows are
+  '**2 of the eleven probes never reached a run** (probe 5, 6): those rows are
 written from the abort itself.' |
   sed -e 's#\[1005\](https://github.com/o/n/actions/runs/1005)#—#' \
     -e 's#\[1006\](https://github.com/o/n/actions/runs/1006)#—#' \
@@ -478,12 +494,12 @@ written from the abort itself.' |
 check "a record claiming both doors ran when a whole door aborted reds" 1 \
   "the rows measure merge-door-ran=1 tag-door-ran=0, but the conclusion does not say so" \
   record_check "$TMP/record-door-lie.md"
-record_fixture "—" "All eight probes ran; every row was written from its own run." \
+record_fixture "—" "All eleven probes ran; every row was written from its own run." \
   "❌ aborted before it reached a verdict" >"$TMP/record-preamble-lie.md"
 check "a preamble that undercounts the rows that never ran reds" 1 \
   "the preamble says 0 probe(s) never reached a run, the table shows 1" \
   record_check "$TMP/record-preamble-lie.md"
-grep -vF 'All eight probes ran' "$TMP/record-good.md" >"$TMP/record-no-preamble.md"
+grep -vF 'All eleven probes ran' "$TMP/record-good.md" >"$TMP/record-no-preamble.md"
 check "a record with no preamble at all reds" 1 \
   "record's preamble does not say how many probes reached a run" \
   record_check "$TMP/record-no-preamble.md"
@@ -606,8 +622,17 @@ awk '/^The consumer.s \*\*entire\*\* `release\.yml`:$/ { armed = 1; next }
   "$ROOT/docs/CONSUMERS.md" |
   sed "s#^    uses: heavy-duty/ceremony/.github/workflows/release.yml@<pinned-tag>\$#    uses: $FORK/.github/workflows/release.yml@$FORK_REF#" \
     >"$TMP/caller.expected"
-check "the caller stub is CONSUMERS.md's block, verbatim but for the pin" 0 "" \
+# The add-on line comes out of the guide too, from the fence that documents
+# it, so the stub cannot drift from what a consumer is told to write (#499 D6).
+awk '/^To declare a tag namespace that is intentionally not a release, add this line$/ { on = 1; next }
+     on && /^```yaml$/ { inblock = 1; next }
+     /^```$/ { if (inblock) exit }
+     inblock { print "      " $0 }' \
+  "$ROOT/docs/CONSUMERS.md" >>"$TMP/caller.expected"
+check "the caller stub is CONSUMERS.md's block plus its namespace add-on" 0 "" \
   diff -u "$TMP/caller.expected" "$TMP/stub/.github/workflows/release.yml"
+check "the add-on the stub carries is the guide's own glob" 0 \
+  "      non-release-namespace: drill/**" cat "$TMP/stub/.github/workflows/release.yml"
 
 check "the caller refuses to land on a tree with no armed fixture" 1 \
   "is missing the armed fixture: VERSION" ordering_probe "$UNSEEDED"
@@ -615,7 +640,7 @@ check "the refusal names the lesson it enforces" 1 "the 0.4.0 setup lesson" \
   ordering_probe "$UNSEEDED"
 
 # ---------------------------------------------------------------------------
-# End to end: the eight probes in doctrine order against the stub, a full green
+# End to end: the probes in doctrine order against the stub, a full green
 # sequence, and the record it emits.
 # ---------------------------------------------------------------------------
 run_rehearsal() { # <scenario-file> [extra args…]
@@ -637,7 +662,10 @@ run_rehearsal() { # <scenario-file> [extra args…]
 
 # One line per door event, in the order the rehearsal fires them: the caller
 # landing, probes 1–3, probe 3's re-arm, probe 4's re-run, probes 5–6, then
-# the rc legs — probe 7's arming commit, its rc cut, and probe 8's promotion.
+# the rc legs — probe 7's arming commit, its rc cut, and probe 8's promotion —
+# and last the tag door's three classifications, probes 9–11. Probe 9 carries
+# no `rearm:`: the tag door does not re-arm, and a scenario that armed there
+# would be describing a door this drill exists to prove does not (#499 D6).
 green_scenario() {
   printf '%s\n' \
     "success	none" \
@@ -650,7 +678,10 @@ green_scenario() {
     "failure	none" \
     "success	none" \
     "success	prerelease:0.7.2-rc1,rearm:0.7.2-rc2-dev" \
-    "success	release:0.7.2,rearm:0.7.3-dev" >"$1"
+    "success	release:0.7.2,rearm:0.7.3-dev" \
+    "success	prerelease:0.7.3-rc1" \
+    "success	none" \
+    "failure	none" >"$1"
 }
 
 seed_taken_repo() { # <owner/name> — enough state for createRepository to collide
@@ -1086,9 +1117,9 @@ green_scenario "$TMP/green.scenario"
 green_out="$(run_rehearsal "$TMP/green.scenario" --out "$TMP/emitted.md" 2>&1)"
 green_rc=$?
 check "the rehearsal runs end to end and exits 0" 0 "" test "$green_rc" -eq 0
-check "the run reports eight probes passed" 0 "probes passed 8/8, failed 0" \
+check "the run reports every probe passed" 0 "probes passed 11/11, failed 0" \
   printf '%s\n' "$green_out"
-check "the emitted record passes the shape check" 0 "eight probe rows" \
+check "the emitted record passes the shape check" 0 "eleven probe rows" \
   record_check "$TMP/emitted.md"
 check "a completed rehearsal creates no sibling abort artifact" 1 "" \
   bash -c 'compgen -G "$1" >/dev/null' _ "$TMP/emitted.aborted-*.md"
@@ -1168,7 +1199,7 @@ check "the record says which probe failed and how" 0 "tags moved 1→2, expected
   bash -c 'awk -F"|" "/^\\| 3 \\|/ { print }" "$1"' _ "$TMP/leaky.md"
 check "the failed probe's row carries the failure mark" 0 "❌" \
   bash -c 'awk "/^\\| 3 \\|/" "$1"' _ "$TMP/leaky.md"
-check "a failed drill is still a record" 0 "eight probe rows" record_check "$TMP/leaky.md"
+check "a failed drill is still a record" 0 "eleven probe rows" record_check "$TMP/leaky.md"
 check "a failed drill still says so at the top" 0 "1 probe(s) failed" cat "$TMP/leaky.md"
 check "a failed drill still archives the scratch repo" 0 "" \
   grep -qF "api repos/$SCRATCH --method PATCH --input -" "$TMP/state/calls"
@@ -1239,7 +1270,7 @@ check "the run reports the promotion as the one failure" 0 "probes passed 7/8, f
   printf '%s\n' "$relabel_out"
 check "a failed promotion withdraws its claim from the conclusion" 1 "" \
   grep -qF 'while the candidate stayed a prerelease' "$TMP/relabel.md"
-check "a failed rc leg is still a whole record" 0 "eight probe rows" \
+check "a failed rc leg is still a whole record" 0 "eleven probe rows" \
   record_check "$TMP/relabel.md"
 
 # ---------------------------------------------------------------------------
@@ -1265,10 +1296,10 @@ check "the aborted probe's row says it aborted" 0 "❌ aborted before it reached
   bash -c 'awk "/^\\| 8 \\|/" "$1"' _ "$TMP/aborted.md"
 check "the aborted probe's row links no run it never had" 0 "| — |" \
   bash -c 'awk "/^\\| 8 \\|/" "$1"' _ "$TMP/aborted.md"
-check "the record after an abort still passes the shape check" 0 "eight probe rows" \
+check "the record after an abort still passes the shape check" 0 "eleven probe rows" \
   record_check "$TMP/aborted.md"
 check "the end-to-end aborted record's preamble names the probe that never ran" 0 \
-  "**1 of the eight probes never reached a run** (probe 8)" cat "$TMP/aborted.md"
+  "**1 of the eleven probes never reached a run** (probe 8)" cat "$TMP/aborted.md"
 check "the aborted probe establishes nothing in the conclusion" 1 "" \
   grep -qF 'promoted `0.7.2-rc1` to `0.7.2`' "$TMP/aborted.md"
 check "the probes before the abort still stand" 0 \
@@ -1413,7 +1444,7 @@ retried_out="$(run_rehearsal "$TMP/retried.scenario" --out "$TMP/retried.md" 2>&
 retried_rc=$?
 check "a bootstrap re-read that answers stale twice does not stop the rehearsal" 0 "" \
   test "$retried_rc" -eq 0
-check "and all eight probes still ran" 0 "probes passed 8/8, failed 0" \
+check "and every probe still ran" 0 "probes passed 11/11, failed 0" \
   printf '%s\n' "$retried_out"
 check "the record it emits is the clean run's, unchanged" 0 "" \
   diff -u "$TMP/emitted.md" "$TMP/retried.md"
@@ -1847,7 +1878,7 @@ sites_out="$(run_rehearsal "$TMP/probesites.scenario" --out "$TMP/probesites.md"
 sites_rc=$?
 check "stale answers at the probes' own read-after-writes do not stop the rehearsal" 0 "" \
   test "$sites_rc" -eq 0
-check "and every probe still reached its verdict" 0 "probes passed 8/8, failed 0" \
+check "and every probe still reached its verdict" 0 "probes passed 11/11, failed 0" \
   printf '%s\n' "$sites_out"
 check "the record it emits is the clean run's, unchanged" 0 "" \
   diff -u "$TMP/emitted.md" "$TMP/probesites.md"
@@ -2122,17 +2153,17 @@ faulted_probe_run branch-sha "$branch_fault" 3
 check "a branch-SHA failure becomes probe 2's read-named row" 0 \
   "the branch SHA did not read back at $SCRATCH@main before probe 2" \
   probe_row "$TMP/branch-sha.md" 2
-check "a branch-SHA failure still leaves all eight rows" 0 "8" \
-  bash -c 'grep -cE "^\| [1-8] \|" "$1"' _ "$TMP/branch-sha.md"
+check "a branch-SHA failure still leaves every row" 0 "11" \
+  bash -c 'grep -cE "^\| [0-9]+ \|" "$1"' _ "$TMP/branch-sha.md"
 check "the last probe still runs after a branch-SHA failure" 0 "" \
-  row_has "$TMP/branch-sha.md" 8 '| 8 |'
+  row_has "$TMP/branch-sha.md" 11 '| 11 |'
 check "the branch-SHA failure still archives the scratch repo" 0 \
   "archived=true" cat "$TMP/branch-sha.md"
 check "the branch-SHA failure still emits a valid record" 0 \
-  "eight probe rows" record_check "$TMP/branch-sha.md"
+  "eleven probe rows" record_check "$TMP/branch-sha.md"
 
-# The disposal is the last thing the instrument does, and it sits after eight
-# probes under `set -euo pipefail`. An exhausted read there used to be the end
+# The disposal is the last thing the instrument does, and it sits after every
+# probe under `set -euo pipefail`. An exhausted read there used to be the end
 # of the run — the record those probes filled, lost to a read. It is now a
 # sentence in the record instead, and this is what says so.
 stub_reset
@@ -2142,7 +2173,7 @@ disposal_out="$(run_rehearsal "$TMP/disposal.scenario" --out "$TMP/disposal.md" 
 disposal_rc=$?
 check "a disposal read that never answers still emits the record" 0 "" \
   test "$disposal_rc" -eq 0
-check "with all eight probe rows in it" 0 "probes passed 8/8, failed 0" \
+check "with all eleven probe rows in it" 0 "probes passed 11/11, failed 0" \
   printf '%s\n' "$disposal_out"
 check "and the record says the archive is unobserved rather than claiming it" 0 \
   "the read afterwards never answered" cat "$TMP/disposal.md"
@@ -2163,7 +2194,7 @@ unarchived_rc=$?
 unset DRILL_STUB_ARCHIVE_LAG
 check "a disposal that reads back false still emits the record" 0 "" \
   test "$unarchived_rc" -eq 0
-check "with all eight probe rows in it too" 0 "probes passed 8/8, failed 0" \
+check "with all eleven probe rows in it too" 0 "probes passed 11/11, failed 0" \
   printf '%s\n' "$unarchived_out"
 check "and the record says the archive did not land" 0 \
   "the archive did not land, and the repository is still live" \
@@ -2262,7 +2293,7 @@ check "a failed drill's record round-trips — a valid record is still an emissi
 # deriving it, sees nothing wrong at all.
 sed '7a A reviewer added this sentence by hand.' "$FIX" >"$TMP/rt-preamble.md"
 check "the mutation floor: the shape check passes a hand-added sentence" 0 \
-  "eight probe rows" record_check "$TMP/rt-preamble.md"
+  "eleven probe rows" record_check "$TMP/rt-preamble.md"
 check "the round trip fails it" 1 "A reviewer added this sentence by hand." \
   record_roundtrip "$TMP/rt-preamble.md"
 check "and names the line it is on" 1 "first difference at line 8" \
@@ -2280,7 +2311,7 @@ check "and names the line it is on" 1 "first difference at line 8" \
   sed -n '34,$p' "$FIX"
 } >"$TMP/rt-reordered.md"
 check "a reordered context field still passes the shape check" 0 \
-  "eight probe rows" record_check "$TMP/rt-reordered.md"
+  "eleven probe rows" record_check "$TMP/rt-reordered.md"
 check "the round trip fails a reordered context field" 1 \
   "first difference at line 26" record_roundtrip "$TMP/rt-reordered.md"
 
@@ -2302,7 +2333,7 @@ check "the round trip fails a ref and a SHA swapped in the run sentence" 1 \
 # diagnostic than the same edit surfacing as a diff.
 sed '66s/\[31408496126\]/[31409999999]/' "$FIX" >"$TMP/rt-runid-text.md"
 check "an edited run ID passes the shape check, which only greps for one" 0 \
-  "eight probe rows" record_check "$TMP/rt-runid-text.md"
+  "eleven probe rows" record_check "$TMP/rt-runid-text.md"
 check "the round trip fails a run ID edited in the link text alone" 1 \
   "link text (31409999999) and its URL's run ID (31408496126) disagree" \
   record_roundtrip "$TMP/rt-runid-text.md"
@@ -2327,13 +2358,13 @@ check "a run ID rewritten on both sides is data, and the round trip says so" 0 \
 # rows, so the render writes the count the rows imply and the edit cannot
 # survive being regenerated.
 check "the fixture's failed variant states the count that is about to be edited" 0 \
-  "Not established: 1 of the eight" cat "$TMP/rt-failed.md"
-sed 's/Not established: 1 of the eight/Not established: 3 of the eight/' \
+  "Not established: 1 of the eleven" cat "$TMP/rt-failed.md"
+sed 's/Not established: 1 of the eleven/Not established: 3 of the eleven/' \
   "$TMP/rt-failed.md" >"$TMP/rt-count.md"
 check "a changed conclusion count still passes the shape check" 0 \
-  "eight probe rows" record_check "$TMP/rt-count.md"
+  "eleven probe rows" record_check "$TMP/rt-count.md"
 check "the round trip fails a changed conclusion count" 1 \
-  "Not established: 3 of the eight" record_roundtrip "$TMP/rt-count.md"
+  "Not established: 3 of the eleven" record_roundtrip "$TMP/rt-count.md"
 
 # A truncated record: the probe table cut in half. The rows that remain still
 # parse, and the render then writes the conclusion those four rows imply —
@@ -2348,7 +2379,7 @@ check "the round trip fails a halved probe table" 1 \
 # The failure mode that would quietly re-open the hole is "unparseable
 # therefore fine". Both cases below pass `record_check` — they are shaped like
 # records — and both are refused by the parse, by line number.
-check "a pipe in a probe row's note passes the shape check" 0 "eight probe rows" \
+check "a pipe in a probe row's note passes the shape check" 0 "eleven probe rows" \
   bash -c 'sed "66s/refused at decide/refused at decide | by the door/" "$1" >"$2"
     source "$3/drill/lib/probes.sh"; source "$3/drill/lib/record.sh"
     record_check "$2"' _ "$FIX" "$TMP/rt-pipe.md" "$ROOT"
@@ -2513,7 +2544,7 @@ gaps_out="$(run_rehearsal "$TMP/gaps.scenario" --out "$TMP/gaps.md" \
   --gap 'consumer callers|nothing here drives a consumer repository running the reusable workflow from its own tree' 2>&1)"
 gaps_rc=$?
 check "a rehearsal with two declared gaps completes" 0 "" test "$gaps_rc" -eq 0
-check "and still runs every probe" 0 "probes passed 8/8, failed 0" \
+check "and still runs every probe" 0 "probes passed 11/11, failed 0" \
   printf '%s\n' "$gaps_out"
 sed -n '/^## Known gaps$/,$p' "$TMP/gaps.md" | grep '^- ' >"$TMP/gaps.lines"
 cat >"$TMP/gaps.want" <<'GAPS'
@@ -2528,7 +2559,7 @@ check "the declared record carries the preamble, not the none sentence" 1 "" \
   grep -qF 'None declared' "$TMP/gaps.md"
 check "a record with declared gaps round-trips" 0 \
   "byte-identical to record_render's output" record_roundtrip "$TMP/gaps.md"
-check "and passes the shape check" 0 "eight probe rows" record_check "$TMP/gaps.md"
+check "and passes the shape check" 0 "eleven probe rows" record_check "$TMP/gaps.md"
 
 # The fourth TSV: the parse hands back exactly the pairs that were declared,
 # in order. That is what makes the amend below a re-render rather than an edit.
@@ -2692,7 +2723,7 @@ check "and reds one where the sentence is only CONTAINED in a longer line" 1 \
 # The must-NOT-fire half, so the four above cannot be satisfied by a check
 # that reds everything: the untouched emission still passes.
 check "while the untouched emission still passes the shape check" 0 \
-  "eight probe rows" record_check "$TMP/emitted.md"
+  "eleven probe rows" record_check "$TMP/emitted.md"
 
 # -- must-fail: the section list stays CLOSED --------------------------------
 # #484 adds one member to it and does not open it. A seventh heading the
@@ -2763,7 +2794,7 @@ check "with the monotonicity reason it is accepted for" 0 \
 
 # -- D7: --amend-record ------------------------------------------------------
 # Without this mode the section is nearly unusable: a reviewer asking for a
-# disclosure mid-panel would cost a full eight-probe rehearsal against a fresh
+# disclosure mid-panel would cost a full rehearsal against a fresh
 # scratch repo, which is the cost that made the second-document option
 # unacceptable on #482.
 amend() { (cd "$ROOT" && ./drill/rehearsal.sh --amend-record "$@"); }
