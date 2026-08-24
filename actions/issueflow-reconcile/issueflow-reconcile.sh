@@ -23,6 +23,10 @@ NOW="$ISSUEFLOW_NOW"
 STALE_AFTER=$((ISSUEFLOW_STALE_HOURS * 3600))
 QUEUE_LABELS=(ready claimed blocked post-merge)
 TRIAGE_ACTORS=()
+# The operator nudge's addressee. This is the same human identity the PR-side
+# reconciler defaults to: the label names who owns the work, and a nudge that
+# addresses triage would move the obligation to the wrong role (#491).
+OPERATOR="${HUMAN_REVIEWER:-danmt}"
 # Four issues in one blocker chain can occupy only one builder at a time and
 # therefore provably under-employ this fleet's two builders (#426 D2).
 GRAPH_DEEP_THRESHOLD=4
@@ -1419,7 +1423,7 @@ an unchanged shape never re-posts and a changed one speaks.*" >/dev/null
 }
 
 reconcile_issue() {
-  local n="$1" decision refs cross_refs states age evidence_age ruling_age created assignees open_pr=false label owners
+  local n="$1" decision refs cross_refs states age evidence_age operator_age ruling_age created assignees open_pr=false label owners
   local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set="" parse_marker=""
   local unchecked="" remove_claimed=claimed
   local attention_active=true attention_suppression=""
@@ -1440,6 +1444,18 @@ reconcile_issue() {
       return ;;
   esac
 
+  # Read the operator clock before any queue branch can write a comment. The
+  # nudge is cross-cutting, so a blocked parse echo, a claim diagnostic or a
+  # post-merge nudge must not buy the operator another quiet week merely by
+  # running earlier in this pass. Comments alone count, exactly as on the
+  # post-merge evidence clock; label churn and assignments are board facts,
+  # not progress on the operator-owned work (#491).
+  if has_issue_label operator; then
+    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+    guarded_read operator_age last_issue_comment_activity "$n" "$created" \
+      || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+  fi
+
   if has_issue_label claimed; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
     issue_has_open_pr "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
@@ -1452,9 +1468,13 @@ reconcile_issue() {
     # because the assignment IS the claim; the ruling waits on a human, and
     # an assignment says nothing about whether the decider answered.
     if has_issue_label needs-ruling; then
-      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-      guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
-        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      if [ -n "${operator_age:-}" ]; then
+        ruling_age="$operator_age"
+      else
+        created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+        guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
+          || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      fi
     fi
     merged_ref_pr="$(post_merge_pr_for_issue "$n")"
     if [ -n "$merged_ref_pr" ]; then
@@ -1539,9 +1559,13 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
     # would let the assigned-flag comment silence the nudge for another 7
     # days — the same self-silencing the ruling nudge avoids by taking its
     # clock from this same read, below.
-    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-    guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
-      || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    if [ -n "${operator_age:-}" ]; then
+      evidence_age="$operator_age"
+    else
+      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+      guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
+        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    fi
     # On this surface the ruling clock IS this read (#284 D6): both nudges
     # wait on comments and nothing else, so the evidence clock is handed to
     # the ruling block rather than read again — and handed HERE, before the
@@ -1670,6 +1694,26 @@ See \`$release_doctrine_path\`. The operator blessing the order is the one step 
     fi
   fi
 
+  # ---- the operator-owned work nudge (#491), post-merge's quiet twin ----
+  # The body contract carries the evidence surface, command or observation,
+  # and wake condition. The machine deliberately parses none of that prose:
+  # the link is the payload, and the operator judges what the issue says is
+  # owed. Like post-merge this has no marker; its own comment is activity and
+  # self-rate-limits the rule to one nudge per seven quiet days.
+  if has_issue_label operator \
+    && [ "$(ruling_nudge_decision "$NOW" "$operator_age")" = NUDGE ]; then
+    local operator_quiet_days=$(((NOW - operator_age) / 86400))
+    run gh issue comment "$n" -R "$REPO" --body "@$OPERATOR — this \`operator\` item has had no comment for ${operator_quiet_days} days: https://github.com/$REPO/issues/$n
+
+The operator-owned work and its wake condition are still owed. Read the
+issue's evidence surface and command or observation, perform the work and
+record the evidence, or say what is still outstanding. The sweep never
+judges that prose; the link is the payload.
+
+*This nudge is comment-only and carries no idempotency marker on purpose: the comment itself is activity, so posting it resets the 7-day window and the rule self-rate-limits to one nudge per 7 quiet days. Do not add a marker.*" >/dev/null
+    log "#$n: operator work nudge (${operator_quiet_days}d quiet — operator owes the wake condition)"
+  fi
+
   # The flag composes with every build queue state, but requires an assignee.
   # Existing post-merge/claimed diagnostics take precedence so one board bug
   # draws one comment (#232 D5); the shared helper still logs the suppression.
@@ -1705,9 +1749,13 @@ See \`$release_doctrine_path\`. The operator blessing the order is the one step 
     # `ruling_age` already, read before anything they post; the fresh read
     # serves the paths that arrive empty-handed.
     if [ -z "${ruling_age:-}" ]; then
-      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-      guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
-        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      if [ -n "${operator_age:-}" ]; then
+        ruling_age="$operator_age"
+      else
+        created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+        guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
+          || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+      fi
     fi
     reconcile_ruling "$n" "$ruling_age" "$NOW"
   fi
