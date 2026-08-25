@@ -3,7 +3,7 @@
 #
 # `drills/` is the record, not the instrument; this is the instrument. It
 # automates drills/README.md's rehearsal end to end — scratch repo, armed
-# fixture, caller stub at a rewritten fork pin, the eight probes in doctrine
+# fixture, caller stub at a rewritten fork pin, the probes in doctrine
 # order, the archive, and the record — because a manual hour of hand-steps
 # loses to a waiver every time and a script does not.
 #
@@ -236,7 +236,7 @@ done
 
 # ---- --amend-record: a gap added after the run, by re-rendering (#484 D7) --
 # Without this the section is nearly unusable: a reviewer asking for a
-# disclosure mid-panel would otherwise cost a full eight-probe rehearsal
+# disclosure mid-panel would otherwise cost a full rehearsal
 # against a fresh scratch repo, which is the cost that made the second-document
 # option unacceptable on #482. It is a MODE of this script rather than a second
 # entry point because `usage`, `refuse` and the argument parser above are
@@ -294,6 +294,10 @@ DRILL_V4="${DRILL_V4%-dev}"
 DRILL_RC1="$DRILL_V3-rc1"
 DRILL_RC2="$(version_next_dev "$DRILL_RC1")"
 DRILL_RC2="${DRILL_RC2%-dev}"
+# The rc the TAG door publishes (#499 D6). The promotion arms main at
+# DRILL_V4-dev and releases nothing on that line, so its first candidate is
+# the free rung a manual rc tag can name.
+DRILL_RC_TAG="$DRILL_V4-rc1"
 DRILL_DATE="${stamp:-$(date -u +%Y-%m-%d)}"
 DRILL_WORK="$(mktemp -d)"
 DRILL_STAGE="$DRILL_WORK/stage"
@@ -308,6 +312,7 @@ out="${out:-$PWD/$version-drill.md}"
 : >"$DRILL_GAPS"
 [ -z "${gap_specs[*]:-}" ] || printf '%s\n' "${gap_specs[@]}" >"$DRILL_GAPS"
 export DRILL_ROOT DRILL_V1 DRILL_V2 DRILL_V3 DRILL_V4 DRILL_RC1 DRILL_RC2
+export DRILL_RC_TAG DRILL_NON_RELEASE_NAMESPACE
 export DRILL_DATE DRILL_REPO DRILL_WORK DRILL_STAGE
 export DRILL_PROBES DRILL_SETUP DRILL_GAPS
 trap 'rm -rf "$DRILL_WORK"' EXIT
@@ -519,7 +524,7 @@ setup_run probe_setup_record probe_setup_record "$baseline_run" "$baseline_conc"
 # The guide's prerequisite: the label exists before the first ceremony PR.
 setup_run scratch_label_create scratch_label_create "$DRILL_REPO" release
 
-# ---- the eight probes, in doctrine order -----------------------------------
+# ---- the probes, in doctrine order ----------------------------------------
 # Each through probe_run, so an abort inside one is that probe's failed row
 # rather than the end of the rehearsal: the archive and the record below are
 # what the header promises either way.
@@ -531,10 +536,15 @@ probe_run 5 probe_5_tag
 probe_run 6 probe_6_mismatched_tag
 probe_run 7 probe_7_rc_cut
 probe_run 8 probe_8_promotion
+# The tag door's three remaining classifications, after the rc ladder because
+# probe 9 needs a version nothing has released (#499 D6).
+probe_run 9 probe_9_rc_tag
+probe_run 10 probe_10_namespace_tag
+probe_run 11 probe_11_malformed_tag
 
 # ---- disposal: archive, observe, and stop ---------------------------------
 # The read-back can exhaust its retries (#369 D4), and if it does, that must
-# not take the record with it: eight probes have already run and the header
+# not take the record with it: every probe has already run and the header
 # promises their rows either way. So the disposal sentence reports the read
 # that did not answer, rather than `set -e` ending the run one line short of
 # the thing the run is for.

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# The eight probes, in doctrine order (#313 D1, D3; #321 D1). Sourced,
+# The probes, in doctrine order (#313 D1, D3; #321 D1; #499 D6). Sourced,
 # never run.
+#
+# The last three are the tag door's classifications, one probe each. They run
+# after the rc ladder rather than beside probes 5 and 6 because probe 9 needs
+# a version nothing has released yet, which only exists on the far side of
+# the promotion (#499 D6).
 #
 # The list is drills/README.md's, byte-faithful:
 #
@@ -12,15 +17,28 @@
 #   5. a tag-door release from a manual tag;
 #   6. a mismatched tag refuses;
 #   7. an rc cut publishes a prerelease and stamps nothing;
-#   8. the promotion after it ships the final version.
+#   8. the promotion after it ships the final version;
+#   9. an rc tag through the tag door publishes a prerelease from its own
+#      tagged tree;
+#   10. a tag inside the caller's declared non-release namespace is a green
+#       no-op;
+#   11. a tag outside every namespace refuses, creating nothing.
 #
 # Every probe reads the tag count and the release count before and after
 # itself. A refusal that leaves a tag or a release behind is a failed probe,
 # and that claim is these two measurements — never the prose beside them.
 #
 # A failed probe does not abort the rehearsal: a failed drill is a valid
-# record, and a record that stops at the first surprise hides the seven
-# probes nobody then ran.
+# record, and a record that stops at the first surprise hides every probe
+# nobody then ran.
+
+# The tag namespace the drill's caller declares as deliberately not a release
+# (#499 D6). It is the glob docs/CONSUMERS.md uses in its own add-on block,
+# and it lives HERE rather than beside caller_write because the record names
+# it too: record.sh refuses to load without this file, and the round-trip
+# guard sources exactly these two.
+# shellcheck disable=SC2034 # read by drill/lib/fixture.sh and drill/lib/record.sh
+DRILL_NON_RELEASE_NAMESPACE='drill/**'
 
 DRILL_PROBE_NAMES="merge-door ceremony
 mislabeled ordinary PR
@@ -29,7 +47,10 @@ re-run of the completed ceremony
 tag-door release from a manual tag
 mismatched tag
 rc cut, tag-only and marked prerelease
-promotion of the rc to the final version"
+promotion of the rc to the final version
+rc tag through the tag door
+declared non-release namespace tag
+malformed tag outside every namespace"
 
 # The doctrine list's length. The record grades every probe the doctrine
 # names rather than the rows it happens to have been handed, so the count
@@ -86,7 +107,7 @@ probe_record() {
 # and the EXIT trap then removes the work directory with `probes.tsv` in it —
 # an unarchived scratch repo and no record at all, under a header comment
 # promising the record either way. So the abort becomes what it is: this
-# probe's failed row, and seven probes that still get asked their question.
+# probe's failed row, and every other probe still getting asked its question.
 probe_run() {
   local n="${1:?probe_run: n required}" fn="${2:?probe_run: probe required}"
   local rows_before rows_after counts status=0
@@ -661,5 +682,166 @@ probe_8_promotion() {
       "\`$DRILL_V3\` published as a full release from the body its fragments assemble to; they are consumed, \`$DRILL_RC1\` is still a prerelease, and main re-armed to \`$DRILL_V4-dev\`"
   else
     probe_record 8 "$run" 1 FAIL "$tb" "$ta" "$rb" "$ra" "${problems#; }"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Probe 9 — an rc tag through the TAG door. The rc ladder above runs entirely
+# through the merge door, which creates its own tag inside its own job; a
+# GITHUB_TOKEN-created tag fires no workflows, so no rc tag has ever reached
+# the tag door in a drill and its rc branch — notes from
+# `changelog-assemble --check`, published `--prerelease` — was live-untested
+# (#499 D6).
+#
+# The version is `$DRILL_V4-rc1`: the promotion armed main at `$DRILL_V4-dev`
+# and nothing has released that line, so this rung is free. The tag door does
+# not re-arm, so main must read exactly what the promotion left there.
+# --------------------------------------------------------------------------
+probe_9_rc_tag() {
+  local before after stage manifest run conc tb ta rb ra problems sha
+  local prerelease armed tags
+  before="$(probe_counts "$DRILL_REPO")"
+  tb="$(cut -f1 <<<"$before")"
+  rb="$(cut -f2 <<<"$before")"
+  probe_branch_from_main 9 probe9-rc-tag "$tb" "$rb" || return 1
+  stage="$(probe_stage probe9)"
+  printf '%s\n' "$DRILL_RC_TAG" >"$stage/VERSION"
+  # The promotion consumed every fragment, and an rc's notes ARE its
+  # fragments: with none the door's own `--check` refuses and the probe would
+  # be measuring the assembler's refusal instead of the door's rc branch.
+  mkdir -p "$stage/changelog.d"
+  printf -- '- A fragment for the tag door to assemble an rc release from (#499).\n' \
+    >"$stage/changelog.d/11.md"
+  manifest="$(probe_manifest "$stage" VERSION changelog.d/11.md)"
+  sha="$(scratch_commit "$DRILL_REPO" probe9-rc-tag \
+    "the tag door's tree at $DRILL_RC_TAG" "$manifest")" || return 1
+  scratch_ref_create "$DRILL_REPO" "refs/tags/$DRILL_RC_TAG" "$sha" || return 1
+  IFS=$'\t' read -r run conc < <(scratch_run_for "$DRILL_REPO" "$sha") || return 1
+  after="$(probe_counts "$DRILL_REPO")"
+  ta="$(cut -f1 <<<"$after")"
+  ra="$(cut -f2 <<<"$after")"
+  problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 1 1)"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    grep -qxF "$DRILL_RC_TAG" <<<"$tags" ||
+      problems="$problems; no '$DRILL_RC_TAG' release exists after the tag door ran on an rc tag"
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the rc tag, so the '$DRILL_RC_TAG' release was never checked"
+  fi
+  prerelease="$(scratch_release_prerelease "$DRILL_REPO" "$DRILL_RC_TAG")" || prerelease="unread"
+  [ "$prerelease" = true ] ||
+    problems="$problems; the '$DRILL_RC_TAG' release reports isPrerelease: $prerelease, expected true — the tag door marks an rc a prerelease exactly as the merge door does"
+  if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
+    [ "$armed" = "$DRILL_V4-dev" ] ||
+      problems="$problems; main reads '$armed' after the rc tag, expected it untouched at '$DRILL_V4-dev' — the tag door does not re-arm"
+  else
+    problems="$problems; VERSION did not read back off main after the rc tag, so 'main untouched' was never checked"
+  fi
+  if [ -z "$problems" ]; then
+    probe_record 9 "$run" 1 PASS "$tb" "$ta" "$rb" "$ra" \
+      "\`$DRILL_RC_TAG\` published as a prerelease from the fragments in its own tagged tree; main untouched"
+  else
+    probe_record 9 "$run" 1 FAIL "$tb" "$ta" "$rb" "$ra" "${problems#; }"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Probe 10 — a tag inside the namespace the caller declared. `tag-classify.sh`
+# answers `non-release`, and every step after it is skipped: no version
+# assertion, no notes, no artifact hook, no publication. The door's verdict is
+# GREEN and it must still have created nothing, which is the pair that tells
+# this probe apart from probe 11 — same door, same shape of tag, opposite
+# conclusion (#499 D6).
+#
+# The probe tag is the operator's artefact and is counted out of the after
+# count and then deleted, exactly as probe 6's is.
+# --------------------------------------------------------------------------
+probe_10_namespace_tag() {
+  local before after stage manifest run conc tb ta rb ra problems sha tags armed
+  local tag="drill/rehearsal-no-op"
+  before="$(probe_counts "$DRILL_REPO")"
+  tb="$(cut -f1 <<<"$before")"
+  rb="$(cut -f2 <<<"$before")"
+  probe_branch_from_main 10 probe10-namespace "$tb" "$rb" || return 1
+  stage="$(probe_stage probe10)"
+  printf 'A tree the declared-namespace tag is never asserted against.\n' \
+    >"$stage/PROBE10.md"
+  manifest="$(probe_manifest "$stage" PROBE10.md)"
+  sha="$(scratch_commit "$DRILL_REPO" probe10-namespace \
+    "a tree for the declared-namespace tag to skip past" "$manifest")" || return 1
+  scratch_ref_create "$DRILL_REPO" "refs/tags/$tag" "$sha" || return 1
+  IFS=$'\t' read -r run conc < <(scratch_run_for "$DRILL_REPO" "$sha") || return 1
+  after="$(probe_counts "$DRILL_REPO")"
+  ta="$(cut -f1 <<<"$after")"
+  ra="$(cut -f2 <<<"$after")"
+  ta=$((ta - 1))
+  problems="$(probe_verdict success "$conc" "$tb" "$ta" "$rb" "$ra" 0 0)"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    if grep -qxF "$tag" <<<"$tags"; then
+      problems="$problems; a '$tag' release exists — the door published from a tag it had classified as not a release"
+    fi
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the declared-namespace tag, so 'no $tag release' was never checked"
+  fi
+  # The skip happens before the version assertion, so the tree the tag points
+  # at is deliberately NOT the tree's version — and main must be untouched all
+  # the same, this door never re-arming.
+  if armed="$(scratch_version "$DRILL_REPO" main nonempty)"; then
+    [ "$armed" = "$DRILL_V4-dev" ] ||
+      problems="$problems; main reads '$armed' after the declared-namespace tag, expected it untouched at '$DRILL_V4-dev'"
+  else
+    problems="$problems; VERSION did not read back off main after the declared-namespace tag, so 'main untouched' was never checked"
+  fi
+  scratch_ref_delete "$DRILL_REPO" "tags/$tag" || return 1
+  if [ -z "$problems" ]; then
+    probe_record 10 "$run" 1 PASS "$tb" "$ta" "$rb" "$ra" \
+      "green no-op against the caller's declared \`$DRILL_NON_RELEASE_NAMESPACE\`; no release, no version assertion, main untouched, and the probe tag was removed afterwards (its own ref is excluded from the after-count)"
+  else
+    probe_record 10 "$run" 1 FAIL "$tb" "$ta" "$rb" "$ra" "${problems#; }"
+  fi
+}
+
+# --------------------------------------------------------------------------
+# Probe 11 — a tag that is neither version-shaped nor inside the declared
+# namespace. `tag-classify.sh` answers `invalid`, and the door falls through
+# to the version assertion it has always run: a loud refusal that creates
+# nothing.
+#
+# This is the branch probe 6 does NOT reach. Probe 6's `9.9.9` is
+# version-shaped, so it is classified `release` and refuses on the mismatch;
+# this tag refuses through the other arm of the classifier, which is the arm
+# #497 added (#499 D6).
+# --------------------------------------------------------------------------
+probe_11_malformed_tag() {
+  local before after stage manifest run conc tb ta rb ra problems sha tags
+  local tag="nightly-build"
+  before="$(probe_counts "$DRILL_REPO")"
+  tb="$(cut -f1 <<<"$before")"
+  rb="$(cut -f2 <<<"$before")"
+  probe_branch_from_main 11 probe11-malformed "$tb" "$rb" || return 1
+  stage="$(probe_stage probe11)"
+  printf 'A tree no malformed tag can name the version of.\n' >"$stage/PROBE11.md"
+  manifest="$(probe_manifest "$stage" PROBE11.md)"
+  sha="$(scratch_commit "$DRILL_REPO" probe11-malformed \
+    "a tree for the malformed tag to be refused against" "$manifest")" || return 1
+  scratch_ref_create "$DRILL_REPO" "refs/tags/$tag" "$sha" || return 1
+  IFS=$'\t' read -r run conc < <(scratch_run_for "$DRILL_REPO" "$sha") || return 1
+  after="$(probe_counts "$DRILL_REPO")"
+  ta="$(cut -f1 <<<"$after")"
+  ra="$(cut -f2 <<<"$after")"
+  ta=$((ta - 1))
+  problems="$(probe_verdict failure "$conc" "$tb" "$ta" "$rb" "$ra" 0 0)"
+  if tags="$(scratch_release_tags "$DRILL_REPO")"; then
+    if grep -qxF "$tag" <<<"$tags"; then
+      problems="$problems; a '$tag' release exists — the door published from a tag it could not classify"
+    fi
+  else
+    problems="$problems; the release list did not read back at $DRILL_REPO after the malformed tag, so 'no $tag release' was never checked"
+  fi
+  scratch_ref_delete "$DRILL_REPO" "tags/$tag" || return 1
+  if [ -z "$problems" ]; then
+    probe_record 11 "$run" 1 PASS "$tb" "$ta" "$rb" "$ra" \
+      "refused before publication; no \`$tag\` release, and the probe tag was removed afterwards (its own ref is excluded from the after-count)"
+  else
+    probe_record 11 "$run" 1 FAIL "$tb" "$ta" "$rb" "$ra" "${problems#; }"
   fi
 }

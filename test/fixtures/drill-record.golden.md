@@ -3,7 +3,7 @@
 Run 2026-08-09 by `drill-runner` with `drill/rehearsal.sh` against the 0.7.0
 candidate, candidate ref `build/313-drill-rehearsal`, canonical candidate SHA
 `c0ffee1234567890c0ffee1234567890c0ffee12`.
-All eight probes ran; every row in the table below was written from
+All eleven probes ran; every row in the table below was written from
 its own run by the script that drove it.
 
 **Every probe passed.**
@@ -12,7 +12,11 @@ its own run by the script that drove it.
 
 Attempt **`1`** used disposable **public** repo `drillowner/ceremony-drill-0.7.0-1`, created
 2026-08-09T00:00:00Z. It carries the
-`docs/CONSUMERS.md` release caller verbatim (`version-source: file`) over a
+`docs/CONSUMERS.md` release caller — that guide's entire `release.yml`
+plus the one add-on line it documents under the same `with:` key, so
+`version-source: file` and
+`non-release-namespace: drill/**`, without which the
+tag door's non-release classification is unreachable — over a
 fragment-mode fixture armed at `0.7.0-dev`: a preamble-only
 `CHANGELOG.md`, `changelog.d/README.md` plus three fragments, and a
 non-blank `drills/0.7.0.md`. The `release` label was created there before
@@ -67,6 +71,9 @@ failed probe, and the assertion is these numbers, not the prose beside them.
 | 6 | mismatched tag | [1006](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1006) | 2 → 2 | 2 → 2 | ✅ refused before publication |
 | 7 | rc cut, tag-only and marked prerelease | [1007](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1007) | 2 → 3 | 2 → 3 | ✅ published as a prerelease, changelog byte-identical |
 | 8 | promotion of the rc to the final version | [1008](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1008) | 3 → 4 | 3 → 4 | ✅ the assembled section stamped, the candidate still a prerelease |
+| 9 | rc tag through the tag door | [1009](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1009) | 4 → 5 | 4 → 5 | ✅ published as a prerelease from its own tagged tree |
+| 10 | declared non-release namespace tag | [1010](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1010) | 5 → 5 | 5 → 5 | ✅ green no-op against the declared namespace |
+| 11 | malformed tag outside every namespace | [1011](https://github.com/drillowner/ceremony-drill-0.7.0-1/actions/runs/1011) | 5 → 5 | 5 → 5 | ✅ refused before publication |
 
 ## Setup, and the runs that are not probes
 
@@ -88,6 +95,9 @@ intention.
 - ✅ The tag door refused a mismatched tag before creating anything.
 - ✅ The merge door cut `0.7.2-rc1` as a prerelease from its surviving fragments, left `CHANGELOG.md` byte-identical, and re-armed main to `0.7.2-rc2-dev`.
 - ✅ The merge door promoted `0.7.2-rc1` to `0.7.2`, stamping the section its fragments assemble to and consuming them, while the candidate stayed a prerelease.
+- ✅ The tag door published an rc tag as a prerelease, from the fragments in its own tagged tree, without touching main.
+- ✅ The tag door treated a tag inside the caller's declared non-release namespace as a green no-op, asserting no version and creating nothing.
+- ✅ The tag door refused a tag that is neither version-shaped nor inside that namespace, before creating anything.
 
 Every refusal claim above is asserted on the before/after counts in the probe
 table, not on the prose beside them.

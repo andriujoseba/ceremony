@@ -44,7 +44,15 @@ fixture_paths() {
 }
 
 # caller_write <dir> <fork-repo> <fork-ref> — docs/CONSUMERS.md's entire
-# release.yml, verbatim but for the pin, which is the drill's whole point.
+# release.yml, verbatim but for the pin, which is the drill's whole point,
+# plus the one add-on line that guide documents under the same `with:` key.
+#
+# The add-on is `non-release-namespace`, and it is here because the
+# classification it turns on is otherwise unreachable in a drill: with the
+# empty default every non-version tag classifies `invalid`, so the namespace
+# branch #497 added to the tag door could not be driven by any probe at all
+# (#499 D6). A caller that declares nothing rehearses a door the release
+# ships with a branch nobody ran.
 caller_write() {
   local dir="${1:?caller_write: dir required}"
   local repo="${2:?caller_write: fork repo required}"
@@ -69,6 +77,7 @@ jobs:
     uses: $repo/.github/workflows/release.yml@$ref
     with:
       version-source: file   # or: package-json
+      non-release-namespace: $DRILL_NON_RELEASE_NAMESPACE
 EOF
 }
 

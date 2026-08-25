@@ -12,6 +12,38 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.6 — 2026-08-24
+
+### Added
+
+- Let release callers declare a logged non-release tag namespace while the
+  empty default keeps every unmatched tag failure unchanged (#497).
+- Document the return path for doctrine: a consumer blocked by the vendored
+  set raises a discussion here, in a four-part shape, and cites it where the
+  local workaround lives. The generated `.ceremony/README.md` now names and
+  links that flow (#492).
+- Add an `operator` issue-owner label, owner-neutral ready semantics, and a
+  quiet-work nudge for operator-owned issues (#491).
+- Triage classifies every acceptance criterion at mint by who can produce its
+  evidence, not only by when it can be checked. Evidence needing a surface a
+  builder's session cannot reach is operator-owned, and says so, with its
+  command and its wake condition, in its own text (#487).
+- The drill record carries a sixth and last section, `## Known gaps` — coverage
+  no probe drives at all, declared with a repeatable `--gap '<title>|<body>'`
+  and rendered on every emission, with or without one (#484).
+- A gap renders as `- **<title>** — <body>` and the parse cuts at the first
+  `** — `, so a body may carry that sequence and a title may not — refused
+  when the gap is declared and again when it is rendered (#484).
+- `drill/rehearsal.sh --amend-record <path> --gap …` adds a gap to a committed
+  record by re-rendering it: no probe, no scratch repo, no network call. It
+  refuses a record that does not already round-trip (#484).
+
+### Fixed
+
+- `drill/**`, `test/drill-rehearsal.test.sh` and
+  `.github/scripts/record-roundtrip.sh` derive `scope:release-flow`. The record
+  was mapped from the start; the instrument that writes it was not (#484, #476).
+
 ## 0.7.5 — 2026-08-19
 
 ### Added
