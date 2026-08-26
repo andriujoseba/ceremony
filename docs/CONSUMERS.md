@@ -677,9 +677,18 @@ always shown: label → `changed-files` → `any-glob-to-any-file`, block or flo
 style, globs over `**`, `*` and `?` (`**` crosses `/`, the others do not; the
 whole path must match). Any other labeler key — `all-globs-to-all-files`,
 branch matchers, negations — fails the run loudly instead of being
-half-honoured. The reconcile sweep also warns (never sets) when a non-draft
+half-honoured. The reconcile sweep also notices (never sets) when a non-draft
 PR carries a bare `X.Y.Z` version differing from its base but no `release`
-label — the merge door would refuse that merge, and the sweep says so first.
+label. The merge itself is refused by nothing; what the release path refuses,
+*after* that merge, is creating the release — the version transitioned and no
+merged, release-labeled PR is behind the commit, so nothing publishes. At
+`0.7.7` and later (#501) the sweep says so as **a comment on the pull
+request**, once per episode, retracted when the label arrives; the
+`::warning::` annotation it has always emitted stays beside it. That
+annotation alone was the whole notice until `0.7.7`, and it attaches to the
+check run that emitted it — a run on the sweep's own branch, so it is not
+reachable from the pull request. ceremony#500 merged unlabelled and published
+nothing with 21 such annotations standing behind it.
 
 The complete event-facing caller is:
 
