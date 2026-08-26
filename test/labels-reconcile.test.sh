@@ -3601,5 +3601,401 @@ expect "LABELS.md says the precedence is the maintainer's, in the code's words" 
 expect "...and that the machine's own ask is marked and withdrawn" yes \
   "$(grep -qF "$HUMAN_REQUEST_MARKER" LABELS.md && echo yes || echo no)"
 
+
+# ---------------------------------------------------------------------------
+# The release-shape guard's notice (#501). #130's guard fired on 21 sweep
+# passes over #500 and reached nobody: a `::warning::` attaches to the check
+# run that emitted it, and the sweep's runs belong to `main`, never to a PR
+# head. The cut merged unlabelled and published nothing. What these fixtures
+# pin is that the same guard now says so ON THE PULL REQUEST, once per episode,
+# and takes it back when `release` arrives — and that it still never writes the
+# label.
+#
+# The fixture conf is re-loaded first. Blocks above this one drive `main` with
+# the SHIPPED `.github/labels.conf`, and a roster read from there would bind
+# these probes to today's panel size (#304's defect, one insertion point later).
+# ---------------------------------------------------------------------------
+load_config "$FIXTURE_CONF"
+set_required_bots "$FIXTURE_AUTHOR"
+
+SH="$RTMP/shape"
+mkdir -p "$SH"
+
+shape_probe() { # $1 PR, $2 labels (newline-separated), $3 head version, $4 base version, $5 draft
+  # SHAPE_COMMENTS_RC / SHAPE_COMMENT_RC are the exit status the stubbed read
+  # and the stubbed post return, each defaulting to the happy path — the two
+  # cases the positional shape has no room for.
+  (
+    local n="$1" at
+    at="$(iso_at $((RNOW - 3600)))"
+    # The taxonomy from the script's own arrays, plus the hand-set names this
+    # pass can name. `release` is in it deliberately: a fixture whose taxonomy
+    # lacked the label could not tell "never writes it" from "could not".
+    REPO_LABELS="$(printf '%s\n' "${STATES[@]}" "${BLOCKERS[@]}" \
+      merge-next stale needs-ruling blocked release)"
+    REPO=owner/repo NOW="$RNOW"
+    LABELS="$2"
+    DRAFT="${5:-false}" HEAD_SHA=shapehead BASE_SHA=shapebase REQUESTED=""
+    MERGEABLE=MERGEABLE CHECKS=SUCCESS
+    # A standing block, so the round parks the PR at state:addressing: the
+    # guard is orthogonal to the round, and a passing one would drag the human
+    # request and the auto-merge path into every assertion below.
+    REVIEWS_JSON="$(reviews \
+      "$(rev "$BOT1" CHANGES_REQUESTED shapehead "" "$at")" \
+      "$(rev "$BOT2" APPROVED shapehead "" "$at")" \
+      "$(rev "$BOT3" APPROVED shapehead "" "$at")")"
+    PR_JSON="$(jq -n --arg at "$at" '{created_at: $at, assignees: []}')"
+    SHAPE_HEAD_VER="$3" SHAPE_BASE_VER="$4"
+    gh() {
+      # every call in call ORDER, which is what pins where in the pass the
+      # comment lands relative to the reads that measure the PR's activity
+      printf '%s\n' "$*" >>"$SH/calls-$n"
+      if [ "$1" = api ]; then
+        # The two version reads, intercepted ahead of the generic handler:
+        # their endpoints carry a `?ref=` query the file mapping below has no
+        # shape for, and what they return is `.content`, which tree_version
+        # base64-decodes. An empty version answers nothing at all — the API
+        # failure tree_version's every-failure-path-prints-nothing contract
+        # collapses to "not readable".
+        case "$*" in
+          *"contents/VERSION?ref=shapehead"*)
+            [ -n "$SHAPE_HEAD_VER" ] || return 1
+            printf '%s' "$SHAPE_HEAD_VER" | base64 | tr -d '\n'
+            printf '\n'
+            return 0 ;;
+          *"contents/VERSION?ref=shapebase"*)
+            [ -n "$SHAPE_BASE_VER" ] || return 1
+            printf '%s' "$SHAPE_BASE_VER" | base64 | tr -d '\n'
+            printf '\n'
+            return 0 ;;
+          *contents/package.json*) return 1 ;;
+        esac
+        case "$*" in
+          *"issues/$n/comments"*) [ "${SHAPE_COMMENTS_RC:-0}" = 0 ] \
+            || return "${SHAPE_COMMENTS_RC:-0}" ;;
+        esac
+        shift
+        local jqexpr="" endpoint="" file
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --jq) jqexpr="$2"; shift ;;
+            -*) ;;
+            *) [ -n "$endpoint" ] || endpoint="$1" ;;
+          esac
+          shift
+        done
+        file="$SH/$(printf '%s' "$endpoint" | tr '/' '_').json"
+        [ -f "$file" ] || { printf '[]\n' | jq -r "${jqexpr:-.}"; return 0; }
+        if [ -n "$jqexpr" ]; then jq -r "$jqexpr" "$file"; else cat "$file"; fi
+      elif [ "$1" = issue ] && [ "$2" = comment ]; then
+        local c="$3" body="" file
+        # a post that failed records NOTHING — no body, no marker in the
+        # fixture — which is the state the retry path depends on
+        [ "${SHAPE_COMMENT_RC:-0}" = 0 ] || return "$SHAPE_COMMENT_RC"
+        shift 3
+        while [ $# -gt 0 ]; do
+          case "$1" in --body) body="$2"; shift ;; esac
+          shift
+        done
+        printf '%s\n----\n' "$body" >>"$SH/posted-$c"
+        # posted comments go back into the fixture, so the NEXT pass reads
+        # this one's marker exactly as a real sweep would
+        file="$SH/repos_owner_repo_issues_${c}_comments.json"
+        [ -f "$file" ] || printf '[]\n' >"$file"
+        jq --arg b "$body" --arg at "$(iso_at "$RNOW")" \
+          '. + [{"user":{"login":"sweep-bot"},"created_at":$at,"html_url":"https://x/sh","body":$b}]' \
+          "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+      elif [ "$1" = issue ] && [ "$2" = edit ]; then
+        printf '%s\n' "$*" >>"$SH/edits-$3"
+      fi
+    }
+    reconcile_pr "$n" 2>&1
+  )
+}
+
+notice_count() { # $1 PR → release-shape notices standing on it
+  [ -f "$SH/posted-$1" ] || { echo 0; return; }
+  grep -cF "$RELEASE_SHAPE_NOTICE_MARKER_PREFIX" "$SH/posted-$1" || true
+}
+retraction_count() { # $1 PR → retractions standing on it
+  [ -f "$SH/posted-$1" ] || { echo 0; return; }
+  grep -cF "$RELEASE_SHAPE_RETRACTED_MARKER" "$SH/posted-$1" || true
+}
+
+# -- the #500 scenario, which is the reason this exists ---------------------
+shape500="$(shape_probe 500 state:needs-human 0.7.6 0.7.6-dev)"
+expect "a release-shaped non-draft PR with no release label is told, on the PR" 1 \
+  "$(notice_count 500)"
+expect "...and the annotation still fires beside it (#501 D1)" yes \
+  "$(grep -qF '::warning::labels: #500 is release-shaped' <<<"$shape500" && echo yes || echo no)"
+expect "...naming the transition it read" yes \
+  "$(grep -qF "declares version \`0.7.6\` where its base declares" "$SH/posted-500" \
+    && grep -qF '0.7.6-dev' "$SH/posted-500" && echo yes || echo no)"
+expect "...naming what the merge does without the label" yes \
+  "$(grep -qF 'What happens on the merge without it' "$SH/posted-500" \
+    && grep -qF 'creates nothing' "$SH/posted-500" && echo yes || echo no)"
+expect "...and the remedy, in the annotation's own terms" yes \
+  "$(grep -qF "apply \`release\` before the merge" "$SH/posted-500" && echo yes || echo no)"
+expect "...saying the machine will not apply it (#501 D4)" yes \
+  "$(grep -qF 'This machine will not apply it for you' "$SH/posted-500" && echo yes || echo no)"
+expect "...and logged as what it is" yes \
+  "$(grep -q 'release-shaped (0.7.6-dev -> 0.7.6) with no release label — commented' \
+    <<<"$shape500" && echo yes || echo no)"
+
+# -- the episode bound: 21 passes was the measured number over #500 ---------
+for _ in $(seq 1 21); do
+  shape_probe 500 state:needs-human 0.7.6 0.7.6-dev >/dev/null
+done
+expect "twenty-two passes over one episode post one comment in total" 1 \
+  "$(notice_count 500)"
+
+# -- the retraction, and its own idempotency (#501 D2) ----------------------
+shape_ret="$(shape_probe 500 $'state:needs-human\nrelease' 0.7.6 0.7.6-dev)"
+expect "applying release retracts the notice" 1 "$(retraction_count 500)"
+expect "...saying the label is what changed" yes \
+  "$(grep -qF "this pull request carries \`release\` now" "$SH/posted-500" && echo yes || echo no)"
+expect "...and logged as the retraction it is" yes \
+  "$(grep -q 'release label arrived — retracted the release-shape notice' \
+    <<<"$shape_ret" && echo yes || echo no)"
+for _ in 1 2 3 4 5; do
+  shape_probe 500 $'state:needs-human\nrelease' 0.7.6 0.7.6-dev >/dev/null
+done
+expect "...and five more passes under the label add none" 1 "$(retraction_count 500)"
+expect "...nor a second notice" 1 "$(notice_count 500)"
+
+# The retraction is NOT gated on draft, and that is a choice rather than an
+# oversight of D5's exemption: the engine returns a PR to draft at every round
+# close, so a release PR labelled while drafted is the ordinary case and gating
+# here would strand the false claim on exactly those PRs. Pinned because a
+# `[ "$DRAFT" = true ]` guard added to the retraction reddened nothing in this
+# file when the mutation set was run.
+shape_probe 517 state:needs-human 0.7.6 0.7.6-dev >/dev/null
+expect "a non-draft release-shaped PR is told (setup)" 1 "$(notice_count 517)"
+shape_draft_ret="$(shape_probe 517 $'state:building\nrelease' 0.7.6 0.7.6-dev true)"
+expect "the label arriving while the PR is DRAFT still retracts the notice" 1 \
+  "$(retraction_count 517)"
+expect "...and says so in the log like any other retraction" yes \
+  "$(grep -q 'release label arrived — retracted the release-shape notice' \
+    <<<"$shape_draft_ret" && echo yes || echo no)"
+expect "a labelled draft that was never told draws no retraction (control)" 0 \
+  "$(shape_probe 518 $'state:building\nrelease' 0.7.6 0.7.6-dev true >/dev/null
+    retraction_count 518)"
+
+# The episode boundary D3 names: the label comes off again, and the PR is told
+# again. The retraction is what closes the episode, which is why the pair is
+# read newest-wins rather than as a tally.
+shape_probe 500 state:needs-human 0.7.6 0.7.6-dev >/dev/null
+expect "a label lost and regained opens a new episode" 2 "$(notice_count 500)"
+shape_probe 500 state:needs-human 0.7.6 0.7.6-dev >/dev/null
+expect "...which then repeats itself no more than the first did" 2 "$(notice_count 500)"
+
+# The other boundary, and the one that is mine rather than D3's: the marker
+# carries the TRANSITION, so a PR whose declared version moves is a new fact
+# and says so — while a standing notice can never name a transition the tree
+# no longer has.
+shape_probe 500 state:needs-human 0.7.7 0.7.6-dev >/dev/null
+expect "a changed transition is a new episode" 3 "$(notice_count 500)"
+shape_probe 500 state:needs-human 0.7.7 0.7.6-dev >/dev/null
+expect "...and that one is bounded too" 3 "$(notice_count 500)"
+
+# -- the must-not-fire set, each on its own PR so the count is its own ------
+shape_labeled="$(shape_probe 510 $'state:bots-reviewing\nrelease' 0.7.6 0.7.6-dev)"
+expect "a PR carrying release from the start draws no notice" 0 "$(notice_count 510)"
+expect "...and no retraction either: nothing was ever said to take back" 0 \
+  "$(retraction_count 510)"
+expect "...and no annotation, the gate never having read a version" no \
+  "$(grep -q '::warning::labels: #510' <<<"$shape_labeled" && echo yes || echo no)"
+expect "...on a pass that did run — the label closed the gate, not the harness" yes \
+  "$(grep -q '#510: state -> ' <<<"$shape_labeled" && echo yes || echo no)"
+expect "...and paid for no version read either" 0 \
+  "$(grep -c 'contents/VERSION' "$SH/calls-510" || true)"
+
+shape_draft="$(shape_probe 511 state:building 0.7.6 0.7.6-dev true)"
+expect "a draft is silent — the build phase is the builder's (#501 D5)" 0 \
+  "$(notice_count 511)"
+expect "...and pays for no version read at all" 0 \
+  "$(grep -c 'contents/VERSION' "$SH/calls-511" || true)"
+expect "...and draws no annotation" no \
+  "$(grep -q '::warning::labels: #511' <<<"$shape_draft" && echo yes || echo no)"
+
+expect "an unreadable head version is silent — never nag on a guess" 0 \
+  "$(shape_probe 512 state:bots-reviewing "" 0.7.6-dev >/dev/null; notice_count 512)"
+expect "an ordinary -dev head is silent" 0 \
+  "$(shape_probe 513 state:bots-reviewing 0.7.7-dev 0.7.6-dev >/dev/null; notice_count 513)"
+expect "an rc head is silent — pre-releases are not the merge door's shape" 0 \
+  "$(shape_probe 514 state:bots-reviewing 0.7.6-rc1 0.7.6-dev >/dev/null; notice_count 514)"
+expect "a bare head equal to its base is silent" 0 \
+  "$(shape_probe 515 state:bots-reviewing 0.7.6 0.7.6 >/dev/null; notice_count 515)"
+# The positive flag beside each silence. A must-not-fire case is satisfied by a
+# pass that never reached the guard at all, and every one of the four above
+# would read the same if the gate had closed on some other ground — so each is
+# asserted to have OPENED the gate and read the head version it then declined
+# to act on. (511's silence has the opposite flag, asserted with it: the draft
+# gate is supposed to close before the read.)
+for sh_silent in 512 513 514 515; do
+  expect "...case $sh_silent reached the guard and read a head version" yes \
+    "$(grep -q 'contents/VERSION?ref=shapehead' "$SH/calls-$sh_silent" && echo yes || echo no)"
+done
+
+# The base half is the annotation's own carve-out and the notice keeps it: an
+# unreadable BASE still speaks, because the head alone is the release shape.
+shape_probe 516 state:bots-reviewing 0.7.6 "" >/dev/null
+expect "a bare head over an unreadable base still speaks" 1 "$(notice_count 516)"
+expect "...saying so in the marker rather than leaving it blank" yes \
+  "$(grep -qF 'release-shape-notice:unreadable->0.7.6' "$SH/posted-516" && echo yes || echo no)"
+shape_probe 516 state:bots-reviewing 0.7.6 "" >/dev/null
+expect "...and that episode is bounded like any other" 1 "$(notice_count 516)"
+
+# -- an unreadable comment list must not invent a repeat --------------------
+shape_unreadable="$(SHAPE_COMMENTS_RC=1 shape_probe 520 state:bots-reviewing 0.7.6 0.7.6-dev)"
+expect "an unreadable comment list says so" yes \
+  "$(grep -q 'release-shape marks unreadable — no notice invented this pass' \
+    <<<"$shape_unreadable" && echo yes || echo no)"
+expect "...and posts nothing on a fact it could not read" 0 "$(notice_count 520)"
+expect "...while the annotation, which reads nothing, still fires" yes \
+  "$(grep -qF '::warning::labels: #520 is release-shaped' <<<"$shape_unreadable" \
+    && echo yes || echo no)"
+shape_ret_unreadable="$(shape_probe 520 state:bots-reviewing 0.7.6 0.7.6-dev >/dev/null
+  SHAPE_COMMENTS_RC=1 shape_probe 520 $'state:bots-reviewing\nrelease' 0.7.6 0.7.6-dev)"
+expect "an unreadable list invents no retraction either" yes \
+  "$(grep -q 'release-shape marks unreadable — no retraction invented this pass' \
+    <<<"$shape_ret_unreadable" && echo yes || echo no)"
+expect "...leaving the notice standing to be taken back next pass" 0 \
+  "$(retraction_count 520)"
+shape_probe 520 $'state:bots-reviewing\nrelease' 0.7.6 0.7.6-dev >/dev/null
+expect "...which the next readable pass does" 1 "$(retraction_count 520)"
+
+# -- a comment that failed to post is not logged as one ---------------------
+shape_failed="$(SHAPE_COMMENT_RC=1 shape_probe 521 state:bots-reviewing 0.7.6 0.7.6-dev)"
+expect "a failed post is logged as a failure, not as a comment" yes \
+  "$(grep -q 'WARNING: release-shaped (0.7.6-dev -> 0.7.6) with no release label — the comment failed to post' \
+    <<<"$shape_failed" && echo yes || echo no)"
+expect "...and not as one made" no \
+  "$(grep -q -- '— commented' <<<"$shape_failed" && echo yes || echo no)"
+expect "...recording no marker, so nothing standing on the PR" 0 "$(notice_count 521)"
+shape_probe 521 state:bots-reviewing 0.7.6 0.7.6-dev >/dev/null
+expect "...and the next sweep retries the same episode" 1 "$(notice_count 521)"
+
+# -- the comment is not counted as the PR's own activity --------------------
+# reconcile_ruling's and the take-back's comments run after the last_activity
+# read for this reason; this one now does too. A machine comment read back as a
+# sign of life is the sweep believing its own noise.
+shape_probe 522 state:bots-reviewing 0.7.6 0.7.6-dev >/dev/null
+sh_commented_at="$(grep -n 'issue comment' "$SH/calls-522" | head -1 | cut -d: -f1 || true)"
+sh_activity_at="$(grep -n 'created_at' "$SH/calls-522" | tail -1 | cut -d: -f1 || true)"
+expect "the pass reads the PR's activity before posting its own notice" yes \
+  "$([ -n "$sh_commented_at" ] && [ -n "$sh_activity_at" ] \
+    && [ "$sh_commented_at" -gt "$sh_activity_at" ] && echo yes || echo no)"
+
+# -- D4, asked of the code and not of one fixture's silence -----------------
+# Every label name this file can apply or remove: the literals at its write
+# sites, plus the machine-owned arrays the converge loop feeds to
+# --add-label/--remove-label. `release` is in none of them, and that is the
+# assertion — a fixture that merely made no such write would keep passing after
+# a change that started making one on some other path.
+shape_writable="$(
+  {
+    printf '%s\n' "${STATES[@]}" "${BLOCKERS[@]}" "${RETIRED[@]}"
+    grep -oE -- '--(add|remove)-label [a-zA-Z:-]+' \
+      actions/labels-reconcile/labels-reconcile.sh | awk '{print $2}'
+  } | sort -u
+)"
+expect "no label this file can write is 'release' (#501 D4)" no \
+  "$(grep -qxF release <<<"$shape_writable" && echo yes || echo no)"
+expect "...over a set that is actually populated" yes \
+  "$([ "$(grep -c . <<<"$shape_writable")" -gt 4 ] && echo yes || echo no)"
+expect "...and the set does contain the labels it really writes (control)" yes \
+  "$(grep -qxF merge-next <<<"$shape_writable" \
+    && grep -qxF state:needs-human <<<"$shape_writable" && echo yes || echo no)"
+# ...and the behavioural half beside it: over every probe above, across the
+# labelled and unlabelled episodes both, no edit call named the label.
+expect "no probe pass ever edited the release label" no \
+  "$(cat "$SH"/edits-* 2>/dev/null | grep -qE -- '-label ([a-z:,-]*,)?release(,|$)' \
+    && echo yes || echo no)"
+expect "...over edit calls that were really made (control)" yes \
+  "$([ -s "$SH/edits-500" ] && echo yes || echo no)"
+
+# -- the parse, driven directly ---------------------------------------------
+expect "the marker names the transition" \
+  '<!-- ceremony:release-shape-notice:1.0.0-dev->1.0.0 -->' \
+  "$(release_shape_marker 1.0.0-dev 1.0.0)"
+expect "an unreadable base has one stable spelling, not a blank" \
+  '<!-- ceremony:release-shape-notice:unreadable->1.0.0 -->' \
+  "$(release_shape_marker "" 1.0.0)"
+expect "no marks at all is NONE" NONE "$(release_shape_state </dev/null)"
+expect "a notice alone stands" '<!-- ceremony:release-shape-notice:a->b -->' \
+  "$(release_shape_state <<<'<!-- ceremony:release-shape-notice:a->b -->')"
+expect "a retraction after it closes the episode" RETRACTED \
+  "$(printf '%s\n%s\n' '<!-- ceremony:release-shape-notice:a->b -->' \
+    "$RELEASE_SHAPE_RETRACTED_MARKER" | release_shape_state)"
+expect "a notice after a retraction opens the next one" \
+  '<!-- ceremony:release-shape-notice:a->b -->' \
+  "$(printf '%s\n%s\n' "$RELEASE_SHAPE_RETRACTED_MARKER" \
+    '<!-- ceremony:release-shape-notice:a->b -->' | release_shape_state)"
+expect "an unrelated comment moves nothing" RETRACTED \
+  "$(printf '%s\n%s\n%s\n' '<!-- ceremony:release-shape-notice:a->b -->' \
+    "$RELEASE_SHAPE_RETRACTED_MARKER" 'looks fine to me' | release_shape_state)"
+expect "the newest of two notices is the one that stands" \
+  '<!-- ceremony:release-shape-notice:c->d -->' \
+  "$(printf '%s\n%s\n' '<!-- ceremony:release-shape-notice:a->b -->' \
+    '<!-- ceremony:release-shape-notice:c->d -->' | release_shape_state)"
+
+# The shape rule itself, in the one place both surfaces read it.
+shape_says() { release_shaped "$1" "$2" && echo yes || echo no; }
+expect "a bare head over a -dev base is a shape" yes "$(shape_says 2.0.0 2.0.0-dev)"
+expect "a bare head over an unreadable base is a shape" yes "$(shape_says 2.0.0 "")"
+expect "an unreadable head is not" no "$(shape_says "" 2.0.0-dev)"
+expect "an rc head is not" no "$(shape_says 2.0.0-rc1 2.0.0-dev)"
+expect "a head equal to its base is not" no "$(shape_says 2.0.0 2.0.0)"
+expect "a two-part version is not" no "$(shape_says 2.0 2.0-dev)"
+
+# -- DRY_RUN: a rehearsal sees the act ---------------------------------------
+# NOT redirected into /dev/null, unlike the take-back and human-request marks:
+# those redirect because each records an act narrated elsewhere, and here the
+# comment IS the act. A rehearsal that said nothing about it would be a
+# rehearsal of nothing.
+shape_dry="$(DRY_RUN=1 shape_probe 530 state:bots-reviewing 0.7.6 0.7.6-dev)"
+expect "a rehearsal narrates the notice it would post" yes \
+  "$(grep -qF 'DRY_RUN: gh issue comment 530' <<<"$shape_dry" && echo yes || echo no)"
+expect "...and posts nothing" 0 "$(notice_count 530)"
+shape_probe 531 state:bots-reviewing 0.7.6 0.7.6-dev >/dev/null
+shape_dry_ret="$(DRY_RUN=1 shape_probe 531 $'state:bots-reviewing\nrelease' 0.7.6 0.7.6-dev)"
+expect "...and the retraction it would post" yes \
+  "$(grep -qF 'DRY_RUN: gh issue comment 531' <<<"$shape_dry_ret" && echo yes || echo no)"
+expect "...performing neither" 0 "$(retraction_count 531)"
+
+# -- the call site, which is where the ordering lives -------------------------
+shape_pr_body="$(awk '/^reconcile_pr\(\)/{inside=1} inside{print} inside && /^}/{exit}' \
+  actions/labels-reconcile/labels-reconcile.sh)"
+expect "the notice is called after the last_activity read" yes \
+  "$(awk '/last_activity="\$\(/ && !a {a=NR}
+      /reconcile_release_shape/ && !c {c=NR}
+      END{print (a && c && a < c) ? "yes" : "no"}' <<<"$shape_pr_body")"
+expect "...and the annotation before it, at the gate that did not move (#501 D5)" yes \
+  "$(awk '/release_shape_warning/ && !w {w=NR}
+      /last_activity="\$\(/ && !a {a=NR}
+      END{print (w && a && w < a) ? "yes" : "no"}' <<<"$shape_pr_body")"
+expect "...under the gate D5 keeps: not a draft, and no release label" yes \
+  "$(grep -qF "[ \"\$DRAFT\" != true ] && ! has_label release" <<<"$shape_pr_body" \
+    && echo yes || echo no)"
+expect "...and nothing was added below the merge (#460 D1)" yes \
+  "$(awk '/reconcile_release_shape/ && !c {c=NR}
+      /reconcile_auto_merge/ && !m {m=NR}
+      END{print (c && m && c < m) ? "yes" : "no"}' <<<"$shape_pr_body")"
+
+# -- the guide stops claiming the guard works (#501 D7) ----------------------
+# Wrap-tolerantly: the sentence is prose in a wrapped file, and a line break
+# inside the phrase would hide it from a line-oriented grep.
+consumers_flat="$(tr '\n' ' ' <docs/CONSUMERS.md | tr -s ' ')"
+expect "the guide no longer says the sweep says so first, with nowhere named" no \
+  "$(grep -qF 'the merge door would refuse that merge, and the sweep says so first' \
+    <<<"$consumers_flat" && echo yes || echo no)"
+expect "...it names the surface the notice arrives on" yes \
+  "$(grep -qF 'a comment on the pull request' <<<"$consumers_flat" && echo yes || echo no)"
+expect "...says the notice is retracted when the label arrives" yes \
+  "$(grep -qF 'retracted when the label arrives' <<<"$consumers_flat" && echo yes || echo no)"
+expect "...and is honest about what the annotation alone could reach" yes \
+  "$(grep -qF 'not reachable from the pull request' <<<"$consumers_flat" && echo yes || echo no)"
+
 printf 'labels-reconcile tests: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -53,6 +53,14 @@ BLOCKERS=(blocker:conflict blocker:ci-red blocker:unrequested)
 # fixtures call decide_state — which now reads has_label — without ever
 # setting it (#51). An empty default keeps has_label honest for every caller.
 LABELS=""
+# The PR's base-branch head, the release-shape guard's second ref (#130), set
+# per PR by the sweep. Initialized here for LABELS' reason and one sharper: the
+# guard's call site reads it under `set -u`, and until #501 the read sat inside
+# a command substitution whose failure the enclosing call swallowed — every
+# fixture driving reconcile_pr had been expanding an unbound name and getting
+# away with it. Assigning the read to a local makes that status the assignment's
+# own, so the empty default is now load-bearing rather than tidy.
+BASE_SHA=""
 # The head SHA named by the newest `rerun-owed` evidence comment on this PR;
 # empty when the PR does not carry the label, no evidence names a head, or the
 # comments could not be read. Read only on PRs carrying the label — one API
@@ -1000,6 +1008,21 @@ $(configured_label_rows "$LABELS_CONF")"
 
 has_label() { grep -qxF "$1" <<<"$LABELS"; }
 
+release_shaped() { # $1 = head version, $2 = base version → 0 when the PR is release-shaped
+  # The shape rule itself, in one place because two surfaces now read it: the
+  # annotation below and the PR comment #501 added beside it. Split out rather
+  # than duplicated — a guard whose two mouths could disagree about what they
+  # are guarding is a worse defect than either silence.
+  #
+  # An unreadable HEAD version is not a shape (#130): the sweep must not nag on
+  # facts it did not read, and tree_version's every-failure-path-prints-nothing
+  # contract is what makes that test the whole of it (#501 D5).
+  local head_ver="$1" base_ver="$2"
+  [ -n "$head_ver" ] || return 1
+  grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$head_ver" || return 1
+  [ "$head_ver" != "$base_ver" ] || return 1
+}
+
 release_shape_warning() { # $1 = PR, $2 = head version, $3 = base version
   # The #128 incident's guard (#130): a release-shaped PR — bare X.Y.Z at
   # its head where the base says something else — reaching the board with
@@ -1009,11 +1032,179 @@ release_shape_warning() { # $1 = PR, $2 = head version, $3 = base version
   # and the reconciler does not guess intent (LABELS.md's rule for
   # `blocked`/`release`). An unreadable version blocks nothing — the
   # sweep must not nag on facts it did not read.
+  #
+  # The annotation STAYS (#501 D1). It costs nothing and it is the
+  # machine-readable trace; what it never was is a surface a human reads,
+  # because it attaches to the check run that emitted it and those runs belong
+  # to the sweep's own branch, never to the PR head. That is why it fired on 21
+  # passes over #500 and reached a builder, three reviewers and the merger
+  # none. release_shape_notice is the half that discharges the guard's purpose.
   local n="$1" head_ver="$2" base_ver="$3"
-  [ -n "$head_ver" ] || return 0
-  grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$head_ver" || return 0
-  [ "$head_ver" != "$base_ver" ] || return 0
+  release_shaped "$head_ver" "$base_ver" || return 0
   echo "::warning::labels: #$n is release-shaped (version ${base_ver:-unreadable} -> $head_ver at its head) but carries no release label — the merge door reads that label as declared intent and will refuse without it; if this is the ceremony PR, apply release (#130; the #128 incident)"
+}
+
+# The release-shape notice's episode marker (#501 D3). Prefix plus payload,
+# the shape HANDOFF_TAKEBACK_MARKER_PREFIX uses and for its reason: the sweep
+# is stateless per pass, so the episode has to be carried IN the marker rather
+# than scoped by an event, and the PR's own thread is the only memory there is.
+#
+# The payload is the TRANSITION and deliberately not the head SHA. A head-keyed
+# marker would open a new episode on every push, which over a live release PR is
+# one comment per push — the noise the episode bound exists to prevent. A
+# PR-keyed one would go the other way and let a standing comment name a
+# transition the tree no longer has, which is D2's harm (a permanent false
+# claim) wearing different clothes. The transition is the fact the comment
+# asserts, so it is the fact the episode is keyed to.
+RELEASE_SHAPE_NOTICE_MARKER_PREFIX='<!-- ceremony:release-shape-notice:'
+# ...and the mark on its retraction (#501 D2). Two markers and not one, for
+# HUMAN_REQUEST_WITHDRAWN_MARKER's reason: the question is what stands NOW, so
+# the newest of the pair is the whole answer and the pair is a state rather
+# than a history. That is also what makes "a PR that loses and regains the
+# label may be told again" work — the retraction closes the episode, and the
+# next pass with the label gone opens a fresh one. It carries no payload: a
+# retraction is about the notice standing, whatever transition that notice named.
+RELEASE_SHAPE_RETRACTED_MARKER='<!-- ceremony:release-shape-retracted -->'
+
+release_shape_marker() { # $1 = base version, $2 = head version → this episode's marker
+  # `unreadable` and not the empty string, so the marker of an episode opened
+  # while the BASE read was failing is one stable spelling rather than a
+  # prefix-only stub — and so it reads as the annotation's own text does.
+  printf '%s%s->%s -->\n' "$RELEASE_SHAPE_NOTICE_MARKER_PREFIX" "${1:-unreadable}" "$2"
+}
+
+release_shape_state() { # comment first-lines on stdin → the standing notice's marker, RETRACTED, or NONE
+  # Pure, so the fixtures drive the parse rather than the API around it — the
+  # split human_request_mark and rerun_owed_named_head both make.
+  #
+  # Newest wins, which is the order the comments API returns: a notice and its
+  # retraction are one running state, not a tally. Matched as the comment's
+  # FIRST LINE, where this file's other markers are written, with
+  # human_request_mark's residual and its bound — a comment whose first line is
+  # a verbatim paste of the marker is read as this machine's, and both ways
+  # that fails are cheap here: a forged notice-mark suppresses one comment for
+  # one episode, a forged retraction posts one extra.
+  local line state=NONE
+  while IFS= read -r line; do
+    case "$line" in
+      "$RELEASE_SHAPE_NOTICE_MARKER_PREFIX"*) state="$line" ;;
+      "$RELEASE_SHAPE_RETRACTED_MARKER"*) state=RETRACTED ;;
+    esac
+  done
+  printf '%s\n' "$state"
+}
+
+release_shape_marks() { # $1 = PR → its comments' first lines; non-zero when they could not be read
+  gh api --paginate "repos/$REPO/issues/$1/comments" \
+    --jq '.[] | .body | split("\n")[0] | sub("\r$"; "")' 2>/dev/null
+}
+
+release_shape_notice() { # $1 = PR, $2 = head version, $3 = base version — the guard on a surface a human reads (#501 D1)
+  local n="$1" head_ver="$2" base_ver="$3" marker marks standing
+  release_shaped "$head_ver" "$base_ver" || return 0
+  marker="$(release_shape_marker "$base_ver" "$head_ver")"
+
+  # The comment read is behind the shape, so an ordinary PR pays nothing for
+  # it. A failed read says nothing, for reconcile_handoff_takeback's reason:
+  # everywhere in this file an unreadable fact must not invent a verdict, and
+  # the verdict it would invent here is a REPEAT — duplicate comments are the
+  # harm the marker exists to prevent, and the next sweep is an hour away.
+  if ! marks="$(release_shape_marks "$n")"; then
+    log "#$n: release-shape marks unreadable — no notice invented this pass"
+    return 0
+  fi
+  standing="$(release_shape_state <<<"$marks")"
+  [ "$standing" != "$marker" ] || return 0
+
+  # NOT redirected to /dev/null, unlike the take-back and human-request marks:
+  # those redirect because each RECORDS an act that is itself narrated
+  # elsewhere, and here the comment IS the act. A rehearsal that swallowed this
+  # `DRY_RUN:` line would say nothing about the one thing this function does
+  # (the auto-merge provenance comment is unredirected for the same reason).
+  if run gh issue comment "$n" -R "$REPO" --body "$marker
+📦 **This pull request is release-shaped and carries no \`release\` label.**
+
+Its tree declares version \`$head_ver\` where its base declares
+\`${base_ver:-unreadable}\`. A bare \`X.Y.Z\` over a different base is the shape of a
+ceremony PR, and \`release\` is the label the merge door reads as declared
+intent.
+
+**What happens on the merge without it.** The merge itself succeeds and looks
+green. What does not happen is the publish: the release path refuses behind it
+— *the version transitioned but no merged, release-labeled PR is behind this
+commit* — and creates nothing. No tag, no release, no announcement, and no
+red anywhere on this PR to say so.
+
+**The remedy, if this is the ceremony PR: apply \`release\` before the merge.**
+This machine will not apply it for you and never does — \`release\` is declared
+intent, and a machine must not guess intent (LABELS.md's rule for
+\`blocked\`/\`release\`). This comment is notice, not a guess.
+
+**If this is not a release PR**, nothing here blocks anything; the bare version
+at the head over a different base is simply what drew the notice.
+
+*One comment per episode: this says nothing further while the transition and
+the label stand as they are, and takes itself back when \`release\` arrives
+(heavy-duty/ceremony#130, the heavy-duty/ceremony#128 incident;
+heavy-duty/ceremony#501 is the pass that put it on this surface).*"; then
+    log "#$n: release-shaped (${base_ver:-unreadable} -> $head_ver) with no release label — commented"
+  else
+    # A failed post recorded no marker, so the next sweep retries the episode;
+    # only this log line would have lied about it.
+    log "#$n: WARNING: release-shaped (${base_ver:-unreadable} -> $head_ver) with no release label — the comment failed to post; the next sweep retries"
+  fi
+}
+
+release_shape_retract() { # $1 = PR — the notice takes itself back when `release` arrives (#501 D2)
+  # A tripwire that never retracts becomes a permanent false claim on a PR that
+  # was fixed, which is worse than the annotation it replaces. The withdrawal at
+  # reconcile_human_request is the in-file precedent and this is its shape.
+  local n="$1" marks standing
+  if ! marks="$(release_shape_marks "$n")"; then
+    log "#$n: release-shape marks unreadable — no retraction invented this pass"
+    return 0
+  fi
+  standing="$(release_shape_state <<<"$marks")"
+  # Only a STANDING notice is retracted, which is the whole of the retraction's
+  # idempotency: after the first one the newest mark is RETRACTED and every
+  # later pass returns here having said nothing. A PR that never drew a notice
+  # never draws a retraction either.
+  case "$standing" in "$RELEASE_SHAPE_NOTICE_MARKER_PREFIX"*) ;; *) return 0 ;; esac
+
+  if run gh issue comment "$n" -R "$REPO" --body "$RELEASE_SHAPE_RETRACTED_MARKER
+📦 **Retracted — this pull request carries \`release\` now.**
+
+The release-shape notice on this PR no longer applies. The label the merge door
+reads as declared intent is present, so the merge creates the release.
+
+Nothing is owed here. If the label comes off again while the PR is still
+release-shaped, this machine says so again — that is a new episode
+(heavy-duty/ceremony#501)."; then
+    log "#$n: release label arrived — retracted the release-shape notice"
+  else
+    log "#$n: WARNING: release label arrived but the retraction failed to post — the notice still stands and the next sweep retries"
+  fi
+}
+
+reconcile_release_shape() { # $1 = PR, $2 = head version, $3 = base version (both empty where the gate did not read them)
+  # The two halves behind one call, because which half is owed is the same
+  # question the call site's gate already asked and the answer must not be able
+  # to differ between them.
+  #
+  # The retraction is NOT gated on draft, and that is deliberate rather than an
+  # oversight of D5's draft exemption. The exemption is about NAGGING — the
+  # build phase is the builder's — and a retraction is not a nag; it is this
+  # machine taking back something it said. The engine returns a PR to draft at
+  # every round close, so a release PR labeled while drafted is the ordinary
+  # case, not the exotic one, and gating here would strand the false claim on
+  # exactly those PRs.
+  if has_label release; then
+    release_shape_retract "$1"
+    return 0
+  fi
+  # Empty versions on a draft (the gate never read them) fall out of
+  # release_shaped as "not a shape", so the draft exemption needs no second test.
+  release_shape_notice "$1" "$2" "$3"
 }
 
 tree_version() { # $1 = ref → that tree's version via the API, or nothing
@@ -1518,8 +1709,18 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   # ---- the release-shape guard (#130): a warning, never a write --------
   # Drafts are exempt (the build phase is the builder's); the version
   # reads cost two API calls and only on PRs missing the label.
+  #
+  # The gate is unchanged (#501 D5). What moved into locals is the two version
+  # reads, so the notice below can assert the same facts the annotation just
+  # printed without paying for them twice — and so the two can never disagree
+  # about what this pass read. Both stay empty on the PRs the gate skips, which
+  # is what keeps the draft exemption a property of this `if` and not of a test
+  # repeated further down.
+  local shape_head="" shape_base=""
   if [ "$DRAFT" != true ] && ! has_label release; then
-    release_shape_warning "$n" "$(tree_version "$HEAD_SHA")" "$(tree_version "$BASE_SHA")"
+    shape_head="$(tree_version "$HEAD_SHA")"
+    shape_base="$(tree_version "$BASE_SHA")"
+    release_shape_warning "$n" "$shape_head" "$shape_base"
   fi
 
   # ---- merge-next: cleared, never set ----------------------------------
@@ -1582,6 +1783,19 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   # one that produced the request.
   reconcile_human_request "$n" "$desired" "$human_requested"
 
+  # ---- the release-shape guard's other half: the notice (#501) ---------
+  # HERE and not at the annotation's call site above, and the reason is the one
+  # that already put reconcile_ruling's comments and the take-back's here: a
+  # machine comment must not count as the PR's own activity in the pass that
+  # posts it, or the sweep reads its own noise as a sign of life and holds
+  # `stale` off. The annotation is exempt from that — it writes to a run log,
+  # not to the thread — so its call site is the one place in this pair that did
+  # not have to move, and D5 says it does not.
+  #
+  # The versions come from that gated read and are empty where it was skipped;
+  # nothing re-reads them, so a draft still costs zero API calls here.
+  reconcile_release_shape "$n" "$shape_head" "$shape_base"
+
   # ---- the ruling invariants (#52): the bare-flag check + the 7-day nudge --
   # The stale EXEMPTION above is #51's; these are the sweep halves that ride
   # the same real-activity computation (lib/ruling.sh, shared with the issue
@@ -1600,8 +1814,8 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   # ---- the merge, and nothing after it (#460 D1) -----------------------
   # LAST on purpose, and the ordering is the rule rather than a preference.
   # Everything above is what the board owes a PR that is still OPEN — the
-  # converge edit, the release-shape warning, merge-next, stale, the take-back
-  # comment, the ruling and attention halves — and all of it is cheap and
+  # converge edit, the release-shape warning and its notice, merge-next, stale,
+  # the take-back comment, the ruling and attention halves — and all of it is cheap and
   # idempotent. This is the one irreversible act in the function, so it goes
   # after all of them: a write landing on a PR this call already closed is a
   # write into the void, and a take-back comment posting after the merge that
