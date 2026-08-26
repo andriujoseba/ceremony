@@ -3763,6 +3763,24 @@ done
 expect "...and five more passes under the label add none" 1 "$(retraction_count 500)"
 expect "...nor a second notice" 1 "$(notice_count 500)"
 
+# The retraction is NOT gated on draft, and that is a choice rather than an
+# oversight of D5's exemption: the engine returns a PR to draft at every round
+# close, so a release PR labelled while drafted is the ordinary case and gating
+# here would strand the false claim on exactly those PRs. Pinned because a
+# `[ "$DRAFT" = true ]` guard added to the retraction reddened nothing in this
+# file when the mutation set was run.
+shape_probe 517 state:needs-human 0.7.6 0.7.6-dev >/dev/null
+expect "a non-draft release-shaped PR is told (setup)" 1 "$(notice_count 517)"
+shape_draft_ret="$(shape_probe 517 $'state:building\nrelease' 0.7.6 0.7.6-dev true)"
+expect "the label arriving while the PR is DRAFT still retracts the notice" 1 \
+  "$(retraction_count 517)"
+expect "...and says so in the log like any other retraction" yes \
+  "$(grep -q 'release label arrived — retracted the release-shape notice' \
+    <<<"$shape_draft_ret" && echo yes || echo no)"
+expect "a labelled draft that was never told draws no retraction (control)" 0 \
+  "$(shape_probe 518 $'state:building\nrelease' 0.7.6 0.7.6-dev true >/dev/null
+    retraction_count 518)"
+
 # The episode boundary D3 names: the label comes off again, and the PR is told
 # again. The retraction is what closes the episode, which is why the pair is
 # read newest-wins rather than as a tally.
