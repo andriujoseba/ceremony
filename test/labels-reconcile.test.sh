@@ -3729,13 +3729,13 @@ expect "a release-shaped non-draft PR with no release label is told, on the PR" 
 expect "...and the annotation still fires beside it (#501 D1)" yes \
   "$(grep -qF '::warning::labels: #500 is release-shaped' <<<"$shape500" && echo yes || echo no)"
 expect "...naming the transition it read" yes \
-  "$(grep -qF 'declares version `0.7.6` where its base declares' "$SH/posted-500" \
-    && grep -qF '`0.7.6-dev`' "$SH/posted-500" && echo yes || echo no)"
+  "$(grep -qF "declares version \`0.7.6\` where its base declares" "$SH/posted-500" \
+    && grep -qF '0.7.6-dev' "$SH/posted-500" && echo yes || echo no)"
 expect "...naming what the merge does without the label" yes \
   "$(grep -qF 'What happens on the merge without it' "$SH/posted-500" \
     && grep -qF 'creates nothing' "$SH/posted-500" && echo yes || echo no)"
 expect "...and the remedy, in the annotation's own terms" yes \
-  "$(grep -qF 'apply `release` before the merge' "$SH/posted-500" && echo yes || echo no)"
+  "$(grep -qF "apply \`release\` before the merge" "$SH/posted-500" && echo yes || echo no)"
 expect "...saying the machine will not apply it (#501 D4)" yes \
   "$(grep -qF 'This machine will not apply it for you' "$SH/posted-500" && echo yes || echo no)"
 expect "...and logged as what it is" yes \
@@ -3753,7 +3753,7 @@ expect "twenty-two passes over one episode post one comment in total" 1 \
 shape_ret="$(shape_probe 500 $'state:needs-human\nrelease' 0.7.6 0.7.6-dev)"
 expect "applying release retracts the notice" 1 "$(retraction_count 500)"
 expect "...saying the label is what changed" yes \
-  "$(grep -qF 'this pull request carries `release` now' "$SH/posted-500" && echo yes || echo no)"
+  "$(grep -qF "this pull request carries \`release\` now" "$SH/posted-500" && echo yes || echo no)"
 expect "...and logged as the retraction it is" yes \
   "$(grep -q 'release label arrived — retracted the release-shape notice' \
     <<<"$shape_ret" && echo yes || echo no)"
@@ -3962,7 +3962,7 @@ expect "...and the annotation before it, at the gate that did not move (#501 D5)
       /last_activity="\$\(/ && !a {a=NR}
       END{print (w && a && w < a) ? "yes" : "no"}' <<<"$shape_pr_body")"
 expect "...under the gate D5 keeps: not a draft, and no release label" yes \
-  "$(grep -qF '[ "$DRAFT" != true ] && ! has_label release' <<<"$shape_pr_body" \
+  "$(grep -qF "[ \"\$DRAFT\" != true ] && ! has_label release" <<<"$shape_pr_body" \
     && echo yes || echo no)"
 expect "...and nothing was added below the merge (#460 D1)" yes \
   "$(awk '/reconcile_release_shape/ && !c {c=NR}
