@@ -53,6 +53,14 @@ BLOCKERS=(blocker:conflict blocker:ci-red blocker:unrequested)
 # fixtures call decide_state — which now reads has_label — without ever
 # setting it (#51). An empty default keeps has_label honest for every caller.
 LABELS=""
+# The PR's base-branch head, the release-shape guard's second ref (#130), set
+# per PR by the sweep. Initialized here for LABELS' reason and one sharper: the
+# guard's call site reads it under `set -u`, and until #501 the read sat inside
+# a command substitution whose failure the enclosing call swallowed — every
+# fixture driving reconcile_pr had been expanding an unbound name and getting
+# away with it. Assigning the read to a local makes that status the assignment's
+# own, so the empty default is now load-bearing rather than tidy.
+BASE_SHA=""
 # The head SHA named by the newest `rerun-owed` evidence comment on this PR;
 # empty when the PR does not carry the label, no evidence names a head, or the
 # comments could not be read. Read only on PRs carrying the label — one API
