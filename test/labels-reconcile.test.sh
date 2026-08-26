@@ -3805,6 +3805,10 @@ expect "...and no retraction either: nothing was ever said to take back" 0 \
   "$(retraction_count 510)"
 expect "...and no annotation, the gate never having read a version" no \
   "$(grep -q '::warning::labels: #510' <<<"$shape_labeled" && echo yes || echo no)"
+expect "...on a pass that did run — the label closed the gate, not the harness" yes \
+  "$(grep -q '#510: state -> ' <<<"$shape_labeled" && echo yes || echo no)"
+expect "...and paid for no version read either" 0 \
+  "$(grep -c 'contents/VERSION' "$SH/calls-510" || true)"
 
 shape_draft="$(shape_probe 511 state:building 0.7.6 0.7.6-dev true)"
 expect "a draft is silent — the build phase is the builder's (#501 D5)" 0 \
@@ -3822,6 +3826,16 @@ expect "an rc head is silent — pre-releases are not the merge door's shape" 0 
   "$(shape_probe 514 state:bots-reviewing 0.7.6-rc1 0.7.6-dev >/dev/null; notice_count 514)"
 expect "a bare head equal to its base is silent" 0 \
   "$(shape_probe 515 state:bots-reviewing 0.7.6 0.7.6 >/dev/null; notice_count 515)"
+# The positive flag beside each silence. A must-not-fire case is satisfied by a
+# pass that never reached the guard at all, and every one of the four above
+# would read the same if the gate had closed on some other ground — so each is
+# asserted to have OPENED the gate and read the head version it then declined
+# to act on. (511's silence has the opposite flag, asserted with it: the draft
+# gate is supposed to close before the read.)
+for sh_silent in 512 513 514 515; do
+  expect "...case $sh_silent reached the guard and read a head version" yes \
+    "$(grep -q 'contents/VERSION?ref=shapehead' "$SH/calls-$sh_silent" && echo yes || echo no)"
+done
 
 # The base half is the annotation's own carve-out and the notice keeps it: an
 # unreadable BASE still speaks, because the head alone is the release shape.
