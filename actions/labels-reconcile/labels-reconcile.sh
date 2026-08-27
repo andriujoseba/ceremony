@@ -101,6 +101,13 @@ AUTO_MERGE_RELEASE="${AUTO_MERGE_RELEASE-off}"
 # composite validates its own input first, so this bites the direct-script
 # caller, where the value was otherwise unchecked.
 BOOTSTRAP="${BOOTSTRAP-no}"
+# Stop after the bootstrap instead of sweeping (#506). `-` and not `:-` for
+# BOOTSTRAP's reason exactly: unset is the default, empty is a typo the run
+# dies on. This one is read by the sweep workflow's bootstrap job, which sits
+# in its OWN concurrency group — legal only because a run in that mode never
+# reads the PR list and therefore cannot race the sweep beside it. Turning it
+# off there would put a second full sweep in an uncontended queue.
+BOOTSTRAP_ONLY="${BOOTSTRAP_ONLY-no}"
 # What the success comment opens with (#460 D6). A marker in the shape this
 # file's other machine comments use — but NOT an idempotency guard, and no
 # ensure_comment reads it: the sweep enumerates OPEN pull requests only
@@ -407,6 +414,13 @@ validate_bootstrap() { # validate_auto_merge's shape, for the same reason (#472)
   case "$BOOTSTRAP" in
     yes | no) ;;
     *) echo "bootstrap must be 'yes' or 'no'" >&2; return 2 ;;
+  esac
+  # The bootstrap family's second member (#506), validated beside the first
+  # the way validate_auto_merge carries auto_merge_release: same closed set,
+  # same rc, and empty refused rather than read as "off" (#472 D3).
+  case "$BOOTSTRAP_ONLY" in
+    yes | no) ;;
+    *) echo "bootstrap_only must be 'yes' or 'no'" >&2; return 2 ;;
   esac
 }
 
@@ -1872,6 +1886,17 @@ main() {
   if [ "$BOOTSTRAP" = yes ]; then
     log "bootstrap=yes: bootstrapping the taxonomy"
     bootstrap_labels
+  fi
+
+  # ...and out, before the sweep begins (#506). Returning HERE is the whole
+  # licence for the caller's separate concurrency group: everything above
+  # writes repository labels, which are idempotent under concurrent upserts,
+  # while everything below reads the open PR list and writes labels ON pull
+  # requests — the work two sweeps must never do at once. A run that never
+  # reaches the read cannot race a sweep beside it.
+  if [ "$BOOTSTRAP_ONLY" = yes ]; then
+    log "bootstrap_only=yes: taxonomy done, not sweeping"
+    return 0
   fi
 
   # The repo's label set, read ONCE per sweep — reconcile_pr filters every

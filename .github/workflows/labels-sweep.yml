@@ -20,11 +20,22 @@ name: labels-sweep
 # Here a displaced run attaches to no PR: the cancellations live on the
 # Actions tab only.
 #
+# That losslessness claim carries no exception since #506, and the reason it
+# needs none is the job split below. Until then the taxonomy upsert rode the
+# sweep's queue, and the upsert is the ONE work item a surviving sweep could
+# not redo — a sweep never bootstraps, so an evicted press installs nothing
+# and nothing later installs it. On a trafficked board on 2026-08-27, 24 of
+# 40 runs over 100 minutes were displaced, the operator's own two presses
+# among them with `steps: 0`. The upsert now waits in its own queue, where
+# lossless is the whole truth rather than the usual case.
+#
 # Bootstrap semantics: a manual dispatch of the caller bootstraps the
 # taxonomy (its `bootstrap` input defaults to "yes"), exactly what
 # dispatching the labels caller did before the split. The trigger job's
 # dispatches carry bootstrap=no — ~20 label upserts per sweep is too chatty
-# for every board event, the same reason cron runs never bootstrapped.
+# for every board event, the same reason cron runs never bootstrapped. WHEN
+# the upsert is permitted to run is unchanged by #506 (#472 D6 stands, byte
+# for byte); which queue it waits in is the whole of what moved.
 #
 # This cannot loop: reconciler writes use GITHUB_TOKEN, and GitHub does not
 # create workflow runs from GITHUB_TOKEN-raised events (the trigger's
@@ -98,7 +109,95 @@ env:
   CEREMONY_SELF_REF: "0.7.6"
 
 jobs:
+  # The taxonomy upsert, in a job and a queue of its own (#506). It sat
+  # inside `reconcile` until then and therefore inside `reconcile`'s shared
+  # group, where a press competes with every sweep the board raises and
+  # GitHub's one-running-plus-one-pending queue evicts the pending slot
+  # repeatedly — see the header for the measurement that bought this split.
+  #
+  # The upsert has none of the property that group exists to protect. It
+  # writes repository LABELS, not labels ON issues and pull requests; two
+  # concurrent upserts of the same canonical rows are idempotent, and an
+  # upsert running beside a sweep cannot make two sweeps race each other. So
+  # the group was being paid for by a job half of which did not need it.
+  #
+  # Bootstraps are rare by construction — 2 of 100 dispatch runs on a
+  # trafficked board over a full working day — so this queue is effectively
+  # uncontended and an operator's press is no longer evicted by ordinary
+  # sweep traffic. `cancel-in-progress: false` all the same: a press is an
+  # asked-for heal, and two seconds apart both are wanted.
+  bootstrap:
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    # The whole gate (#472), moved here from reconcile's `with:` line and
+    # otherwise unchanged (#506 D2). Every trigger-driven wake arrives as
+    # workflow_dispatch too — that is how `gh workflow run` wakes the caller
+    # — so the event name alone cannot separate the operator's manual
+    # full-board bootstrap from an event-woken sweep; the caller's
+    # `bootstrap` dispatch input does: the trigger passes "no", a bare
+    # manual dispatch defaults to "yes". A caller reached on any other event
+    # (the cron) has no input and stays "no", and this job does not run.
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no'
+    concurrency:
+      group: labels-bootstrap
+      cancel-in-progress: false
+    steps:
+      # The checkout pair is reconcile's, and load-bearing for the same two
+      # reasons stated in full there: no PR code is ever checked out, and
+      # the second checkout is skipped on the dogfood path because the
+      # workspace already IS ceremony. Duplicated rather than factored: a
+      # `uses:` path must be a literal, so the split cannot share a step.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: github.repository != 'heavy-duty/ceremony'
+        with:
+          repository: heavy-duty/ceremony
+          ref: ${{ env.CEREMONY_SELF_REF }}
+          path: .ceremony-src
+      # `bootstrap_only` is what keeps this job out of the sweep's business
+      # and therefore out of its group: with it the reconciler upserts the
+      # taxonomy, retires the defaults and returns without ever reading the
+      # PR list, so it cannot race a sweep running beside it. Deleting the
+      # line is legal YAML and invisible to actionlint — it would silently
+      # put a SECOND full sweep in the uncontended queue, which is the exact
+      # race `labels-reconcile` exists to prevent — so
+      # test/labels-reconcile.test.sh counts both copies.
+      - name: bootstrap the taxonomy
+        if: github.repository != 'heavy-duty/ceremony'
+        uses: ./.ceremony-src/actions/labels-reconcile
+        with:
+          bootstrap: "yes"
+          bootstrap_only: "yes"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+      - name: bootstrap the taxonomy (dogfood — the workspace IS ceremony)
+        if: github.repository == 'heavy-duty/ceremony'
+        uses: ./actions/labels-reconcile
+        with:
+          bootstrap: "yes"
+          bootstrap_only: "yes"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
   reconcile:
+    # Ordering, so a first-ever dispatch installs the taxonomy before this
+    # sweep reads the label set — a greenfield repository's first sweep
+    # would otherwise warn instead of work.
+    needs: bootstrap
+    # ...and the line that stops that `needs:` disabling every board's
+    # sweep. A `needs:` on a SKIPPED job skips the dependent, and the
+    # bootstrap job is skipped on every bootstrap=no run — ~98% of them. So
+    # this job runs on a bootstrap that succeeded, on one that was skipped,
+    # and on one that failed: a failed upsert must not take the board's only
+    # converger with it, and the sweep already tolerates a missing label
+    # (every add is filtered against the repo's label set, and a missing
+    # core row warns rather than fails). What it declines is a run the
+    # WORKFLOW cancelled, which is exactly the distinction `always()` would
+    # lose.
+    if: ${{ !cancelled() }}
     runs-on: ${{ fromJSON(inputs.runner) }}
     # ONE shared group: every reconcile sweeps every open PR, so cron and
     # dispatched runs must serialize or two sweeps race the same PR's labels
@@ -132,27 +231,21 @@ jobs:
       # papers over for `run:` steps, which composite `uses:` has no
       # equivalent of.
       #
-      # bootstrap: every trigger-driven wake arrives as workflow_dispatch
-      # too (that is how `gh workflow run` wakes the caller), so the event
-      # name alone cannot separate the operator's manual full-board
-      # bootstrap from an event-woken sweep — the caller's `bootstrap`
-      # dispatch input does: the trigger passes "no", a bare manual
-      # dispatch defaults to "yes". A caller reached on any other event
-      # (the cron) has no input and stays "no".
-      #
-      # This value is the WHOLE gate, and the line below is where it is
-      # decided (#472). The reconciler reads BOOTSTRAP and nothing else:
-      # until #472 it gated on GITHUB_EVENT_NAME, which the composite
-      # exported on "yes" and could not un-export on "no" — so "no" was
-      # unobeyable and every board event re-upserted ~28 labels. Deleting
-      # the pass-through below is legal YAML and invisible to actionlint;
-      # it silently means never bootstrap, the manual dispatch included,
-      # which is why test/labels-reconcile.test.sh counts both copies.
+      # bootstrap: the literal `no`, unconditionally, on both branches
+      # (#506 D2). This job no longer decides anything about the taxonomy —
+      # the expression that used to compute this value is the bootstrap
+      # job's `if:` above, where it gates a job instead of an input, and the
+      # reconciler still reads BOOTSTRAP and nothing else (#472). The
+      # literal is written out rather than left to the action's `no`
+      # default, because "this job never bootstraps" is the property the
+      # split rests on and a default is not a statement of it. Deleting the
+      # pass-through below is legal YAML and invisible to actionlint, so
+      # test/labels-reconcile.test.sh counts both copies here too.
       - name: reconcile state + stale
         if: github.repository != 'heavy-duty/ceremony'
         uses: ./.ceremony-src/actions/labels-reconcile
         with:
-          bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
+          bootstrap: "no"
           auto_merge: ${{ inputs.auto_merge }}
           auto_merge_release: ${{ inputs.auto_merge_release }}
           post_merge_workflow: ${{ inputs.post_merge_workflow }}
@@ -165,7 +258,7 @@ jobs:
         if: github.repository == 'heavy-duty/ceremony'
         uses: ./actions/labels-reconcile
         with:
-          bootstrap: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no' && 'yes' || 'no' }}
+          bootstrap: "no"
           auto_merge: ${{ inputs.auto_merge }}
           auto_merge_release: ${{ inputs.auto_merge_release }}
           post_merge_workflow: ${{ inputs.post_merge_workflow }}

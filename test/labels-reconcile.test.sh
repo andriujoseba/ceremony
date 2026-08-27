@@ -115,11 +115,14 @@ expect "...and that empty prevents release auto-merges" yes \
 
 # D14 — both reusable action sites carry the whole input family. Counting
 # each literal twice makes deleting any one line from either block red.
-# `bootstrap` joins it at #472, and is the one member whose silent default
-# means NEVER BOOTSTRAP, EVER — the operator's manual full-board dispatch
-# included, since after #472 that dispatch is the only thing that upserts the
-# taxonomy. Deleting the line is legal YAML and invisible to actionlint.
-for pass_input in bootstrap auto_merge post_merge_workflow auto_merge_release release_workflow; do
+#
+# `bootstrap` LEFT this family at #506 and is asserted separately below, in
+# the block that covers the job split: it is no longer a consumer input
+# reaching the action through `inputs.`, it is a literal decided inside this
+# workflow — `no` on both sweep branches, `yes` on both bootstrap-job
+# branches — and the gate that used to compute it is now a job-level `if:`.
+# Its deletion hazard is unchanged and still asserted, twice over, there.
+for pass_input in auto_merge post_merge_workflow auto_merge_release release_workflow; do
   expect "both reusable with blocks pass $pass_input" 2 \
     "$(grep -c "^          $pass_input:.*inputs.$pass_input" .github/workflows/labels-sweep.yml)"
 done
@@ -1869,6 +1872,264 @@ expect "...keeping its own validation step" yes \
 expect "...and the input's closed default" 1 \
   "$(awk '/^  bootstrap:/{seen=1} seen && /default: "no"/{print 1; exit}' \
     actions/labels-reconcile/action.yml)"
+
+# ---------------------------------------------------------------------------
+# The bootstrap leaves the sweep's queue (#506). The upsert rode
+# `reconcile`'s shared concurrency group, where GitHub's
+# one-running-plus-one-pending queue evicted it under ordinary sweep
+# traffic — and the upsert is the one displaced work item no surviving
+# sweep redoes, because a sweep never bootstraps. It is now a job of its
+# own, in a group of its own.
+#
+# Every assertion below is over the workflow's own text or over an executed
+# run, never over the PR body: the whole failure mode being guarded is a
+# YAML edit that is legal, actionlint-clean and silent.
+# ---------------------------------------------------------------------------
+sweep_job_block() { # $1 = job name → that job's block of labels-sweep.yml
+  # Bounded at the next 2-space job key. A `  # comment` between jobs binds
+  # to the block ABOVE, which is why the assertions below read specific
+  # keys out of the block rather than grepping it for bare words: this
+  # file's own prose names both group names, and so does the workflow's.
+  awk -v key="^  $1:\$" '
+    $0 ~ key { f = 1; next }
+    f && /^  [a-z]/ { exit }
+    f { print }
+  ' .github/workflows/labels-sweep.yml
+}
+sweep_job_group() { # $1 = job name → its concurrency group, or empty
+  sweep_job_block "$1" | sed -n 's/^      group: //p'
+}
+sweep_job_field() { # $1 = job name, $2 = a job-level key → its value
+  sweep_job_block "$1" | sed -n "s/^    $2: //p"
+}
+sweep_job_with() { # $1 = job name, $2 = a `with:` input → one value per line
+  sweep_job_block "$1" | sed -n "s/^          $2: //p"
+}
+
+# -- the two groups, and the right one on the right job. Asserted as an
+#    equality per job and not as "both names appear": a transposition would
+#    put the PR sweep in the uncontended queue and the upsert in the
+#    contended one — this issue's defect, inverted, and green under any
+#    check that merely counts the names.
+expect "the sweep job keeps the shared reconcile group" labels-reconcile \
+  "$(sweep_job_group reconcile)"
+expect "the bootstrap job has a group of its own" labels-bootstrap \
+  "$(sweep_job_group bootstrap)"
+expect "the two groups are distinct" no \
+  "$([ "$(sweep_job_group reconcile)" = "$(sweep_job_group bootstrap)" ] \
+    && echo yes || echo no)"
+# Neither may cancel: the sweep because a mid-board cancel is the race the
+# group exists to stop, the bootstrap because a half-applied taxonomy is
+# worse than a slow one.
+for sweep_job in reconcile bootstrap; do
+  expect "the $sweep_job job serializes, never cancels" false \
+    "$(sweep_job_block "$sweep_job" | sed -n 's/^      cancel-in-progress: //p')"
+done
+
+# -- ordering, and the skip path that ordering could take the board with.
+#    A `needs:` on a SKIPPED job skips the dependent unless the condition
+#    says otherwise, and the bootstrap job is skipped on every
+#    bootstrap=no run — ~98% of them — so an `if:` that fails closed here
+#    disables the sweep on every governed board. Four separate rows,
+#    because each catches a different way to get this wrong.
+expect "the sweep declares needs: on the bootstrap job" bootstrap \
+  "$(sweep_job_field reconcile needs)"
+reconcile_if="$(sweep_job_field reconcile if)"
+expect "...and carries an if: at all, so a skipped bootstrap cannot skip it" \
+  no "$([ -z "$reconcile_if" ] && echo yes || echo no)"
+expect "...whose condition is cancellation-aware" yes \
+  "$(grep -qF '!cancelled()' <<<"$reconcile_if" && echo yes || echo no)"
+# always() would run the sweep on a run the workflow cancelled; success()
+# and a bare needs-result equality would both drop the skipped case, which
+# IS the ~98% path.
+expect "...and is not always()" no \
+  "$(grep -qF 'always()' <<<"$reconcile_if" && echo yes || echo no)"
+expect "...and does not gate on success()" no \
+  "$(grep -qF 'success()' <<<"$reconcile_if" && echo yes || echo no)"
+# The shipped literal, pinned once so a reader sees what the four rows
+# above are describing.
+# shellcheck disable=SC2016 # a GitHub expression, asserted literally
+expect "...the shipped condition" '${{ !cancelled() }}' "$reconcile_if"
+
+# -- the reconcile job never bootstraps. Both `uses:` branches, and the
+#    computed expression gone from this job entirely: it now gates the
+#    bootstrap job instead, so a copy left behind here would re-enter the
+#    upsert into the contended queue with nothing to show for the split.
+expect "both reconcile branches pass the literal no" '"no"
+"no"' "$(sweep_job_with reconcile bootstrap)"
+expect "the reconcile job carries no computed bootstrap expression" 0 \
+  "$(sweep_job_block reconcile | grep -c 'github.event.inputs.bootstrap' || true)"
+expect "the bootstrap gate is decided exactly once in the workflow" 1 \
+  "$(grep -c 'github.event.inputs.bootstrap' .github/workflows/labels-sweep.yml || true)"
+expect "...on the bootstrap job's if:" 1 \
+  "$(sweep_job_field bootstrap if | grep -c 'github.event.inputs.bootstrap' || true)"
+expect "...admitting a bare dispatch and refusing bootstrap=no" yes \
+  "$(sweep_job_field bootstrap if \
+    | grep -qF "github.event_name == 'workflow_dispatch' && github.event.inputs.bootstrap != 'no'" \
+    && echo yes || echo no)"
+expect "both bootstrap branches ask for the upsert" '"yes"
+"yes"' "$(sweep_job_with bootstrap bootstrap)"
+
+# -- the pass-through count for the new input, #472 D8's shape. Both
+#    `with:` blocks of the bootstrap job name it, so deleting either line —
+#    legal YAML, invisible to actionlint — reds. Deleting it does not merely
+#    lose a flag: it puts a SECOND full PR sweep in the uncontended queue,
+#    which is the race `labels-reconcile` exists to prevent.
+expect "both bootstrap-job with blocks pass bootstrap_only" '"yes"
+"yes"' "$(sweep_job_with bootstrap bootstrap_only)"
+# ...and the sweep job never asks for it, which would end its sweep before
+# it read a single PR.
+expect "the reconcile job passes no bootstrap_only" "" \
+  "$(sweep_job_with reconcile bootstrap_only)"
+# The action's side of the same input.
+expect "the composite declares bootstrap_only, off by default" 1 \
+  "$(awk '/^  bootstrap_only:/{seen=1} seen && /default: "no"/{print 1; exit}' \
+    actions/labels-reconcile/action.yml)"
+# shellcheck disable=SC2016 # an action.yml literal, not an expansion
+expect "...plumbing it to the script twice, validator and reconcile step" 2 \
+  "$(grep -cF 'BOOTSTRAP_ONLY: ${{ inputs.bootstrap_only }}' \
+    actions/labels-reconcile/action.yml)"
+expect "...and closing its accepted set at the composite boundary" yes \
+  "$(grep -q "bootstrap_only must be 'yes' or 'no'" actions/labels-reconcile/action.yml \
+    && echo yes || echo no)"
+
+# -- the reusable's own input contract is byte-unchanged: bootstrap_only is
+#    an ACTION input, decided inside this workflow, never a knob a consumer
+#    passes. #472 D5's property — no consumer caller, `with:` value or
+#    `permissions:` block moves — holds unchanged.
+expect "the reusable declares no bootstrap_only input" 0 \
+  "$(awk '/^  workflow_call:/{f=1} f && /^      bootstrap_only:/{c++} END{print c+0}' \
+    .github/workflows/labels-sweep.yml)"
+# Every job the reusable owns still routes through the runner input (#383):
+# the new job is a job of this reusable and takes the consumer's runner
+# choice like the sweep does.
+# shellcheck disable=SC2016 # a GitHub expression, asserted literally
+for sweep_job in reconcile bootstrap; do
+  expect "the $sweep_job job routes through the runner input" \
+    '${{ fromJSON(inputs.runner) }}' "$(sweep_job_field "$sweep_job" runs-on)"
+done
+
+# -- BOOTSTRAP_ONLY at the direct-script boundary. Its own stub, not
+#    exec_env's: this fixture's whole claim is about a call that must NOT
+#    happen, so the stub records every invocation rather than the label
+#    writes alone — and a stub that records reads would break the
+#    no-gh-invocation assertions exec_env's cases make.
+ONLY="$RTMP/bootstrap-only"
+mkdir -p "$ONLY/stub"
+cat >"$ONLY/stub/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "label create") printf 'create %s\n' "$3" >>"$GH_RECORD" ;;
+  "label delete")
+    printf 'delete %s\n' "$3" >>"$GH_RECORD"
+    # The normal case from the second bootstrap on, as exec_env's stub has it
+    echo "could not delete label: HTTP 404: Not Found (owner/repo)" >&2
+    exit 1 ;;
+  # Everything else is a READ the sweep half performs. `$1 $2` and not `$*`:
+  # the assertion is about which call was made, not its arguments.
+  *) printf 'read %s %s\n' "$1" "$2" >>"$GH_RECORD" ;;
+esac
+exit 0
+EOF
+chmod +x "$ONLY/stub/gh"
+printf 'panel=bot-a bot-b bot-c\n' >"$ONLY/labels.conf"
+
+only_env() { # $1 = BOOTSTRAP, $2 = BOOTSTRAP_ONLY; "-" leaves either unset
+  : >"$ONLY/record"
+  local -a vars=(PATH="$ONLY/stub:$PATH" GH_RECORD="$ONLY/record"
+    REPO=owner/repo LABELS_CONF="$ONLY/labels.conf")
+  [ "$1" = - ] || vars+=("BOOTSTRAP=$1")
+  [ "$2" = - ] || vars+=("BOOTSTRAP_ONLY=$2")
+  env -u BOOTSTRAP -u BOOTSTRAP_ONLY -u GITHUB_EVENT_NAME -u DRY_RUN \
+    "${vars[@]}" bash actions/labels-reconcile/labels-reconcile.sh
+}
+only_created() { sed -n 's/^create //p' "$ONLY/record"; }
+only_reads() { grep -c '^read ' "$ONLY/record" || true; }
+
+# The mode ON: the upsert happens and the sweep never begins.
+only_rc=0
+only_out="$(only_env yes yes 2>&1)" || only_rc=$?
+expect "a bootstrap-only run completes green" 0 "$only_rc"
+expect "...creating the full taxonomy" \
+  "$(core_label_rows | cut -d'|' -f1)" "$(only_created)"
+expect "...attempting all six retirements" 6 \
+  "$(grep -c '^delete ' "$ONLY/record" || true)"
+expect "...and reading NOTHING — no PR list, no label list" 0 "$(only_reads)"
+expect "...narrating why it stopped" yes \
+  "$(grep -q '^labels: bootstrap_only=yes: taxonomy done, not sweeping' <<<"$only_out" \
+    && echo yes || echo no)"
+# The sweep's own end-of-run line must be absent: reaching it would mean the
+# job in the uncontended queue had swept the board after all.
+expect "...and never reaching the end of a sweep" 0 \
+  "$(grep -c '^labels: reconciled\.' <<<"$only_out" || true)"
+
+# The must-not-fire mirror: the SAME stub, the mode off, and the reads that
+# were absent above are present here. Without this row the assertion above
+# passes for a run that failed before it could read anything (#393's shape).
+mirror_only_rc=0
+mirror_only_out="$(only_env yes no 2>&1)" || mirror_only_rc=$?
+expect "the same fixture with the mode off completes green" 0 "$mirror_only_rc"
+expect "...still creating the full taxonomy" \
+  "$(core_label_rows | cut -d'|' -f1)" "$(only_created)"
+expect "...and DOES read the PR list" yes \
+  "$(grep -q '^read pr list' "$ONLY/record" && echo yes || echo no)"
+expect "...reaching the end of the sweep" yes \
+  "$(grep -q '^labels: reconciled\.' <<<"$mirror_only_out" && echo yes || echo no)"
+
+# Unset is off at the direct-script boundary, the composite always passing a
+# value of its own. A default that flipped would silently stop every sweep.
+unset_only_rc=0
+only_env yes - >/dev/null 2>&1 || unset_only_rc=$?
+expect "an unset BOOTSTRAP_ONLY completes green" 0 "$unset_only_rc"
+expect "...and sweeps, the default being off" yes \
+  "$(grep -q '^read pr list' "$ONLY/record" && echo yes || echo no)"
+
+# The mode on with nothing to bootstrap is a legal no-op, not an error: the
+# two variables answer different questions and neither implies the other.
+noop_only_rc=0
+noop_only_out="$(only_env no yes 2>&1)" || noop_only_rc=$?
+expect "bootstrap=no with the mode on completes green" 0 "$noop_only_rc"
+expect "...touching no label and reading nothing" "" "$(cat "$ONLY/record")"
+expect "...and narrating no bootstrap" 0 \
+  "$(grep -c 'bootstrapping the taxonomy' <<<"$noop_only_out" || true)"
+
+# -- accept, refuse, unset, and EMPTY. Empty is the case `-` rather than
+#    `:-` decides, and the one a later edit reverts in silence: read as
+#    "off" it would turn the bootstrap job into a second full sweep in an
+#    uncontended queue (#472 D3's reason, this issue's stakes).
+for bad_only in Yes true "" "1" "on" "only"; do
+  bad_only_rc=0
+  bad_only_out="$(only_env yes "$bad_only" 2>&1)" || bad_only_rc=$?
+  expect "BOOTSTRAP_ONLY='$bad_only' exits 2" 2 "$bad_only_rc"
+  expect "...with a message naming the input and its accepted set" \
+    "bootstrap_only must be 'yes' or 'no'" \
+    "$(grep -o "bootstrap_only must be 'yes' or 'no'" <<<"$bad_only_out")"
+  expect "...before any label write or read" "" "$(cat "$ONLY/record")"
+done
+# ...and the accepted pair is accepted, so the refusals above are not
+# passing on a validator that refuses everything.
+for good_only in yes no; do
+  good_only_rc=0
+  only_env no "$good_only" >/dev/null 2>&1 || good_only_rc=$?
+  expect "BOOTSTRAP_ONLY='$good_only' is accepted" 0 "$good_only_rc"
+done
+
+# -- the header's losslessness argument (#506 D6). It read as an unqualified
+#    claim while carrying an unstated exception — the upsert — and that is
+#    what made the shared queue look safe. The exception is gone rather than
+#    the sentence, and the comment now says which change removed it.
+sweep_header="$(sed -n '1,/^on:/p' .github/workflows/labels-sweep.yml)"
+expect "the header still argues displacement is lossless" yes \
+  "$(grep -qF 'That displacement is semantically lossless' <<<"$sweep_header" \
+    && echo yes || echo no)"
+expect "...and now says the claim needs no exception" yes \
+  "$(grep -qF 'carries no exception' <<<"$sweep_header" && echo yes || echo no)"
+expect "...naming the upsert as the item no survivor redoes" yes \
+  "$(grep -qF 'the ONE work item a surviving sweep could' <<<"$sweep_header" \
+    && echo yes || echo no)"
+expect "...and keeping #472's guarantee about WHEN the upsert may run" yes \
+  "$(grep -qF '#472 D6 stands' <<<"$sweep_header" && echo yes || echo no)"
+
 # -- a re-drafted fix round is not a build (#205) ----------------------------
 # Draft used to short-circuit decide_state before the round was consulted, so
 # a PR carrying a standing CHANGES_REQUESTED that its builder converted back

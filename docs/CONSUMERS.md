@@ -650,7 +650,14 @@ together at the same pin:
   and its `--failed`/`--job` forms all decline a queue-displaced run).
   Behind its own caller, a displaced sweep cancels on the
   Actions tab, attached to no PR; PR checks show `scope` and the green
-  `trigger` only.
+  `trigger` only. **Two jobs since `0.7.7`** (#506): a `bootstrap` job that
+  upserts the taxonomy and does nothing else, and the `reconcile` sweep
+  above. They carry separate concurrency groups, so a bootstrap press waits
+  in an effectively uncontended queue instead of competing with every sweep
+  the board raises — the upsert being the one displaced work item no
+  surviving sweep redoes. Both take the caller's `runner` input, and the
+  caller's `with:` block, `permissions:` and `workflow_dispatch` inputs are
+  unchanged: consumers get the split at their next pin bump with no edit.
 
 The consumer keeps its path mapping in `.github/labeler.yml` and its
 review panel plus scope taxonomy in `.github/labels.conf`.
