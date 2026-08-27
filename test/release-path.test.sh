@@ -15,6 +15,7 @@ trap 'rm -rf "$TMP"' EXIT
 readme_path() {
   awk '
     /^2\. The release path is exactly the output of$/ { condition = 1; next }
+    condition && /^3\./ { exit 1 }
     condition && /^   ```text$/ { fence = 1; next }
     fence && /^   ```$/ { closed = 1; exit }
     fence {
