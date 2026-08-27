@@ -354,14 +354,51 @@ expect "the owner-neutral ready gloss never says builder" no \
   "$(grep -qi builder <<<"$ready_core" && echo yes || echo no)"
 expect "operator is absent from the consumer registry" no \
   "$(grep -q '^operator|' .github/labels.conf && echo yes || echo no)"
+# The nag's guidance half, written out here and never read from the script:
+# an expectation that imported the string it grades passes whatever the script
+# says. The pin is one conditional candidate rather than the lead, because an
+# evicted press leaves a correct pin looking like the fault (#505).
+core_nag_tail="; re-dispatch workflow_dispatch with bootstrap=yes and read that run's conclusion — a press evicted from the shared sweep queue is cancelled with no steps and installs nothing, so press again (bump the ceremony pin first only if it is behind); the verified press is in ceremony's docs/CONSUMERS.md, \"A bootstrap press that reports whether it ran\""
+one_missing="$(missing_core_labels_warning \
+  "$core_rows" "$(grep -vxF attention <<<"$core_names")")"
+three_missing="$(missing_core_labels_warning \
+  "$core_rows" "$(grep -vxF -e offsite -e needs-ruling -e attention \
+    <<<"$core_names")")"
 expect "a complete core taxonomy does not warn" "" \
   "$(missing_core_labels_warning "$core_rows" "$core_names")"
 expect "one missing core label is named exactly" \
-  "::warning::labels: missing core label(s): attention; bump the ceremony pin, then re-dispatch workflow_dispatch to bootstrap the taxonomy" \
-  "$(missing_core_labels_warning "$core_rows" "$(grep -vxF attention <<<"$core_names")")"
+  "::warning::labels: missing core label(s): attention$core_nag_tail" \
+  "$one_missing"
+# The three below are positive flags beside the byte-exact assertion, not a
+# weaker restatement of it: they name which clauses #505 bought, so a future
+# rewrite that keeps the line one line and drops one of them reds on the
+# clause it dropped rather than on an opaque whole-string mismatch.
+expect "the rewritten nag still names the missing row" yes \
+  "$(case "$one_missing" in
+    *"missing core label(s): attention;"*) echo yes ;; *) echo no ;;
+  esac)"
+expect "the rewritten nag names eviction as a cause" yes \
+  "$(case "$one_missing" in
+    *"evicted from the shared sweep queue is cancelled"*) echo yes ;;
+    *) echo no ;;
+  esac)"
+expect "the rewritten nag points at the verified press" yes \
+  "$(case "$one_missing" in
+    *'docs/CONSUMERS.md, "A bootstrap press that reports whether it ran"'*)
+      echo yes ;;
+    *) echo no ;;
+  esac)"
+expect "the rewritten nag does not open on the pin" no \
+  "$(case "$one_missing" in
+    *"label(s): attention; bump the ceremony pin"*) echo yes ;; *) echo no ;;
+  esac)"
 expect "three missing core labels are named in table order" \
-  "::warning::labels: missing core label(s): offsite, needs-ruling, attention; bump the ceremony pin, then re-dispatch workflow_dispatch to bootstrap the taxonomy" \
-  "$(missing_core_labels_warning "$core_rows" "$(grep -vxF -e offsite -e needs-ruling -e attention <<<"$core_names")")"
+  "::warning::labels: missing core label(s): offsite, needs-ruling, attention$core_nag_tail" \
+  "$three_missing"
+# One warning for the whole set and never one per row: a message edit is
+# exactly where a for loop gets introduced by accident (#505).
+expect "three missing rows still emit exactly one warning line" 1 \
+  "$(grep -c '^::warning::' <<<"$three_missing" || true)"
 expect "an unreadable empty label set does not report the taxonomy missing" "" \
   "$(missing_core_labels_warning "$core_rows" "")"
 expect "unrelated scope labels do not affect a complete core taxonomy" "" \
