@@ -43,8 +43,12 @@ done
 # shellcheck disable=SC2016 # the GitHub expression is asserted literally
 check "labels routes both jobs through the runner input" 0 "2" \
   count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$LABELS"
+# Two since #506, when the taxonomy bootstrap left the sweep's concurrency
+# group for a job of its own: a consumer's runner choice is one JSON value
+# per reusable applied to EVERY job that reusable owns, so the split takes
+# the input with it rather than stranding the bootstrap on a hosted seat.
 # shellcheck disable=SC2016 # the GitHub expression is asserted literally
-check "labels-sweep routes reconcile through the runner input" 0 "1" \
+check "labels-sweep routes both jobs through the runner input" 0 "2" \
   count_fixed 'runs-on: ${{ fromJSON(inputs.runner) }}' "$SWEEP"
 # shellcheck disable=SC2016 # the GitHub expression is asserted literally
 check "release routes both doors through the runner input" 0 "2" \
