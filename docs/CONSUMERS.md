@@ -957,8 +957,9 @@ The bare dispatch above needs no check, because a displaced one costs
 nothing: a reconcile sweep evicted from the queue is redone by the next
 sweep, and the board converges either way. **A bootstrap press is the one
 dispatch that is not lossless.** Every sweep that could survive in its
-place is one of the reconcile-only runs named above, so nothing else in
-the queue installs the label the press was for.
+place is one of the reconcile-only runs named above — which is why an
+evicted reconcile sweep costs nothing and an evicted bootstrap press costs
+the row it was pressed for.
 
 The queue is the shared `concurrency` group every sweep in the repository
 runs under, and GitHub holds one running run plus one pending run there. A
