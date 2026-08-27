@@ -248,11 +248,22 @@ drill owed, that verdict wins.
    except the `CEREMONY_SELF_REF` pin line in
    `.github/workflows/release.yml`.
 2. The release path is exactly the output of
-   `.github/scripts/release-path.sh`: `.github/workflows/release.yml`, `bin/`,
-   `lib/version.sh`, `lib/decide.sh`, `lib/facts.sh`, and
-   `lib/changelog.sh`. The script is the record author's copy-paste source;
-   its contract test keeps this inline list and the workflow's direct and
-   transitive dependencies in agreement.
+   `.github/scripts/release-path.sh`; that output is normative. This inline
+   copy is a convenience for record authors:
+
+   ```text
+   .github/workflows/release.yml
+   bin/
+   lib/tag-classify.sh
+   lib/version.sh
+   lib/decide.sh
+   lib/facts.sh
+   lib/changelog.sh
+   ```
+
+   The contract test keeps the inline copy identical to the script's output,
+   and keeps that output in agreement with the workflow's direct and
+   transitive dependencies.
 3. The last rehearsed tag's own record is a full rehearsal, its release is
    published, and `main` was re-armed to `-dev` after it.
 
