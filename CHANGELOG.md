@@ -12,6 +12,62 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.7 — 2026-08-27
+
+### Fixed
+
+- The `operator` core label's description measured 106 characters, over
+  GitHub's 100-character cap, so `POST /labels` answered `422` and every fresh
+  taxonomy bootstrap died on that row. It is reworded and unchanged in meaning
+  (#508).
+- `bootstrap_labels()` created labels in a loop with no per-row tolerance, so
+  under `set -e` that one `422` aborted the run (#508).
+- Every row after the failing one was therefore never attempted — including the
+  consumer's whole `scope:*` set, which is appended after the core rows (#508).
+- The loop now logs a failed row and continues, matching the contract the retire
+  loop below it already had, and fails the run at the end with every missing row
+  named in one line (#508).
+- `test/labels-reconcile.test.sh` now asserts the cap across the whole core
+  registry, so a future over-long row reds here rather than in a consumer's
+  first bootstrap (#508).
+- The label taxonomy bootstrap runs in its own `labels-sweep.yml` job under
+  its own concurrency group, so an operator's `bootstrap=yes` press is no
+  longer evicted from the sweep's shared queue and cancelled with no steps
+  (#506, #503).
+- The `reconcile` sweep keeps `group: labels-reconcile` and never
+  bootstraps: it passes the literal `bootstrap: "no"`, and the gate that
+  computed that value now decides whether the bootstrap job runs (#506).
+- `actions/labels-reconcile` accepts `bootstrap_only`, off by default,
+  which upserts the taxonomy and returns before reading the pull request
+  list. No consumer caller, input or permission changes (#506).
+- The bootstrap press now reports whether it survived the queue.
+  `docs/CONSUMERS.md` told an operator to re-dispatch after a pin bump and
+  stopped there, and `gh workflow run` prints the same confirmation whether
+  the run executes or is evicted (#505, #503).
+- Both documented run resolvers select the operator's own run by `actor.login`
+  over the REST API. `--event workflow_dispatch` with `--limit 1` takes the
+  trigger job's dispatch on any board with traffic, so the on-boarding block
+  could report a false green (#505).
+- A `cancelled` conclusion is stated to mean the taxonomy was not touched, and
+  the retry sits beside the `core_label_rows()` hand-create for an operator who
+  has lost several presses (#505).
+- `### The pin-bump procedure` names the re-dispatch it owes and links the
+  verification block; a grep of it for `bootstrap` returned nothing before
+  (#505).
+- The `missing core label(s)` warning no longer reads as "your pin is wrong" to
+  an operator whose pin is right: it names queue eviction as a cause and points
+  at the verified press (#505).
+- The release-shape guard now says so on the pull request. Its `::warning::`
+  attaches to the sweep's own check run on the default branch, so it reached no
+  surface a builder, a reviewer or the merger reads: it fired 21 times over
+  ceremony#500, which merged unlabelled and published nothing (#130, #501).
+- That notice is posted once per episode and retracted when `release` arrives;
+  a PR that loses and regains the label is told again. The annotation stays
+  beside it, and the reconciler still never writes the label — notice is not a
+  guess (#501).
+- `docs/CONSUMERS.md` named no surface for that notice, which made its claim
+  that the sweep says so first true of nothing a consumer could read (#501).
+
 ## 0.7.6 — 2026-08-24
 
 ### Added
