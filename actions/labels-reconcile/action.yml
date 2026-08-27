@@ -5,6 +5,16 @@ inputs:
     description: Whether to bootstrap labels before reconciling (yes or no)
     required: true
     default: "no"
+  bootstrap_only:
+    description: >-
+      Whether to stop after the taxonomy bootstrap instead of sweeping the
+      open pull requests (yes or no). Off by default, which is every caller
+      but the sweep's own bootstrap job. On, the reconciler upserts the
+      taxonomy, retires the defaults and returns without reading the PR
+      list — which is what lets that job sit outside the sweep's shared
+      concurrency group without ever racing a sweep beside it (#506).
+    required: false
+    default: "no"
   auto_merge:
     description: Auto-merge verdict mode (off, merge, squash, or rebase)
     required: false
@@ -35,10 +45,15 @@ runs:
       shell: bash
       env:
         BOOTSTRAP: ${{ inputs.bootstrap }}
+        BOOTSTRAP_ONLY: ${{ inputs.bootstrap_only }}
       run: |
         case "$BOOTSTRAP" in
           yes | no) ;;
           *) echo "bootstrap must be 'yes' or 'no'" >&2; exit 2 ;;
+        esac
+        case "$BOOTSTRAP_ONLY" in
+          yes | no) ;;
+          *) echo "bootstrap_only must be 'yes' or 'no'" >&2; exit 2 ;;
         esac
     - name: validate auto_merge input
       shell: bash
@@ -62,6 +77,7 @@ runs:
       shell: bash
       env:
         BOOTSTRAP: ${{ inputs.bootstrap }}
+        BOOTSTRAP_ONLY: ${{ inputs.bootstrap_only }}
         AUTO_MERGE: ${{ inputs.auto_merge }}
         AUTO_MERGE_RELEASE: ${{ inputs.auto_merge_release }}
         # No validation step, deliberately (#461 D4): whether the workflow
