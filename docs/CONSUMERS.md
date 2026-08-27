@@ -947,8 +947,90 @@ bootstrap dispatch** — the reconciler's one gate is that `bootstrap`
 input, so no board event and no cadence can install, rename or retire a
 label. When a ceremony pin bump adds a core label, bump the pin first and
 then re-dispatch: the label arrives on that dispatch and on no earlier
-run. The scheduled sweep warns when the pinned taxonomy declares a core
-label the repository lacks, which is the nag in the meantime (#472).
+run. That re-dispatch is the press below, and it is verified rather than
+assumed. The scheduled sweep warns when the pinned taxonomy declares a
+core label the repository lacks, which is the nag in the meantime (#472).
+
+### A bootstrap press that reports whether it ran
+
+The bare dispatch above needs no check, because a displaced one costs
+nothing: a reconcile sweep evicted from the queue is redone by the next
+sweep, and the board converges either way. **A bootstrap press is the one
+dispatch that is not lossless.** Every sweep that could survive in its
+place is one of the reconcile-only runs named above, so nothing else in
+the queue installs the label the press was for.
+
+The queue is the shared `concurrency` group every sweep in the repository
+runs under, and GitHub holds one running run plus one pending run there. A
+third arrival evicts the pending one, which ends `cancelled` having
+executed no steps. `gh workflow run` prints `✓ Created workflow_dispatch
+event` for that press exactly as it does for one that runs, so at the
+terminal the press that installed the taxonomy and the press that
+installed nothing are the same two words. Resolve the run and read its
+conclusion:
+
+```bash
+repo=<owner>/<repo>
+ceremony_ref=<pinned-tag>
+me="$(gh api /user --jq .login)"
+dispatched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh workflow run labels-sweep.yml --repo "$repo" -f bootstrap=yes
+run_id=
+for attempt in {1..12}; do
+  run_id="$(gh api -X GET \
+    "/repos/$repo/actions/workflows/labels-sweep.yml/runs" \
+    -f event=workflow_dispatch -f "created=>=$dispatched_at" \
+    -f per_page=100 |
+    jq -r --arg me "$me" \
+      'first(.workflow_runs[] | select(.actor.login == $me) | .id) // empty')"
+  [ -z "$run_id" ] || break
+  sleep 5
+done
+test -n "$run_id" || { echo "bootstrap dispatch never appeared" >&2; false; }
+gh run watch "$run_id" --repo "$repo" --exit-status
+```
+
+The resolution discriminates on `actor.login` for the reason given under
+[On-board a fleet-worked repo](#on-board-a-fleet-worked-repo): the trigger
+job dispatches this same workflow, so on any trafficked board the newest
+`workflow_dispatch` run is almost certainly not yours, and `-u` filters
+`triggering_actor`, which does not separate the two.
+
+**A `cancelled` conclusion here means the taxonomy was not touched.** It is
+not an error and not a transient. It is eviction from the shared queue: the
+run executed no steps, and every label the press was for is still absent.
+The correct response is to press again — re-run the block above, and keep
+pressing until it exits zero. Do not go looking at the pin. A pin that is
+behind fails the run or leaves rows missing afterwards; it does not cancel
+the run.
+
+**Where several presses in a row have been evicted, create the rows by
+hand.** This is the same escape hatch the on-boarding section above uses
+for the bootstrap-order problem, and it is evidence and not a workaround
+around the check: the rows come from `core_label_rows()` at the ref the
+repository is pinned to — the same source a bootstrap dispatch upserts
+from — and the reconciler upserts rather than replaces, so a later
+surviving press makes them canonical either way.
+
+```bash
+gh api "/repos/heavy-duty/ceremony/contents/actions/labels-reconcile/labels-reconcile.sh?ref=${ceremony_ref}" \
+  --jq .content | base64 --decode |
+  awk -F '|' '
+    /^core_label_rows\(\) \{/ { in_function = 1; next }
+    in_function && /^  cat <<.*EOF/ { in_rows = 1; next }
+    in_rows && /^EOF$/ { exit }
+    in_rows { print }
+  ' |
+  while IFS='|' read -r name color description; do
+    gh label create "$name" --repo "$repo" --color "$color" \
+      --description "$description" --force
+  done
+```
+
+`--force` makes that idempotent, so it is safe over a partially applied
+press. Confirm the result with the full-taxonomy comparison under
+[On-board a fleet-worked repo](#on-board-a-fleet-worked-repo) — six
+familiar-looking labels are still not proof that the dispatch ran.
 
 ### Letting the sweep merge a converged PR
 
@@ -1465,3 +1547,11 @@ tell you what is stale. The CI guard is what makes a half-done bump —
 pin without mirror, or mirror without pin — unmergeable (#19). This is
 how a process change rolls out to a governed repo: deliberately, per
 repo, reviewed.
+
+A bump that adds a core label is not finished at the merge: the bootstrap
+re-dispatch that carries the new row into the repository is a separate
+act, and its press can be evicted from the shared queue without saying so.
+Run it in the verified form —
+[A bootstrap press that reports whether it ran](#a-bootstrap-press-that-reports-whether-it-ran)
+— which is where that block lives and the only place in this file it is
+written out.
