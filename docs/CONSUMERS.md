@@ -83,19 +83,36 @@ after that PR merges, dispatch the sweep caller with taxonomy bootstrapping
 enabled and wait for that exact run to succeed:
 
 ```bash
+me="$(gh api /user --jq .login)"
 dispatched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh workflow run labels-sweep.yml --repo "$repo" -f bootstrap=yes
 run_id=
 for attempt in {1..12}; do
-  run_id="$(gh run list --repo "$repo" --workflow labels-sweep.yml \
-    --event workflow_dispatch --created ">=${dispatched_at}" --limit 1 \
-    --json databaseId --jq '.[0].databaseId')"
+  run_id="$(gh api -X GET \
+    "/repos/$repo/actions/workflows/labels-sweep.yml/runs" \
+    -f event=workflow_dispatch -f "created=>=$dispatched_at" \
+    -f per_page=100 |
+    jq -r --arg me "$me" \
+      'first(.workflow_runs[] | select(.actor.login == $me) | .id) // empty')"
   [ -z "$run_id" ] || break
   sleep 5
 done
 test -n "$run_id" || { echo "labels bootstrap run did not appear" >&2; false; }
 gh run watch "$run_id" --repo "$repo" --exit-status
 ```
+
+**The resolver discriminates on `actor.login`, and nothing weaker does.**
+The trigger job dispatches the sweep too, so a repository with any traffic
+at all has other `workflow_dispatch` runs of this same workflow landing in
+the same window. Measured on a trafficked board on 2026-08-27: of 100
+`workflow_dispatch` runs that day, 98 were the trigger job's and 2 the
+operator's. `--event workflow_dispatch … --limit 1` therefore takes
+whichever run is newest and reports its conclusion as yours, and `gh run
+list -u <login>` does not narrow it either — `-u` filters
+`triggering_actor`, which is the operator's login on the trigger job's
+dispatches as well. Only `actor.login` separates the two, and only the REST
+representation carries it: `gh run list --json` has no actor member to
+select (#505).
 
 Do not treat six familiar-looking labels as proof that the dispatch ran.
 Verify the repository contains every core row declared at the pinned ref:
