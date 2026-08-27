@@ -202,7 +202,15 @@ missing_core_labels_warning() { # $1 = declared rows, $2 = repo label names
     fi
   done <<<"$rows"
   if [ -n "$missing" ]; then
-    echo "::warning::labels: missing core label(s): $missing; bump the ceremony pin, then re-dispatch workflow_dispatch to bootstrap the taxonomy"
+    # Message only; the logic above is #472's and unchanged. The first
+    # wording led with the pin, and on crew the operator's pin was right and
+    # both presses had been evicted from the shared sweep queue — cancelled
+    # with steps: 0 — so the nag sent a correct pin off to be investigated
+    # twice and never named the thing that had actually happened. Same
+    # demotion the every-open-PR-unreadable warning above got: lead with the
+    # act that fixes it, keep the pin hint as one conditional candidate, and
+    # point at the press that reports its own outcome (#505).
+    echo "::warning::labels: missing core label(s): $missing; re-dispatch workflow_dispatch with bootstrap=yes and read that run's conclusion — a press evicted from the shared sweep queue is cancelled with no steps and installs nothing, so press again (bump the ceremony pin first only if it is behind); the verified press is in ceremony's docs/CONSUMERS.md, \"A bootstrap press that reports whether it ran\""
   fi
 }
 
