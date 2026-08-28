@@ -86,11 +86,29 @@ SKIPPED_ISSUES=""
 LOST_COUNT=0
 LOST_ISSUES=""
 
-# A per-issue pass is ATOMIC: it commits its whole effect or none of it
-# (#247 D1). Inside reconcile_issue_pass's subshell, `run` and `log` do not
+# A per-issue pass DERIVES NOTHING IT HAS NOT COMMITTED, and commits only at
+# the end. Inside reconcile_issue_pass's subshell, `run` and `log` do not
 # act — they append here, and commit_staged_effects replays them in order
 # once the pass has completed. Everywhere else (the arrival path, the sweep's
 # own lines) they act immediately, as they always did.
+#
+# The guarantee has two halves, and they are not the same guarantee:
+#
+#   BEFORE the commit, the pass is all-or-nothing (#247 D1). Every read,
+#   every skip, every crash happens with the buffer unplayed, so ending the
+#   pass at any of them discards it whole and the board is untouched.
+#
+#   AT the commit, the pass may land PARTIALLY (#519 D4). Writes apply in
+#   staging order; one that fails neither stops the loop nor rolls back the
+#   ones before it, because several of these effects have no inverse and a
+#   rollback turns one silent loss into two. What #519 requires is not that
+#   this be prevented but that it be DISCLOSED: the failing act is named
+#   where it would have landed, counted per issue, and counted again in the
+#   run's tail.
+#
+# So "atomic" is the wrong word for the whole pass and the right one for
+# everything up to commit_staged_effects. A change here owes the first half
+# absolutely; the second half it owes the report.
 #
 # This is the ordering invariant itself, not a fix for the two sites that
 # happened to violate it: a mutation reached before a later guarded read is
@@ -1867,9 +1885,15 @@ reconcile_issue_pass() { # $1 = issue — one issue's whole pass, in its own sub
   # D2). Removing it would revive errexit and lose #91. Explicit per-read
   # checks are the mechanism instead, and each one exits with ISSUEFLOW_SKIP.
   #
-  # What the subshell IS, since #247's first round, is the atomicity
-  # boundary: the staged effects live in it, so ending it — by a skip, or by
-  # a crash — discards them, and no partial pass can ever reach the board.
+  # What the subshell IS, since #247's first round, is the PRE-COMMIT
+  # boundary: the staged effects live in it, so ending it before the commit —
+  # by a skip, or by a crash — discards them whole and the board never hears
+  # of the pass. That is the half of #247 D1 this file still owes absolutely.
+  # It is not a promise about the commit itself: commit_staged_effects applies
+  # writes one by one and continues past a failure, so a pass that reaches it
+  # can land partially. Prevented is exactly what that is not — #519 D4 asks
+  # for it to be reported, which is what ISSUEFLOW_WRITE_FAILED and the tail
+  # below are for.
   local n="$1" status=0
   (
     # Everything below stages rather than acts, and commits at the bottom —
