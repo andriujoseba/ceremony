@@ -75,6 +75,15 @@ ISSUEFLOW_SKIP=3
 # others. #247 D4 made the skip and crash lines byte-identical-but-separate on
 # purpose, and folding a third condition into either would hide it behind one
 # of them (#519 D2).
+#
+# 4 is also one of `gh`'s own exit codes (an auth error), and reconcile_issue
+# propagates a crashing command's status with `|| exit $?` — so a `gh` that
+# dies with 4 outside the commit would be counted here as a lost write. That
+# collision is the shape ISSUEFLOW_SKIP has carried since #247 D4 and is
+# accepted for the same reason, but it is legible rather than silent: a real
+# loss always emits its `N of M board writes did not land` line before
+# returning this status, so a 4 arriving with no such line under it is the
+# tell that it came from a crash and not from the commit.
 ISSUEFLOW_WRITE_FAILED=4
 # Set by reconcile_issue_pass, read once by main for the D6 tail.
 SKIPPED_COUNT=0

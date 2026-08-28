@@ -4336,4 +4336,31 @@ check "every issue mutation on this surface goes through run()" 0 "" \
 check "...and the pin sees the call sites it is guarding" 0 "" \
   test "$(mutation_calls | wc -l)" -ge 8
 
+# The same shape for D5's cut. staged_write_act stops the rendered act at the
+# literal word `--body`, which holds only while every payload-bearing call
+# site spells the option that way: a future `--body=…` or `--body-file` would
+# carry its payload past the break and into the run log, bounded by nothing
+# but the 200-character belt. Every call site is compliant today, so the pin
+# passes for a true reason rather than a lucky one — and it is here rather
+# than left to review for the reason the ordering invariant above is, that
+# it has to hold for compositions nobody has written yet.
+# Read off the same call sites the pin above enumerates, so the two cannot
+# drift: whatever counts as a mutation there is what is inspected for its
+# payload option here.
+payload_options() {
+  mutation_calls | grep -oE -- '--body[^[:space:]"]*' | sort -u || true
+}
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "every staged payload option is the bare word --body" 0 "" \
+  bash -c 'while IFS= read -r opt; do
+    [ -n "$opt" ] || continue
+    [ "$opt" = "--body" ] && continue
+    printf "a payload option the D5 cut cannot see: %s\n" "$opt"; exit 1
+  done <<<"$1"' _ "$(payload_options)"
+# Bracketed, not matched: a check that the output CONTAINS `--body` passes on
+# a file that also carries `--body-file`, which is the case the pin exists for.
+# shellcheck disable=SC2016 # positional parameters belong to bash -c
+check "...and the pin sees the option it is guarding, and only it" 0 "" \
+  bash -c 'test "$1" = "--body"' _ "$(payload_options)"
+
 summary
