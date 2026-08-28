@@ -183,7 +183,10 @@ Every issue you mint carries, in this order:
   builder's reach is a defect in the issue, and the body is yours.**
   Reclassify it where it stands, in the same tick — a comment that answers
   the builder while the body still asks for proof no builder can produce
-  leaves the next reader the same issue (#149).
+  leaves the next reader the same issue (#149). Reclassifying it
+  operator-owned is what makes the issue mixed, so the relocation above is
+  the rest of the same repair and not a later one; the builder's claim waits
+  on it and on nothing else (#488).
 - **Test plan**: what proves it, including the cases that must fail.
 - **Dependencies**: `Blocked by #N` / `Blocks #N`, and `Part of #E` when an
   epic organizes it. Name a cross-repo dependency the same way with its
