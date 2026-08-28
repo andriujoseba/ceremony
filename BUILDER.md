@@ -305,11 +305,21 @@ checks are pending or red (#236).
 
 ## The round cap
 
-**A PR carries at most five rounds.** At the **close of round 5** the branch
+**A PR carries at most five rounds.** The cap fires at the event that would
+open a sixth round on the same PR: the close of a fifth round with work owed,
+or, after a passing fifth round, the next push to the head. The branch then
 continues in a **successor** PR and the predecessor **closes** as the ledger
-of how the work got there, every comment, verdict and ruling intact. Round six
-never opens on the same PR. Five is ruled, not derived from any measurement,
-and no build re-derives it (#420).
+of how the work got there, every comment, verdict and ruling intact.
+Round six never opens on the same PR.
+Five is ruled, not derived from any measurement, and no build re-derives it (#420).
+
+A fifth round that passes does not cut at its close: the handoff runs, the
+human's review is requested, `state:needs-human` is set, the handoff comment
+posts, and the claim parks. If the human merges, no cut is ever paid. If the
+human returns it and the answer requires a push, that push fires the cut before
+the panel is re-requested, and the successor's round 1 answers the human. A
+no-push return remains the narrow case governed by [The review
+round](#the-review-round)'s existing no-head-move clause; it fires no cut.
 
 **The cap is a consensus-surface rule that happens to bound bytes, and it is
 stated in that order**: the longer a PR runs the harder it is to bring the
@@ -322,12 +332,17 @@ to choose a numbering. Where the PR sits in the chain is what the issue's
 ordered `## Pull requests` list records ([TRIAGE.md](TRIAGE.md)), not the
 round number.
 
-**You perform the cut, at the round close.** Every act in it is an authoring
+**You perform the cut, at its trigger.** Every act in it is an authoring
 act you already perform, and nothing else performs any of it: nothing counts
 rounds for you, nothing enforces the cut, and nothing stops a sixth round on
 one PR. Where an engine does count and says the boundary is here, that is
 instruction and never performance — the procedure below is executable by a
 builder counting rounds by hand, and that is how it is written.
+
+The following steps serve a fifth-round close with work owed. After a passing
+fifth-round handoff, they instead serve the push that would open round six.
+In that case the cut is reachable only after the push has already spent the
+approvals, so step 2's rationale remains true.
 
 At the close of round 5, in this order:
 
@@ -373,6 +388,7 @@ cut already spends the approvals, and cutting mid-round spends a round's work
 on top of them, which is why the boundary is a round boundary and not a byte
 count. It is not a failure and carries no stigma, though a chain reaching a
 **second** cut is sizing evidence for the next mint ([TRIAGE.md](TRIAGE.md)).
+A fifth round that passes is not a cut trigger.
 
 ## The ruling ask
 
@@ -444,7 +460,8 @@ section, and handing off over one hands the human a record saying nothing
 takes it back if the PR is not mergeable-right-now. Then stop: the PR is
 the human's, and the claim parks as shape 4 (Picking, above), that comment
 its declaration and your slot free. Address what comes back
-(`state:addressing`) and re-hand-off the same way.
+(`state:addressing`) and re-hand-off the same way; at a passed round 5, a push
+fires the cut first and the re-handoff is on the successor.
 
 **A taken-back handoff is answered by clearing the blocker, never by
 re-setting the label**: the take-back says the precondition was not met, so
