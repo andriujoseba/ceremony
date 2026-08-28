@@ -216,7 +216,12 @@ Every issue you mint carries, in this order:
   it, and the builder's cut comment on the issue is your trigger to append the
   successor. An issue whose work fitted one PR grows no such section.
 - **Labels**: type (`bug`/`enhancement`/`documentation`), `scope:*`, and
-  exactly one of `ready` / `blocked` (see [LABELS.md](LABELS.md)).
+  exactly one of `ready` / `blocked` (see [LABELS.md](LABELS.md)). Repairing
+  any governed board's own missing label taxonomy is the exception: it is
+  operator-owned and passes no mint door, because GitHub's `triage` role can
+  neither create labels nor dispatch workflows. Name the missing rows and the
+  verified `workflow_dispatch` press with `bootstrap=yes` to the operator,
+  then stop and mint nothing (#524).
 
 The bar, stated once: **a competent builder who has read only this issue and
 the repo can succeed.** The release-ceremony epic and its children
