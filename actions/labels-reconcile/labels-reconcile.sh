@@ -973,7 +973,7 @@ stale|B60205|No activity for 48h — needs a poke (sweep-managed)
 blocked|6A737D|Waiting on another PR or issue to land first
 offsite|CFD3D7|Issue deliverable is a PR in another repository — claim clock paused
 needs-ruling|D4C5F9|A human decision is pending — question, options and a recommendation are in the comment
-operator|A371F7|Operator-owned; the body names the evidence surface, the command, and the wake condition
+operator|A371F7|Operator-owned; the body names its evidence surface, command or observation, and wake condition
 rerun-owed|D4C5F9|The head is red on a rerun no agent may start — a human owes the button, not the builder a fix
 attention|D93F0B|A demand is parked here for the assignee: pick up the thread, ack by removing this label
 release|0E8A16|Release flow and version/packaging work

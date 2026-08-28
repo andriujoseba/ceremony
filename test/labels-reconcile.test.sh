@@ -346,7 +346,7 @@ expect "post-merge core row is byte-exact" \
   "post-merge|006B75|Refs-linked PR merged; post-merge criteria remain and triage owns completion" \
   "$(grep '^post-merge|' <<<"$core_rows")"
 expect "operator core row is byte-exact" \
-  "operator|A371F7|Operator-owned; the body names the evidence surface, the command, and the wake condition" \
+  "operator|A371F7|Operator-owned; the body names its evidence surface, command or observation, and wake condition" \
   "$(grep '^operator|' <<<"$core_rows")"
 ready_core="$(grep '^ready|' <<<"$core_rows" | cut -d'|' -f3-)"
 # shellcheck disable=SC2016 # backticks are LABELS.md literals
@@ -1639,7 +1639,7 @@ expect "...and the recorded upsert set is unchanged from today's" \
   "$expected_upserts" \
   "$(sed -n 's/^gh label create \([^ ]*\) .*/\1/p' "$BOOT/happy")"
 expect "the bootstrap upserts operator from the central registry" 1 \
-  "$(grep -cF 'gh label create operator -R owner/repo --color A371F7 --description Operator-owned; the body names the evidence surface, the command, and the wake condition --force' "$BOOT/happy")"
+  "$(grep -cF 'gh label create operator -R owner/repo --color A371F7 --description Operator-owned; the body names its evidence surface, command or observation, and wake condition --force' "$BOOT/happy")"
 
 # -- a missing label is success: gh exits non-zero with not-found, and the
 #    guard keeps that from aborting the dispatch. Red without the guard.
