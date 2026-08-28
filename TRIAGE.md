@@ -186,6 +186,20 @@ Every issue you mint carries, in this order:
   nothing anyone can check, and a summary that was false when written is what
   this requirement comes from (#488).
 
+  **Two or more relocations may share one operator-owned issue when they name
+  the same evidence surface and the same command or observation.** This is a
+  permission, not a requirement: triage may still mint one issue per
+  relocation where that reads better. Relocations naming different evidence
+  surfaces never share an issue. The shared issue names every originating
+  issue, enumerates the criteria it carries per originating issue, and gates
+  them all; each originating issue still records which criteria it shed. The
+  shared issue remains all-operator-owned and takes `ready` + `operator`
+  unchanged (#532).
+
+  **The same command means one invocation on the same surface produces every
+  piece of evidence.** Two different commands run in one sitting on the same
+  host do not qualify: sharing a schedule is not sharing a command (#532).
+
   **The relocated issue is all-operator-owned at its own mint**, so it takes
   `ready` + `operator` under the rule above, and its body names the evidence
   surface, the command or observation, and the wake condition. This
@@ -236,8 +250,10 @@ Every issue you mint carries, in this order:
   `builder-owned issue → operator-owned issue → the gated issue`, and the
   gated issue declares **the operator-owned issue alone**: it reaches the
   builder-owned one through it, by the transitivity the front-row insertion
-  already relies on. Declaring both is not wrong, but the single edge is the
-  house form, and fanning the chain is the thing to avoid (#488).
+  already relies on. A shared operator-owned middle node is legitimate: each
+  gated issue declares that shared node alone and reaches its own builder-owned
+  predecessor through it. Declaring both is not wrong, but the single edge is
+  the house form, and fanning the chain is the thing to avoid (#488, #532).
 
   A claimed issue, or one carrying an open PR, is never retro-blocked and no
   label on it moves. The front-row issue still lands first, but the collision
