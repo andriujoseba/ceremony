@@ -424,7 +424,26 @@ hard block, as published artifacts, secrets, prod and org policy are by
 construction (#50 D12–D13).
 
 The ladder is anchored to the current episode's `needs-ruling` **`labeled`
-event**, not its `Default:` deadline or the last activity (#50 D13–D14):
+event**, not its `Default:` deadline or the last activity (#50 D13–D14). A
+discussion carries neither that label nor that event, so a discussion-borne
+ask carries no ladder and no rung ever falls due against it (#526).
+
+**On a flag borne by an issue whose escalation reads `Default: none — hard
+block`, the 24h and past-24h rungs do not fire.** The flag waits for the
+human, and no timer replaces them. What the setter owes at each of those two
+rungs instead is a **published re-read** — the default read again against
+what has landed, and what doubt stands — which is the 12h rung's own act
+extended to the two below it, so the carve-out adds a duty rather than
+removing one. The reason is that the late rungs' safety is the merge gate,
+in their own words *"the human still gates the merge"*: a pick made on a PR
+gets a second look before anything lands, an issue has no second look, and
+where the pick would tick an acceptance criterion the tick is the terminal
+act. Three things are **not** carved out — a **PR-borne** flag runs the whole
+ladder as written, *"as a PR"* and merge gate included; an **issue-borne**
+flag carrying a **timed, reversible** `Default:` still expires under the
+0–12h rung, the carve-out being keyed on the hard block and never on the
+surface alone; and the **0–12h and 12h rungs are unchanged on every
+surface**, being surface-agnostic already (#526). The rungs:
 
 - **0–12h:** proceed when a still-clear, reversible default expires, saying
   out loud that you did; a hard block waits.
@@ -432,10 +451,13 @@ event**, not its `Default:` deadline or the last activity (#50 D13–D14):
   landed, and where doubt has appeared, make it a hard block.
 - **at 24h:** proceed regardless, **as a PR**: pick an option and say in the
   body which way you went and what doubt remains. Nothing merges by this;
-  the human still gates the merge.
+  the human still gates the merge. This rung does not fire on an issue-borne
+  flag reading `Default: none — hard block`: publish the re-read instead.
 - **past 24h:** hand the choice to triage, which picks the option, records
   it as a decision, and stays accountable; the operator can overturn it at
-  merge.
+  merge. This rung does not fire on an issue-borne flag reading `Default:
+  none — hard block` either: the flag waits for the human, and the re-read
+  is what is owed.
 
 A re-flag starts a fresh ladder, which applies whatever `Default:` says,
 hard block included, and an active back-and-forth still climbs it — unlike
