@@ -68,9 +68,23 @@ SELF_WORKFLOW="${SELF_WORKFLOW:-${GITHUB_WORKFLOW:-}}"
 # a deliberate skip is counted rather than reported as a crash — and so the
 # existing crash handler still names a genuine one.
 ISSUEFLOW_SKIP=3
+# The status a per-issue subshell exits with when its pass ran to the end and
+# a staged board write did not land (#519 D3). A third distinguished status
+# and not a reuse of either neighbour: a skip touched nothing, a crash never
+# reached the commit, and this one applied some of its effects and lost
+# others. #247 D4 made the skip and crash lines byte-identical-but-separate on
+# purpose, and folding a third condition into either would hide it behind one
+# of them (#519 D2).
+ISSUEFLOW_WRITE_FAILED=4
 # Set by reconcile_issue_pass, read once by main for the D6 tail.
 SKIPPED_COUNT=0
 SKIPPED_ISSUES=""
+# The same, for the passes that lost a write (#519 D2). Separate counters
+# because the two facts are independent: an issue is skipped OR lossy, never
+# both, and a reader needs to tell a board that could not be read from one
+# that could not be written.
+LOST_COUNT=0
+LOST_ISSUES=""
 
 # A per-issue pass is ATOMIC: it commits its whole effect or none of it
 # (#247 D1). Inside reconcile_issue_pass's subshell, `run` and `log` do not
@@ -102,24 +116,70 @@ stage() { # $1 = LOG|WRITE, rest = the effect's argv, kept exact by the count
 log() { if [ "$STAGING" = true ]; then stage LOG "$@"; else emit "$@"; fi; }
 run() { if [ "$STAGING" = true ]; then stage WRITE "$@"; else apply "$@"; fi; }
 
-commit_staged_effects() {
+staged_write_act() { # the failed write's argv → the one bounded line naming it
+  # The act, and never the payload (#519 D5). Every staged write on this
+  # surface is `gh issue edit` or `gh issue comment`, and the only argument
+  # carrying a payload is `--body`, whose value is multi-line Markdown — a
+  # nudge, a warning, a whole reclaim notice. Echoing it into a run log would
+  # bury the diagnostic inside the comment it failed to post, so the argv is
+  # cut at `--body` and nothing after it is rendered. What survives is the
+  # command, the issue, the repo and the label flags: which write was lost,
+  # which is the question a reader of the log has.
+  #
+  # Cut at the option and not at "anything that looks long", because the
+  # bound has to hold for a payload that happens to be short. The length cap
+  # after it is the belt: a label name is not supposed to be enormous, and a
+  # diagnostic line is not the place to discover that it was.
+  local out='' word
+  for word in "$@"; do
+    [ "$word" = --body ] && break
+    out="${out:+$out }$word"
+  done
+  out="${out//$'\n'/ }"
+  if [ "${#out}" -gt 200 ]; then printf '%.200s…\n' "$out"; else printf '%s\n' "$out"; fi
+}
+
+commit_staged_effects() { # $1 = the issue this pass is for
   # In staging order, so a completed pass's log and writes read exactly as
   # they did when each acted at its own call site. The `>/dev/null` is the one
   # every `run` call site already applies: a redirection cannot travel with
   # the argv, so it is applied here instead — uniformly, because on this
   # surface every staged write has it.
-  local i=0 argc
+  #
+  # Each applied write's status is TESTED (#519 D3). It used to be discarded,
+  # and the last statement was the index bump, so the function returned 0
+  # whatever happened inside it — and since the call site tests the subshell's
+  # status with `||`, a lost board write reached neither the skip counter nor
+  # the crash line. The only trace it left was the failing command's own
+  # stderr, under a `success` and a `reconciled.`
+  #
+  # A failure does NOT stop the loop and nothing is rolled back (#519 D4).
+  # Several of these effects have no inverse — un-posting `ensure_comment`'s
+  # comment is a second write that can fail in turn — so a rollback converts
+  # one silent loss into two; and one failing act must not silently cancel the
+  # unrelated ones staged after it. What changes is that the pass says so.
+  local i=0 argc failed=0 writes=0
   STAGING=false
   while [ "$i" -lt "${#STAGED_EFFECTS[@]}" ]; do
     argc="${STAGED_EFFECTS[i]}"
     if [ "${STAGED_EFFECTS[i + 1]}" = LOG ]; then
       emit "${STAGED_EFFECTS[@]:i + 2:argc - 1}"
     else
-      apply "${STAGED_EFFECTS[@]:i + 2:argc - 1}" >/dev/null
+      writes=$((writes + 1))
+      if ! apply "${STAGED_EFFECTS[@]:i + 2:argc - 1}" >/dev/null; then
+        failed=$((failed + 1))
+        # In staging order like everything else, so the lost write is named
+        # where it would have landed rather than collected at the bottom.
+        emit "#$1: board write failed — $(staged_write_act "${STAGED_EFFECTS[@]:i + 2:argc - 1}")"
+      fi
     fi
     i=$((i + 1 + argc))
   done
   STAGED_EFFECTS=()
+  [ "$failed" -eq 0 ] || {
+    emit "#$1: $failed of $writes board writes did not land; the rest were applied"
+    return "$ISSUEFLOW_WRITE_FAILED"
+  }
 }
 
 skip_issue() { # $1 = issue, $2 = the whole reason clause — ends this issue's pass
@@ -1175,6 +1235,20 @@ skipped_tail() { # $1 = skip count, $2 = the issue numbers → the D6 line, or n
   fi
 }
 
+lost_writes_tail() { # $1 = lossy issue count, $2 = the issue numbers → the line, or nothing
+  # The write side of the line above, in the same register and for the same
+  # reason (#519 D2): a reader of a job log's tail can tell a clean pass from
+  # a lossy one without reading stderr. `reconciled.` stays byte-identical on
+  # a clean pass and this line does not exist there, so the steady state every
+  # consumer reads hourly is unchanged.
+  [ "$1" -gt 0 ] || return 0
+  if [ "$1" -eq 1 ]; then
+    printf '%s issue lost a board write this pass: %s\n' "$1" "$2"
+  else
+    printf '%s issues lost board writes this pass: %s\n' "$1" "$2"
+  fi
+}
+
 # API edge. Marker comments make warnings and nudges idempotent across sweeps.
 ensure_comment() { # $1 issue, $2 marker, $3 message
   local n="$1" marker="$2" message="$3"
@@ -1811,11 +1885,20 @@ reconcile_issue_pass() { # $1 = issue — one issue's whole pass, in its own sub
     jq -e 'has("pull_request") | not' <<<"$ISSUE_JSON" >/dev/null || exit 0
     ISSUE_LABELS="$(jq -r '.labels[].name' <<<"$ISSUE_JSON")"
     reconcile_issue "$n" || exit $?
-    commit_staged_effects
+    commit_staged_effects "$n"
   ) || status=$?
   if [ "$status" -eq "$ISSUEFLOW_SKIP" ]; then
     SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
     SKIPPED_ISSUES="${SKIPPED_ISSUES:+$SKIPPED_ISSUES }#$n"
+  elif [ "$status" -eq "$ISSUEFLOW_WRITE_FAILED" ]; then
+    # The act and the per-issue count are already named, in staging order,
+    # by the commit inside the subshell — which is where the argv lives and
+    # the only place it can be. What crosses the boundary is the one fact
+    # main needs for the tail: this issue lost a write. The status is a
+    # third distinguished one, so neither the skip counter nor the crash
+    # line below fires, and both keep their existing text (#519 D2).
+    LOST_COUNT=$((LOST_COUNT + 1))
+    LOST_ISSUES="${LOST_ISSUES:+$LOST_ISSUES }#$n"
   elif [ "$status" -ne 0 ]; then
     # Byte-identical, and still owed: a skip is deliberate, a crash is not,
     # and folding the two together would hide one behind the other (D4).
@@ -2080,6 +2163,13 @@ main() {
   # both steered away from on the PR surface. This line is what buys back the
   # auditability that costs.
   tail_line="$(skipped_tail "$SKIPPED_COUNT" "$SKIPPED_ISSUES")"
+  [ -z "$tail_line" ] || log "$tail_line"
+  # The same for a pass that reached the board and lost a write (#519 D2).
+  # The exit status is untouched by it: D1 preserves #95 and #101 whole, and
+  # this issue is about the report and never about the code the job exits
+  # with. A separate line rather than a clause on the one above, because the
+  # two facts are independent and a pass can carry both.
+  tail_line="$(lost_writes_tail "$LOST_COUNT" "$LOST_ISSUES")"
   [ -z "$tail_line" ] || log "$tail_line"
 }
 
