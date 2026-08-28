@@ -206,7 +206,7 @@ EOF
           printf 'undeclared scope path: %s\n' "$path"
           return 1
         fi
-      done < <(find "$tree/$directory" -type f | sort)
+      done < <(find "$tree/$directory" -maxdepth 1 -type f | sort)
     done
   }
 
