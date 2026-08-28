@@ -192,8 +192,9 @@ Every issue you mint carries, in this order:
   relocation where that reads better. Relocations naming different evidence
   surfaces never share an issue. The shared issue names every originating
   issue, enumerates the criteria it carries per originating issue, and gates
-  them all; each originating issue still records which criteria it shed
-  (#532).
+  them all; each originating issue still records which criteria it shed. The
+  shared issue remains all-operator-owned and takes `ready` + `operator`
+  unchanged (#532).
 
   **The same command means one invocation on the same surface produces every
   piece of evidence.** Two different commands run in one sitting on the same
