@@ -221,7 +221,7 @@ Every issue you mint carries, in this order:
   operator-owned and passes no mint door, because GitHub's `triage` role can
   neither create labels nor dispatch workflows. Name the missing rows and the
   verified `workflow_dispatch` press with `bootstrap=yes` to the operator,
-  then stop and mint nothing.
+  then stop and mint nothing (#524).
 
 The bar, stated once: **a competent builder who has read only this issue and
 the repo can succeed.** The release-ceremony epic and its children

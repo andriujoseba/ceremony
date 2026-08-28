@@ -53,7 +53,7 @@ every push, and when the marks cannot be read at all (#479).
 | `blocker:conflict` | `#B60205` | does not merge — the builder owes a **rebase** |
 | `blocker:ci-red` | `#B60205` | a check failed — the builder owes a **fix**, which a rebase will not provide. Not asserted at a head carrying `rerun-owed`, where the builder owes nothing (#423) |
 | `blocker:unrequested` | `#E99695` | this head has no verdict from somebody, and nobody was asked |
-| `blocker:drill-pending` | `#B60205` | a `release` PR whose version has no `drills/X.Y.Z.md` record — correct but unevidenced (an operator-created instance of the taxonomy-repair rule under Maintenance) |
+| `blocker:drill-pending` | `#B60205` | a `release` PR whose version has no `drills/X.Y.Z.md` record — correct but unevidenced (operator-created label; the bot bootstrap 403s on it — see Maintenance) |
 
 States answer *whose ball*; blockers answer *what's in the way*. They are
 separate axes because the single-label version kept lying — independent facts
@@ -362,7 +362,8 @@ grants neither label creation nor workflow dispatch, so no triage agent can
 perform the repair. The operator presses `workflow_dispatch` with
 `bootstrap=yes` and reads that run's conclusion, bumping the ceremony pin
 first only when a missing row is newer than the pin, as documented in
-[A bootstrap press that reports whether it ran](docs/CONSUMERS.md#a-bootstrap-press-that-reports-whether-it-ran).
+[A bootstrap press that reports whether it ran](https://github.com/heavy-duty/ceremony/blob/main/docs/CONSUMERS.md#a-bootstrap-press-that-reports-whether-it-ran)
+(#524).
 The same workflow reconciles issue-flow labels on issue events and during the
 scheduled sweep. Default GitHub labels (`duplicate`, `invalid`, `question`,
 `wontfix`, `help wanted`, `good first issue`) are deleted at bootstrap — a
