@@ -424,8 +424,27 @@ iso_at() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 GH_STUB_STDERR="gh: We couldn't respond to your request in time. (HTTP 504)"
 GH_STUB_ERROR_BODY='{"message":"We could not respond to your request in time.","documentation_url":"https://docs.github.com/rest"}'
 export GH_STUB_STDERR # the PATH-stubbed gh of the executable runs reads it too
+# The write-failure sentinel the PATH stub reads (#519). Exported empty so the
+# per-call `GH_STUB_WRITE_FAILS=… sweep_run` form below reaches the
+# subprocess, which is how GH_STUB_STDERR is already overridden per call.
+GH_STUB_WRITE_FAILS=""
+export GH_STUB_WRITE_FAILS
 
 issue_stub_gh() {
+  # A board write that fails the way the real one does (#519): the glob in
+  # ISSUE_STUB_WRITE_FAILS is matched against the whole `gh issue …` argv, and
+  # a match speaks on stderr and returns non-zero WITHOUT recording the write
+  # — which is exactly what a lost write looks like from the reconciler's
+  # side, and what the old commit loop discarded. Reads are never failed here;
+  # `.http-error` and `.error` are the read side's sentinels and stay theirs.
+  # Unset by default, so every fixture written before this one is untouched.
+  if [ "$1" != api ] && [ -n "${ISSUE_STUB_WRITE_FAILS:-}" ]; then
+    # shellcheck disable=SC2053 # the sentinel is a glob on purpose
+    if [[ "$*" == $ISSUE_STUB_WRITE_FAILS ]]; then
+      printf '%s\n' "$GH_STUB_STDERR" >&2
+      return 1
+    fi
+  fi
   if [ "$1" = api ]; then
     shift
     local jqexpr="" endpoint="" file
@@ -1640,6 +1659,64 @@ check "several skipped issues are all named" 0 \
   "2 issues skipped this pass on unreadable facts: #12 #40" \
   skipped_tail 2 "#12 #40"
 
+# -- the lost-write report's two pure strings (#519 D2, D5) ------------------
+# Three readers for the rows below. They run in THIS shell rather than behind
+# `bash -c` on purpose: a `bash -c` subprocess cannot see a sourced function,
+# so a row calling one through it measures an empty string and passes on a
+# renderer that was never invoked.
+line_count() { printf '%s\n' "$1" | wc -l | tr -d ' '; }
+emitted_line_count() { printf '%s\n' "$1" | grep -c '^issueflow:'; }
+first_emitted_line() { printf '%s\n' "$1" | grep '^issueflow:' | head -n1; }
+# The act renderer first. Every staged write on this surface is `gh issue
+# edit` or `gh issue comment`, and `--body` is the only argument carrying a
+# payload — so the rule is "cut at --body", not "shorten what looks long".
+check "an edit's act renders whole: command, issue, repo and label flags" 0 \
+  "gh issue edit 70 -R owner/repo --add-label needs-triage" \
+  staged_write_act gh issue edit 70 -R owner/repo --add-label needs-triage
+check "a comment's act stops at --body" 0 "gh issue comment 70 -R owner/repo" \
+  staged_write_act gh issue comment 70 -R owner/repo --body "a body"
+# The criterion is that the body is ABSENT, which a positive check on the
+# prefix cannot assert: the prefix is present either way.
+check_absent "...and the body itself never reaches the line" 0 "a body" \
+  staged_write_act gh issue comment 70 -R owner/repo --body "a body"
+act_multiline="$(staged_write_act gh issue comment 70 -R owner/repo \
+  --body "$(printf '<!-- issueflow:m -->\nline one\nline two\n')")"
+check "a multi-line body leaves the act one line" 0 "1" line_count "$act_multiline"
+check_absent "...and no line of it appears in the act" 0 "line two" \
+  printf '%s\n' "$act_multiline"
+# The belt behind the cut: a payload-free argv is still bounded, because "a
+# label name is short" is a fact about today's boards and not a guarantee.
+long_act="$(staged_write_act gh issue edit 70 -R owner/repo \
+  --add-label "$(printf 'L%.0s' {1..400})")"
+check "an over-long payload-free act truncates to 200 plus an ellipsis" 0 "" \
+  test "${#long_act}" -eq 201
+check "...and the truncated act still ends in the ellipsis" 0 "…" \
+  printf '%s\n' "${long_act: -1}"
+# A newline reaching the renderer through an argument that is not --body
+# would break the one-line-per-fact shape every reader of this log assumes.
+act_embedded_newline="$(staged_write_act gh issue edit 70 -R owner/repo \
+  --add-label "$(printf 'a\nb')")"
+check "a newline inside a rendered argument is flattened" 0 "1" \
+  line_count "$act_embedded_newline"
+check "...into the one line, with both halves still on it" 0 \
+  "gh issue edit 70 -R owner/repo --add-label a b" \
+  printf '%s\n' "$act_embedded_newline"
+
+# The tail, matching skipped_tail's shape because it is the same register.
+check "a pass that lost nothing adds no tail line" 0 "" \
+  test -z "$(lost_writes_tail 0 "")"
+check "one lossy issue is named in the singular" 0 \
+  "1 issue lost a board write this pass: #12" lost_writes_tail 1 "#12"
+check "several lossy issues are all named" 0 \
+  "2 issues lost board writes this pass: #12 #40" lost_writes_tail 2 "#12 #40"
+# The two tails are independent facts and must not read as one another: a
+# pass can be partly unreadable and partly unwritable, and a reader has to
+# tell which (D2).
+check_absent "the lossy tail never claims anything was skipped" 0 "skipped" \
+  lost_writes_tail 1 "#12"
+check_absent "...and the skipped tail never claims a write was lost" 0 "lost" \
+  skipped_tail 1 "#12"
+
 # -- the destroyed claim: a 504 on the comments read of a live claim ---------
 # created_at long ago, a comment seconds old, and the comments read fails. The
 # swallowed read dated the issue by created_at and reclaimed it, unassigning
@@ -1702,15 +1779,19 @@ printf '%s\n' '{"number":60,"labels":[{"name":"ready"}],"assignees":[]}' \
 printf '%s\n' '{"number":61,"labels":[{"name":"ready"}],"assignees":[]}' \
   >"$TMP/repos_owner_repo_issues_61.json"
 printf '%s\n' "$GH_STUB_ERROR_BODY" >"$TMP/repos_owner_repo_issues_61.json.http-error"
-pass_probe() { # $1 issue; $2 non-empty makes reconcile_issue crash
+pass_probe() { # $1 issue; $2 non-empty makes reconcile_issue crash; $3 write-fail glob
   (
     REPO=owner/repo
     gh() { issue_stub_gh "$@"; }
     [ -z "${2:-}" ] || reconcile_issue() { return 9; }
+    ISSUE_STUB_WRITE_FAILS="${3:-}"
     SKIPPED_COUNT=0
     SKIPPED_ISSUES=""
+    LOST_COUNT=0
+    LOST_ISSUES=""
     reconcile_issue_pass "$1"
-    printf 'rc=%s count=%s issues=%s\n' "$?" "$SKIPPED_COUNT" "$SKIPPED_ISSUES"
+    printf 'rc=%s count=%s issues=%s lost=%s lostissues=%s\n' \
+      "$?" "$SKIPPED_COUNT" "$SKIPPED_ISSUES" "$LOST_COUNT" "$LOST_ISSUES"
   )
 }
 printf '%s\n' '{"number":62,"created_at":"2026-01-01T00:00:00Z","labels":[{"name":"ready"},{"name":"operator"}],"assignees":[],"body":"Surface: host. Evidence: run probe. Wake: operator comment."}' \
@@ -1735,6 +1816,128 @@ check "a skipped issue is counted and named" 0 "count=1 issues=#61" pass_probe 6
 check "...and is not also reported as a crash" 1 "" \
   grep -q 'reconcile failed' <<<"$(pass_probe 61)"
 check "...leaving the loop free to continue" 0 "rc=0" pass_probe 61
+
+# -- a lost board write, at the commit that loses it (#519) ------------------
+# The commit is where the argv lives, so it is where the act can be named and
+# the only place the status exists to be observed. These rows drive it through
+# the real staging API — `ensure_comment` and `run` — rather than by hand, so
+# what is asserted is the shape a live pass actually produces.
+COMMIT_FIXTURE_BODY="$(printf '%s\n' \
+  'A staged comment body, on more than one line.' \
+  '' \
+  'The second paragraph is the thing that must never reach the run log.')"
+commit_probe() { # $1 = issue, $2 = write-fail glob (empty = every write lands)
+  (
+    REPO=owner/repo
+    # shellcheck disable=SC2317 # reached through the staged effects' gh calls
+    gh() { issue_stub_gh "$@"; }
+    ISSUE_STUB_WRITE_FAILS="${2:-}"
+    STAGING=true
+    STAGED_EFFECTS=()
+    ensure_comment "$1" write-status-fixture "$COMMIT_FIXTURE_BODY"
+    log "#$1: the log line staged between the two writes"
+    run gh issue edit "$1" -R "$REPO" --add-label ready >/dev/null
+    commit_staged_effects "$1"
+    printf 'rc=%s\n' "$?"
+  )
+}
+
+# The clean commit first, because it is the steady state every consumer reads
+# hourly and the criterion is that it did not move: the log line, both writes,
+# and not one byte more.
+: >"$TMP/issue-edits"
+clean_commit_out="$(commit_probe 90)"
+check "a commit whose writes all land returns 0" 0 "rc=0" \
+  printf '%s\n' "$clean_commit_out"
+check "...and still emits its staged log line" 0 \
+  "issueflow: #90: the log line staged between the two writes" \
+  printf '%s\n' "$clean_commit_out"
+check_absent "...and says nothing about a failed write" 0 "board write failed" \
+  printf '%s\n' "$clean_commit_out"
+check_absent "...nor about writes that did not land" 0 "did not land" \
+  printf '%s\n' "$clean_commit_out"
+# Byte-identity, not just absence of the new strings: a clean commit's whole
+# output is the one staged log line and nothing else.
+check "a clean commit's output is exactly its staged log line" 0 "1" \
+  emitted_line_count "$clean_commit_out"
+check "...and its edit landed on the board" 0 "" \
+  grep -qxF 'issue edit 90 -R owner/repo --add-label ready' "$TMP/issue-edits"
+
+# Now the defect's own case: the FIRST of two writes fails.
+: >"$TMP/issue-edits"
+lost_commit_out="$(commit_probe 91 'issue comment*')"
+check "a failed write is named by its act" 0 \
+  "issueflow: #91: board write failed — gh issue comment 91 -R owner/repo" \
+  printf '%s\n' "$lost_commit_out"
+check "...and counted against the writes the pass staged" 0 \
+  "issueflow: #91: 1 of 2 board writes did not land; the rest were applied" \
+  printf '%s\n' "$lost_commit_out"
+check "...and the commit reports it to its caller" 0 "rc=4" \
+  printf '%s\n' "$lost_commit_out"
+check "...with a status distinct from a deliberate skip's" 0 "" \
+  test "$ISSUEFLOW_WRITE_FAILED" -ne "$ISSUEFLOW_SKIP"
+check "...and distinct from a clean pass's" 0 "" \
+  test "$ISSUEFLOW_WRITE_FAILED" -ne 0
+# D5: the failing effect is a real ensure_comment call carrying a multi-line
+# body, and none of it may reach the log. Asserted line by line, because a
+# check on the first line alone passes on a report that spills the rest.
+check_absent "...without the staged comment body's first line" 0 \
+  'A staged comment body, on more than one line.' printf '%s\n' "$lost_commit_out"
+check_absent "...or its second paragraph" 0 \
+  'The second paragraph is the thing that must never reach the run log.' \
+  printf '%s\n' "$lost_commit_out"
+check_absent "...or the marker the body carries" 0 \
+  '<!-- issueflow:write-status-fixture -->' printf '%s\n' "$lost_commit_out"
+# D4: the effects staged AFTER the failing one are still applied — observed by
+# the later write landing, not by inspecting the loop.
+check "the log line staged after the failed write still speaks" 0 \
+  "issueflow: #91: the log line staged between the two writes" \
+  printf '%s\n' "$lost_commit_out"
+check "the write staged after the failed one still lands" 0 "" \
+  grep -qxF 'issue edit 91 -R owner/repo --add-label ready' "$TMP/issue-edits"
+# ...and nothing is rolled back: the failed comment is the only loss, and no
+# compensating write was attempted on the effects that did land.
+check "a partial commit attempts no rollback" 0 "1" \
+  line_count "$(cat "$TMP/issue-edits")"
+# The failing act is named where it would have landed, not collected at the
+# bottom: the report reads in staging order like every other line, so the
+# failure of the FIRST staged write is the first line the commit emits.
+check "the failure is reported in staging order" 0 \
+  "issueflow: #91: board write failed — gh issue comment 91 -R owner/repo" \
+  first_emitted_line "$lost_commit_out"
+
+# The whole pass around it: the status crosses the subshell, the counters
+# separate, and the two neighbouring lines keep their text (D1, D2).
+printf '%s\n' \
+  '{"number":63,"user":{"login":"triage-one"},"created_at":"2026-01-01T00:00:00Z","labels":[{"name":"enhancement"}],"assignees":[]}' \
+  >"$TMP/repos_owner_repo_issues_63.json"
+: >"$TMP/issue-edits"
+check "a pass whose write lands is unchanged" 0 "#63: needs-triage" pass_probe 63
+check_absent "...and reports no lost write" 0 "board write failed" pass_probe 63
+check "...counting neither a skip nor a loss" 0 "count=0 issues= lost=0 lostissues=" \
+  pass_probe 63
+: >"$TMP/issue-edits"
+check "a pass that loses its write names the act" 0 \
+  "issueflow: #63: board write failed — gh issue edit 63 -R owner/repo --add-label needs-triage" \
+  pass_probe 63 "" 'issue edit*'
+check "...counts it out of the subshell for the run summary" 0 \
+  "lost=1 lostissues=#63" pass_probe 63 "" 'issue edit*'
+# D1 is the whole point of the third status: the pass still returns 0, so the
+# loop reaches the next issue and the job stays green (#95, #101).
+check "...and the pass still returns 0" 0 "rc=0" pass_probe 63 "" 'issue edit*'
+check "...without counting the loss as a skip" 0 "count=0 issues=" \
+  pass_probe 63 "" 'issue edit*'
+# #247 D4 made the skip and crash lines byte-identical-but-separate on
+# purpose. A third condition folded into either would hide behind it.
+check_absent "...and never as the crash line" 0 "reconcile failed" \
+  pass_probe 63 "" 'issue edit*'
+check_absent "...and never as the skip line" 0 "skipped this pass" \
+  pass_probe 63 "" 'issue edit*'
+# The mirror: a skip and a crash must not start claiming a write was lost.
+check_absent "a skipped issue is not reported as a lost write" 0 "board write failed" \
+  pass_probe 61
+check_absent "...and a crash is not either" 0 "board write failed" pass_probe 60 crash
+check "...and neither is counted as one" 0 "lost=0 lostissues=" pass_probe 60 crash
 
 # ---------------------------------------------------------------------------
 # The arrival path, executed the way the action executes it (#91): four
@@ -1789,7 +1992,19 @@ if [ "$1" = api ]; then
   if [ -n "$jqexpr" ]; then jq -r "$jqexpr" <<<"$payload"; else printf '%s\n' "$payload"; fi
   exit 0
 fi
-if [ "$1" = issue ]; then printf '%s\n' "$*" >>"$GH_FIXTURES/edits"; exit 0; fi
+if [ "$1" = issue ]; then
+  # The write side's failure sentinel (#519), matching issue_stub_gh's: the
+  # glob in GH_STUB_WRITE_FAILS is tested against the whole argv, and a match
+  # fails the write without recording it. Unset by default.
+  if [ -n "${GH_STUB_WRITE_FAILS:-}" ]; then
+    # shellcheck disable=SC2053 # the sentinel is a glob on purpose
+    if [[ "$*" == $GH_STUB_WRITE_FAILS ]]; then
+      printf '%s\n' "${GH_STUB_STDERR:-}" >&2
+      exit 1
+    fi
+  fi
+  printf '%s\n' "$*" >>"$GH_FIXTURES/edits"; exit 0
+fi
 echo "gh stub: unexpected call: gh $*" >&2
 exit 97
 EOF
