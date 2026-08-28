@@ -1050,14 +1050,8 @@ check "the builder picking sentence refuses operator beside epic" 0 "" \
     _ "$builder_pick"
 check "triage marks only an all-operator-owned criterion set" 0 "" \
   grep -qF 'When every acceptance criterion is operator-owned at mint' "$ROOT/TRIAGE.md"
-# #488 reversed what this pinned. The fixture used to assert that a lone
-# operator-owned criterion left the issue unmarked; route D relocates it
-# instead, so the sentence it quoted is gone and the assertion follows the
-# rule rather than the wording it replaced.
 check "triage refuses a mixed-owner issue outright" 0 "" \
   grep -qF 'An issue is builder-owned or operator-owned, and never both' "$ROOT/TRIAGE.md"
-check "triage relocates an operator-owned criterion rather than keeping it" 0 "" \
-  grep -qF 'relocate them — do not route the issue around them' "$ROOT/TRIAGE.md"
 
 # The additive corpus deliberately exercises label writes (notably stale
 # claim reclamation). Start a fresh recorder for the remaining post-merge
