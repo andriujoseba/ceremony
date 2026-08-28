@@ -25,14 +25,22 @@
 # does) and was not in the rows — a wrong answer, not a gap. The sweep
 # workflow pair joins beside its trigger pair: the sweeps detached in #209
 # and took the reconcile jobs and the cron with them. Two asymmetries are
-# deliberate, not drift: the TESTS of the shared lib/ files take
-# scope:labels alone, because lib/ruling.sh and lib/read.sh wear
-# scope:release-flow only through the lib/** glob being kept whole and a
-# test file inherits no such glob; and there is still no test/** or
-# .github/scripts/** catch-all, because both directories span all four
-# scopes — a catch-all is the changelog.d/** defect again, 100% recall and
-# no locating power. The enumeration is the price of a test locating its
-# subject.
+# deliberate, not drift: the TESTS of the four shared files lib/read.sh,
+# lib/ruling.sh, lib/attention.sh and lib/checks.sh take scope:labels alone,
+# because those subjects wear scope:release-flow only through the lib/** glob
+# being kept whole and a test file inherits no such glob; there is still no
+# test/** or .github/scripts/** catch-all, because both directories span all
+# four scopes — a catch-all is the changelog.d/** defect again, 100% recall
+# and no locating power; and files in those two directories that locate no
+# one scope are declared below rather than left indistinguishable from an
+# omission. The enumeration is the price of a test locating its subject.
+#
+# scope-unmapped: begin
+# scope-unmapped: test/harness.sh | assertion plumbing shared by every test surface
+# scope-unmapped: test/run.sh | suite runner spanning every test surface
+# scope-unmapped: .github/scripts/shellcheck-all.sh | lint driver spanning the whole tree
+# scope-unmapped: .github/scripts/actionlint-all.sh | lint driver spanning every workflow surface
+# scope-unmapped: end
 scope:release-flow:
   - changed-files:
       - any-glob-to-any-file:
@@ -53,6 +61,10 @@ scope:release-flow:
           - test/changelog.test.sh
           - test/self-ref.test.sh
           - test/changelog-assemble.test.sh
+          - test/tag-classify.test.sh
+          # one test genuinely locates three subjects: the labels reusables,
+          # release reusable and consumer-doc contract (#518 D3)
+          - test/runner-input.test.sh
           - .github/scripts/release-path.sh
           - test/release-path.test.sh
           # the drill instrument and its guard (#484 D10). `drills/**` — the
@@ -123,6 +135,9 @@ scope:labels:
           - test/labels.test.sh
           - test/labels-reconcile.test.sh
           - test/labels-scope.test.sh
+          # one test genuinely locates three subjects: the labels reusables,
+          # release reusable and consumer-doc contract (#518 D3)
+          - test/runner-input.test.sh
           # tests of the shared lib/ files: scope:labels ALONE — a test
           # inherits no lib/** glob, so its row is the one scope its subject
           # actually locates (#302 D3)
@@ -142,3 +157,7 @@ scope:docs:
           - REVIEWER.md
           - TRIAGE.md
           - CONTRIBUTING.md
+          - test/doctrine-request.test.sh
+          # one test genuinely locates three subjects: the labels reusables,
+          # release reusable and consumer-doc contract (#518 D3)
+          - test/runner-input.test.sh

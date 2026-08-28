@@ -12,6 +12,46 @@ trap 'rm -rf "$TMP"' EXIT
 
 TAB="$(printf '\t')"
 
+declared_unmapped_paths() { # <labeler.yml> -> one deliberately unmapped path per line
+  awk '
+    $0 == "# scope-unmapped: begin" {
+      if (began) { bad = 1; exit }
+      began = 1
+      inside = 1
+      next
+    }
+    $0 == "# scope-unmapped: end" {
+      if (!inside) { bad = 1; exit }
+      inside = 0
+      ended = 1
+      next
+    }
+    inside && /^# scope-unmapped: [^ |]+ \| .+$/ {
+      path = $0
+      sub(/^# scope-unmapped: /, "", path)
+      sub(/ \|.*$/, "", path)
+      print path
+      count++
+      next
+    }
+    inside { bad = 1; exit }
+    END {
+      if (bad || !began || !ended || inside || count == 0) exit 6
+    }
+  ' "$1"
+}
+
+check "declare: the real unmapped block names all four deliberate silences" 0 \
+  "test/harness.sh
+test/run.sh
+.github/scripts/shellcheck-all.sh
+.github/scripts/actionlint-all.sh" \
+  declared_unmapped_paths "$ROOT/.github/labeler.yml"
+
+printf '%s\n' 'scope:docs:' >"$TMP/no-unmapped-block.yml"
+check "declare: a missing block fails instead of extracting an empty set" 6 "" \
+  declared_unmapped_paths "$TMP/no-unmapped-block.yml"
+
 # --- glob_to_regex: the minimatch subset the family actually uses ------------
 
 check "glob: ** crosses slashes" 0 '^lib/.*$' glob_to_regex 'lib/**'
@@ -152,6 +192,63 @@ EOF
     printf '[%s]\n' "$(derive_labels "$real_rows" "$1" | paste -sd, -)"
   }
   files() { printf '%s\n' "$@"; }
+  scoped_or_declared() { # <labeler.yml> <tree> -> every guarded file has a decision
+    local mapping="$1" tree="$2" declarations rows directory file path
+    declarations="$(declared_unmapped_paths "$mapping")" || return
+    rows="$(parse_labeler_config <"$mapping")" || return
+
+    for directory in test .github/scripts; do
+      [ -d "$tree/$directory" ] || continue
+      while IFS= read -r file; do
+        path="${file#"$tree"/}"
+        if [ -z "$(derive_labels "$rows" "$path")" ] && \
+          ! grep -Fxq "$path" <<<"$declarations"; then
+          printf 'undeclared scope path: %s\n' "$path"
+          return 1
+        fi
+      done < <(find "$tree/$directory" -maxdepth 1 -type f | sort)
+    done
+  }
+
+  check "declare: every real test and GitHub script is mapped or declared" 0 "" \
+    scoped_or_declared "$ROOT/.github/labeler.yml" "$ROOT"
+
+  mkdir -p "$TMP/undeclared-test/test" "$TMP/undeclared-script/.github/scripts"
+  : >"$TMP/undeclared-test/test/whatever.test.sh"
+  : >"$TMP/undeclared-script/.github/scripts/whatever.sh"
+  check "declare: a new unmapped test fails" 1 \
+    "undeclared scope path: test/whatever.test.sh" \
+    scoped_or_declared "$ROOT/.github/labeler.yml" "$TMP/undeclared-test"
+  check "declare: a new unmapped GitHub script fails" 1 \
+    "undeclared scope path: .github/scripts/whatever.sh" \
+    scoped_or_declared "$ROOT/.github/labeler.yml" "$TMP/undeclared-script"
+
+  mkdir -p "$TMP/moved/test" "$TMP/moved/.github/scripts"
+  : >"$TMP/moved/test/moved.sh"
+  : >"$TMP/moved/.github/scripts/unmapped.sh"
+  cat >"$TMP/moved-mapped.yml" <<'EOF'
+# scope-unmapped: begin
+# scope-unmapped: .github/scripts/unmapped.sh | fixture declaration
+# scope-unmapped: end
+scope:x:
+  - changed-files:
+      - any-glob-to-any-file:
+          - test/moved.sh
+EOF
+  check "declare: a mapped file and a declared file both satisfy the guard" 0 "" \
+    scoped_or_declared "$TMP/moved-mapped.yml" "$TMP/moved"
+
+  cat >"$TMP/moved-declared.yml" <<'EOF'
+# scope-unmapped: begin
+# scope-unmapped: test/moved.sh | fixture declaration after moving from mapped
+# scope-unmapped: end
+scope:x:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/scripts/unmapped.sh
+EOF
+  check "declare: moving mapped to declared and declared to mapped stays green" 0 "" \
+    scoped_or_declared "$TMP/moved-declared.yml" "$TMP/moved"
 
   # D1: a fragment is written by every behavior change (BUILDER.md), so it
   # carries no locating information. Asserted as an empty set on its own, not
@@ -183,6 +280,17 @@ EOF
   check "derive: FLEET.md is scope:docs" 0 "[scope:docs]" derives 'FLEET.md'
   check "derive: RELEASES.md is scope:docs" 0 "[scope:docs]" derives 'RELEASES.md'
   check "derive: TRIAGE.md is scope:docs" 0 "[scope:docs]" derives 'TRIAGE.md'
+
+  # #518: each newly examined test is asserted alone, in whole-set form. The
+  # runner-input test genuinely locates three subjects; any primary-only row
+  # would be a wrong answer about the other two.
+  check "derive: tag classification is release-flow alone" 0 \
+    "[scope:release-flow]" derives 'test/tag-classify.test.sh'
+  check "derive: doctrine requests are docs alone" 0 \
+    "[scope:docs]" derives 'test/doctrine-request.test.sh'
+  check "derive: runner input locates labels, release-flow and docs" 0 \
+    "[scope:release-flow,scope:labels,scope:docs]" \
+    derives 'test/runner-input.test.sh'
 
   # D3: three guard actions and their tests were in no block at all. Each of
   # the six paths is asserted ALONE, never bundled with its sibling: a set
