@@ -49,7 +49,20 @@ one **without asking anything**. One accountable role keeps builders from guessi
    Past 24 hours from the current episode's `labeled` event, if the ruling
    still stands and doubt remains, it is triage's duty to pick the option the
    builder proceeds on, record that pick as a decision, and stay accountable
-   for it; the operator may overturn it at merge (#50 D13–D14). You set the
+   for it; the operator may overturn it at merge (#50 D13–D14). **That duty
+   does not reach a flag borne by an issue whose escalation reads `Default:
+   none — hard block`**: there the 24h and past-24h rungs do not fire at all,
+   the flag waits for the human, and what is owed at each of them is a
+   published re-read of the default against what has landed — never a pick
+   (#526). The reason is the one the rung itself gives, *"the operator may
+   overturn it at merge"*: a pick made on a pull request gets a second look
+   before anything lands, an issue has no second look, and where the pick
+   would tick an acceptance criterion the tick is the terminal act. A flag
+   borne by a **pull request** runs the full ladder unchanged, and an
+   issue-borne flag carrying a **timed, reversible** default still expires
+   under the 0–12h rung — the carve-out is keyed on the hard block, not on
+   the surface alone ([BUILDER.md](BUILDER.md#the-ruling-ask),
+   [LABELS.md](LABELS.md)). You set the
    flag, so you also close it out ([LABELS.md](LABELS.md)): judge when
    agreement is reached, record the ruling as a decision in one comment,
    remove the label, and return the issue to its flow in that same comment;
