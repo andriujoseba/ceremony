@@ -12,6 +12,35 @@ PATH_SCRIPT="$ROOT/.github/scripts/release-path.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+readme_path() {
+  awk '
+    /^2\. The release path is exactly the output of$/ { condition = 1; next }
+    condition && /^3\./ { exit 1 }
+    condition && /^   ```text$/ { fence = 1; next }
+    fence && /^   ```$/ { closed = 1; exit }
+    fence {
+      line = $0
+      sub(/^   /, "", line)
+      print line
+    }
+    END { if (!condition || !fence || !closed) exit 1 }
+  ' "$1/drills/README.md"
+}
+
+readme_path_check() {
+  local tree="$1" declared documented
+  documented="$(readme_path "$tree")" || {
+    printf 'release-path: README list not found\n' >&2
+    return 1
+  }
+  if [ -z "$documented" ]; then
+    printf 'release-path: README list is empty\n' >&2
+    return 1
+  fi
+  declared="$(declared_path "$tree")"
+  diff -u <(printf '%s\n' "$declared") <(printf '%s\n' "$documented")
+}
+
 library_refs() {
   local sibling_refs=no
   case "$1" in
@@ -100,8 +129,10 @@ path_check() {
 fixture() {
   local name="$1" tree
   tree="$TMP/$name"
-  mkdir -p "$tree/.github/scripts" "$tree/.github/workflows" "$tree/lib" "$tree/bin"
+  mkdir -p "$tree/.github/scripts" "$tree/.github/workflows" "$tree/lib" \
+    "$tree/bin" "$tree/drills"
   cp "$PATH_SCRIPT" "$tree/.github/scripts/release-path.sh"
+  cp "$ROOT/drills/README.md" "$tree/drills/README.md"
   printf '#!/usr/bin/env bash\n. "%s"\n' \
     "\$ROOT/lib/changelog.sh" >"$tree/bin/assemble"
   printf '#!/usr/bin/env bash\n' >"$tree/lib/changelog.sh"
@@ -118,8 +149,40 @@ fixture() {
 check "manifest prints the specified ordered release path" 0 \
   $'.github/workflows/release.yml\nbin/\nlib/tag-classify.sh\nlib/version.sh\nlib/decide.sh\nlib/facts.sh\nlib/changelog.sh' \
   bash "$PATH_SCRIPT"
+check "README prints the manifest's ordered release path" 0 "" \
+  readme_path_check "$ROOT"
 check "real workflow and transitive dependencies match the manifest" 0 "" \
   path_check "$ROOT"
+
+# The convenience copy is guarded in both directions, including order, and
+# losing the extractor's anchor cannot turn the comparison vacuously green
+# (#514).
+tree="$(fixture readme-script-added)"
+sed -i 's|  lib/changelog.sh$|  lib/changelog.sh \\|' \
+  "$tree/.github/scripts/release-path.sh"
+printf '  lib/ruling.sh\n' >>"$tree/.github/scripts/release-path.sh"
+check "a manifest-only entry reds the README comparison" 1 \
+  "lib/ruling.sh" readme_path_check "$tree"
+
+tree="$(fixture readme-entry-removed)"
+sed -i '/^   lib\/tag-classify\.sh$/d' "$tree/drills/README.md"
+check "a README-only removal reds the comparison" 1 \
+  "lib/tag-classify.sh" readme_path_check "$tree"
+
+tree="$(fixture readme-reordered)"
+sed -i \
+  -e 's|^   lib/version\.sh$|   lib/ORDER-SWAP|' \
+  -e 's|^   lib/decide\.sh$|   lib/version.sh|' \
+  -e 's|^   lib/ORDER-SWAP$|   lib/decide.sh|' \
+  "$tree/drills/README.md"
+check "reordering the README list reds the comparison" 1 \
+  "lib/decide.sh" readme_path_check "$tree"
+
+tree="$(fixture readme-list-missing)"
+sed -i 's/^2\. The release path is exactly the output of$/2. Release-path copy:/' \
+  "$tree/drills/README.md"
+check "a missing README list reds instead of comparing nothing" 1 \
+  "README list not found" readme_path_check "$tree"
 
 # A door growing a dependency must name the missing path (#237 D7).
 tree="$(fixture missing)"
