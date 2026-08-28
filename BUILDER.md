@@ -48,11 +48,15 @@ not to guess.
      else's — awaiting first verdicts, or answered whole with the owed
      re-requests posted, by head and not by verdict (steps 1–2). A red check
      at the head takes it out of this shape: the next move is yours;
-  3. every remaining acceptance criterion is operator-owned, stated so by
-     triage on the issue. **An operator-owned remainder parks the claim and
-     never the handoff**: this shape is reached only from the far side of
-     shape 4, because it is the state finishing the work puts you in and
-     would otherwise excuse the handoff it should follow (#336);
+  3. a criterion is found, at claim or build time, to be beyond a builder's
+     reach, and you have reported it on the issue. The next move is
+     **triage's relocation** — the operator-owned criteria move verbatim into
+     their own issue and yours is left a wholly PR-checkable remainder
+     ([TRIAGE.md](TRIAGE.md)) — and the shape ends when that lands, the
+     remainder then being ordinary work you finish and hand off. This park is
+     **transient and never terminal**: an operator-owned remainder does not
+     wait at the merge door, so no claim rests here after the work is done
+     (#488, #336);
   4. it is **handed off** — round passed, no `blocker:*` standing,
      `state:needs-human` set per Handoff, the merge the human's. Shapes 2
      and 4 are sequential and never overlap;
