@@ -1050,8 +1050,8 @@ check "the builder picking sentence refuses operator beside epic" 0 "" \
     _ "$builder_pick"
 check "triage marks only an all-operator-owned criterion set" 0 "" \
   grep -qF 'When every acceptance criterion is operator-owned at mint' "$ROOT/TRIAGE.md"
-check "triage keeps a mixed-reach issue on the criterion mechanism" 0 "" \
-  grep -qF 'A single operator-owned criterion among' "$ROOT/TRIAGE.md"
+check "triage refuses a mixed-owner issue outright" 0 "" \
+  grep -qF 'An issue is builder-owned or operator-owned, and never both' "$ROOT/TRIAGE.md"
 
 # The additive corpus deliberately exercises label writes (notably stale
 # claim reclamation). Start a fresh recorder for the remaining post-merge

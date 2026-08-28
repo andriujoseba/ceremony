@@ -133,16 +133,60 @@ Every issue you mint carries, in this order:
   **When every acceptance criterion is operator-owned at mint, add
   `operator` alongside the issue's queue label.** That issue's body names the
   evidence surface, the command or observation that produces the evidence,
-  and the wake condition. A single operator-owned criterion among
-  builder-owned criteria does not mark the issue `operator`; it keeps the
-  per-criterion mechanism above, because criterion reach and issue ownership
-  are separate axes (#491).
+  and the wake condition.
+
+  **An issue is builder-owned or operator-owned, and never both.** One that
+  would carry criteria of both classes is not minted: it is split at the
+  mint, and one found mixed later is split where it stands. This **replaces**
+  the rule that a lone operator-owned criterion among builder-owned ones left
+  the issue unmarked and kept the per-criterion mechanism. Such a criterion no
+  longer stays where it is; it relocates, by the route below (#491, #488).
+
+  **That reversal is at the issue level only, and the paragraph above stands
+  unchanged.** The two axes are still independent *per criterion*:
+  operator-owned still does not make a criterion post-merge, and post-merge
+  still does not make one operator-owned. What #491 also said — that issue
+  ownership is not read off criterion reach — is what changes, and only
+  because an issue may no longer hold both classes: with mixing forbidden, an
+  issue's class follows from its criteria's because there is nothing else left
+  for it to be. Criterion reach and issue ownership remain different
+  questions; the second now has one admissible answer (#491, #488).
+
+  **Where an issue's remaining acceptance criteria include operator-owned
+  ones, relocate them — do not route the issue around them.** The
+  operator-owned criteria move **verbatim** into their own issue; the original
+  is left with a remainder that is wholly PR-checkable; and its PR merges with
+  `Closes #N`. The evidence is neither waited on at the merge door nor
+  deferred to a `post-merge` tail. It becomes tracked work carrying its own
+  claim and its own wake condition, which is the whole of the route: an issue
+  is not held open to remember something a separate issue can hold (#488).
+
+  **The relocation precedes the merge.** Before the merge it is a route;
+  after the merge it is a repair — the same moves, but performed on an issue
+  that has already closed on criteria nothing checked. Doing it in time is
+  part of the rule and not advice about it (#488).
+
+  **A relocation enumerates the moved criteria one at a time, against the
+  original.** The new issue's body records which criteria it carries,
+  criterion by criterion; the original records which it shed, the same way. A
+  relocation that asserts its coverage in a summary sentence has stated
+  nothing anyone can check, and a summary that was false when written is what
+  this requirement comes from (#488).
+
+  **The relocated issue is all-operator-owned at its own mint**, so it takes
+  `ready` + `operator` under the rule above, and its body names the evidence
+  surface, the command or observation, and the wake condition. This
+  commissions no new mechanism: route D's output is exactly the artifact that
+  rule already mandates (#488).
 
   **A criterion whose evidence turns out at claim time to be beyond a
   builder's reach is a defect in the issue, and the body is yours.**
   Reclassify it where it stands, in the same tick — a comment that answers
   the builder while the body still asks for proof no builder can produce
-  leaves the next reader the same issue (#149).
+  leaves the next reader the same issue (#149). Reclassifying it
+  operator-owned is what makes the issue mixed, so the relocation above is
+  the rest of the same repair and not a later one; the builder's claim waits
+  on it and on nothing else (#488).
 - **Test plan**: what proves it, including the cases that must fail.
 - **Dependencies**: `Blocked by #N` / `Blocks #N`, and `Part of #E` when an
   epic organizes it. Name a cross-repo dependency the same way with its
@@ -173,6 +217,14 @@ Every issue you mint carries, in this order:
   already reaches X through A. Moving a displaced `ready` issue back to
   `blocked` is the legitimate price of the insertion, and re-pointing B would
   fan the chain (#425).
+
+  **Owner classes gate through the same edges.** Where a fix needs
+  builder-owned work and then operator evidence, the shape is
+  `builder-owned issue → operator-owned issue → the gated issue`, and the
+  gated issue declares **the operator-owned issue alone**: it reaches the
+  builder-owned one through it, by the transitivity the front-row insertion
+  already relies on. Declaring both is not wrong, but the single edge is the
+  house form, and fanning the chain is the thing to avoid (#488).
 
   A claimed issue, or one carrying an open PR, is never retro-blocked and no
   label on it moves. The front-row issue still lands first, but the collision
