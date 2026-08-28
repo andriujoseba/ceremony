@@ -2284,6 +2284,60 @@ check "two skipped issues are both named, in the plural" 0 \
   'issueflow: 2 issues skipped this pass on unreadable facts: #70 #72' \
   printf '%s\n' "$both_out"
 
+# -- the run summary tells a clean pass from a lossy one (#519 D1, D2) ------
+# Through main(), because the summary is graded at the loop: the counters are
+# per-pass and the tail is the run's, so re-entering reconcile_issue_pass by
+# hand cannot see the line this criterion is about. Issue 71 is the healthy
+# one that writes `needs-triage`, which is exactly the live instance the mint
+# measured on heavy-duty/la-familia-incubator — a board where that label does
+# not exist, so the write fails and the run reported success over it.
+sweep_board '[{"number":71}]'
+clean_tail_out="$(sweep_run)"
+clean_tail_rc=$?
+check "a sweep whose writes all land stays green" 0 "" test "$clean_tail_rc" -eq 0
+check "...and its write reaches the board" 0 "" \
+  grep -qxF 'issue edit 71 -R owner/repo --add-label needs-triage' "$SWEEP/edits"
+check "...ending on a byte-identical reconciled." 0 "" \
+  test "$(tail -n1 <<<"$clean_tail_out")" = "issueflow: reconciled."
+# The steady state is the criterion here, so its absence is asserted rather
+# than inferred from the lossy case passing.
+check_absent "...with no lost-write tail on it" 0 "lost a board write" \
+  printf '%s\n' "$clean_tail_out"
+check_absent "...and no per-issue failure line" 0 "board write failed" \
+  printf '%s\n' "$clean_tail_out"
+check_absent "...and no count of writes that did not land" 0 "did not land" \
+  printf '%s\n' "$clean_tail_out"
+
+: >"$SWEEP/edits"
+lossy_tail_out="$(GH_STUB_WRITE_FAILS='issue edit 71 *' sweep_run)"
+lossy_tail_rc=$?
+# D1 is preserved whole: this is about the report and never the exit code.
+check "a sweep that lost a write still exits 0 (#95, #101)" 0 "" \
+  test "$lossy_tail_rc" -eq 0
+check "...names the act it lost" 0 \
+  "issueflow: #71: board write failed — gh issue edit 71 -R owner/repo --add-label needs-triage" \
+  printf '%s\n' "$lossy_tail_out"
+check "...counts it against the writes the pass staged" 0 \
+  "issueflow: #71: 1 of 1 board writes did not land; the rest were applied" \
+  printf '%s\n' "$lossy_tail_out"
+check "...still says reconciled. byte-identically" 0 "" \
+  grep -qxF 'issueflow: reconciled.' <<<"$lossy_tail_out"
+check "...and qualifies it on a line of its own, after it" 0 "" \
+  test "$(tail -n1 <<<"$lossy_tail_out")" = \
+    "issueflow: 1 issue lost a board write this pass: #71"
+# The write genuinely did not land: the recorder is what says so, not the
+# absence of a success message.
+check "...over a board the write never reached" 1 "" \
+  grep -qF 'issue edit 71' "$SWEEP/edits"
+# The three conditions stay three. A lossy pass is not a skipped one and not
+# a crashed one, and #247 D4's two lines keep their text.
+check_absent "...and the pass is never called skipped" 0 "skipped this pass" \
+  printf '%s\n' "$lossy_tail_out"
+check_absent "...nor reported as a crash" 0 "reconcile failed" \
+  printf '%s\n' "$lossy_tail_out"
+check_absent "...and the skipped tail does not appear either" 0 \
+  "skipped this pass on" printf '%s\n' "$lossy_tail_out"
+
 # A dependency read is part of the issue's atomic pass. The parse echo is
 # staged before this read, so an empty recorder proves both comments and edits
 # were discarded rather than merely showing that the decision arm stayed quiet
