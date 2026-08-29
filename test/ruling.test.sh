@@ -501,11 +501,21 @@ jq -n --arg at "$(iso "$S0")" \
   '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
   >"$(timeline_file 30)"
 setter_thread() { # $1 issue, $2 the flag epoch, $3 an extra "login epoch" pair or ""
+  # The optional row's two fields are only computed when the row is asked for.
+  # Expanded unconditionally, `iso ""` reaches `date -d @` and prints its
+  # complaint to stderr; the empty result then happens to be what the caller
+  # meant, so the suite stayed green while emitting a diagnostic on the
+  # helper's primary path.
+  local other="" other_at=""
+  if [ -n "${3:-}" ]; then
+    other="${3%% *}"
+    other_at="$(iso "${3##* }")"
+  fi
   jq -n --arg esc "$(iso "$(($2 - 60))")" --arg b "$TPL" \
     --arg d2 "$(iso "$(($2 + 2 * 86400))")" \
     --arg d4 "$(iso "$(($2 + 4 * 86400))")" \
     --arg d6 "$(iso "$(($2 + 6 * 86400))")" \
-    --arg other "${3%% *}" --arg other_at "$(iso "${3##* }")" \
+    --arg other "$other" --arg other_at "$other_at" \
     '[{"user":{"login":"setter"},"created_at":$esc,"html_url":"https://x/esc","body":$b},
       {"user":{"login":"setter"},"created_at":$d2,"html_url":"https://x/rr2","body":"re-read: the default still holds"},
       {"user":{"login":"setter"},"created_at":$d4,"html_url":"https://x/rr4","body":"re-read: still holds"},
@@ -514,7 +524,21 @@ setter_thread() { # $1 issue, $2 the flag epoch, $3 an extra "login epoch" pair 
          [{"user":{"login":$other},"created_at":$other_at,"html_url":"https://x/other","body":"looking"}] end)' \
     >"$(comments_file "$1")"
 }
-setter_thread 30 "$S0" ""
+# The builder is pinned before the sweep that reads it. Every must-nudge row
+# below would be satisfied by an empty comments file — a thread with nothing to
+# exclude nudges for the wrong reason and looks the same in a green run — so
+# the fixture's contents are asserted, not assumed, and the build is asserted
+# silent so a re-introduced unguarded expansion reds a row instead of scrolling
+# past.
+setter_noise="$(setter_thread 30 "$S0" "" 2>&1)"
+check "the setter-only thread builds with no shell diagnostic" 0 "[]" \
+  printf '[%s]' "$setter_noise"
+check "...and its fixture holds exactly four comments, all the setter's" 0 "[4 setter]" \
+  printf '[%s]' \
+  "$(jq -r '"\(length) \([.[].user.login] | unique | join(","))"' "$(comments_file 30)")"
+check "...being the escalation and the day-2, day-4 and day-6 re-reads" 0 \
+  "[https://x/esc,https://x/rr2,https://x/rr4,https://x/rr6]" \
+  printf '[%s]' "$(jq -r '[.[].html_url] | join(",")' "$(comments_file 30)")"
 sweep 30 >/dev/null
 check "the setter's own re-reads do not hold off the nudge" 0 "1" nudges 30
 check "...and the days figure is measured from the labeled event, not the last re-read" 0 \
@@ -537,6 +561,9 @@ jq -n --arg at "$(iso "$S0")" \
   '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
   >"$(timeline_file 31)"
 setter_thread 31 "$S0" "danmt $((S0 + 6 * 86400))"
+# The guard's other side: asked for, the optional row is really written.
+check "the non-setter call adds a fifth comment, by the other login" 0 "[5 danmt]" \
+  printf '[%s]' "$(jq -r '"\(length) \(.[-1].user.login)"' "$(comments_file 31)")"
 sweep 31 >/dev/null
 check "the decider's own comment at day 6 holds the nudge" 0 "0" nudges 31
 

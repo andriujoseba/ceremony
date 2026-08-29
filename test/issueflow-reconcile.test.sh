@@ -1283,12 +1283,22 @@ ruling_setter_thread() { # $1 issue, $2 the flag's age in seconds, $3 "" | "<log
   jq -n --arg l "$(iso_at "$flag")" \
     '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
     >"$(tfix "$1")"
+  # The optional row's two fields are only computed when the row is asked for.
+  # Expanded unconditionally, `${3##* }` empties the arithmetic and bash prints
+  # `INOW - : syntax error` to stderr; the substitution dies in its own
+  # subshell, so jq still ran and still wrote the four setter comments, but a
+  # diagnostic on the helper's primary path is a defect either way.
+  local other="" other_at=""
+  if [ -n "${3:-}" ]; then
+    other="${3%% *}"
+    other_at="$(iso_at "$((INOW - ${3##* }))")"
+  fi
   jq -n --arg esc "$(iso_at $((flag - 60)))" \
     --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z\nDefault:  none — hard block' \
     --arg d2 "$(iso_at $((flag + 2 * 86400)))" \
     --arg d4 "$(iso_at $((flag + 4 * 86400)))" \
     --arg d6 "$(iso_at $((flag + 6 * 86400)))" \
-    --arg other "${3%% *}" --arg other_at "$(iso_at "$((INOW - ${3##* }))")" \
+    --arg other "$other" --arg other_at "$other_at" \
     '[{"user":{"login":"setter"},"created_at":$esc,"html_url":"https://x/esc","body":$b},
       {"user":{"login":"setter"},"created_at":$d2,"html_url":"https://x/rr2","body":"re-read: the default still holds"},
       {"user":{"login":"setter"},"created_at":$d4,"html_url":"https://x/rr4","body":"re-read: still holds"},
@@ -1298,7 +1308,21 @@ ruling_setter_thread() { # $1 issue, $2 the flag's age in seconds, $3 "" | "<log
     >"$(cfix "$1")"
 }
 
-ruling_setter_thread 120 $((8 * 86400)) ""
+# The fixture builder is pinned before anything is asserted about the sweep
+# that reads it. A helper that silently wrote an empty comments file would
+# satisfy every must-nudge row below for the wrong reason — the thread would
+# hold no setter comments to exclude — and a green run would look identical.
+# So: the build is silent, and the file it wrote is the required thread.
+setter_noise="$(ruling_setter_thread 120 $((8 * 86400)) "" 2>&1)"
+check "the setter-only thread builds with no shell diagnostic" 0 "[]" \
+  printf '[%s]' "$setter_noise"
+check "...and its fixture holds exactly four comments" 0 "[4]" \
+  printf '[%s]' "$(jq -r 'length' "$(cfix 120)")"
+check "...every one of them the flag-setter's" 0 "[setter]" \
+  printf '[%s]' "$(jq -r '[.[].user.login] | unique | join(",")' "$(cfix 120)")"
+check "...being the escalation and the day-2, day-4 and day-6 re-reads" 0 \
+  "[https://x/esc,https://x/rr2,https://x/rr4,https://x/rr6]" \
+  printf '[%s]' "$(jq -r '[.[].html_url] | join(",")' "$(cfix 120)")"
 setter_only="$(issue_probe 120 $'ready\nneeds-ruling' 0)"
 check "the setter's own re-reads no longer silence the ruling nudge" 0 "" \
   grep -q 'ruling nudge' <<<"$setter_only"
@@ -1306,6 +1330,10 @@ check "...and the days figure is the flag's age, not the last re-read's" 0 "" \
   grep -qF 'no activity for 8 days' "$TMP/posted-120"
 
 ruling_setter_thread 121 $((8 * 86400)) "decider $((6 * 86400))"
+# The other half of the same pin: the optional row is genuinely added, so the
+# guard that skips computing it cannot have skipped writing it too.
+check "the non-setter call adds a fifth comment, by the other login" 0 "[5 decider]" \
+  printf '[%s]' "$(jq -r '"\(length) \(.[-1].user.login)"' "$(cfix 121)")"
 decider_spoke="$(issue_probe 121 $'ready\nneeds-ruling' 0)"
 check "one comment from anybody else still resets the clock" 1 "" \
   grep -q 'ruling nudge' <<<"$decider_spoke"
@@ -1337,7 +1365,11 @@ check "...reporting 8 days and not 90" 0 "" \
 # ruling block a value before. `blocked` + `needs-ruling` with an unseeded
 # parse echo posts that echo first; the pre-#534 sweep took its ruling clock
 # in the tail, read its own echo as the item's sign of life, and went quiet.
-ruling_setter_thread 124 $((8 * 86400)) ""
+blocked_noise="$(ruling_setter_thread 124 $((8 * 86400)) "" 2>&1)"
+check "the blocked fixture's thread builds silently too" 0 "[]" \
+  printf '[%s]' "$blocked_noise"
+check "...and it is the same four setter comments" 0 "[4 setter]" \
+  printf '[%s]' "$(jq -r '"\(length) \([.[].user.login] | unique | join(","))"' "$(cfix 124)")"
 blocked_echo="$(issue_probe 124 $'blocked\nneeds-ruling' 0 false "" 'Blocked by #999.')"
 check "the parse echo this pass posted does not date the item it nudges" 0 "" \
   grep -q 'ruling nudge' <<<"$blocked_echo"

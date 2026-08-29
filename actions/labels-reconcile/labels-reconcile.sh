@@ -1876,8 +1876,18 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
     #
     # The timeline read is the one new call, and it is paid only by a flagged
     # PR — the same episode facts reconcile_ruling reads below, taken here
-    # because the clock is the caller's to compute and must be computed
-    # before this pass posts anything (#534 D4). An unreadable timeline, or
+    # because the clock is the caller's to compute (#534 D4). Be precise about
+    # which half of it the placement actually buys: the comment-derived half
+    # rides `stale`'s reads at the top of the pass, before anything here can
+    # post, and that is the half D4 is about. `ruling_flag_row` runs later,
+    # after reconcile_handoff_takeback, reconcile_human_request and
+    # reconcile_release_shape have each had a chance to post — which is safe
+    # for a reason of its own, not because of where it sits: none of them can
+    # create a `needs-ruling` `labeled` event, and the --jq filter sees nothing
+    # else. Do not read this line as putting the timeline read under the same
+    # constraint as the comment reads; it is not, and a refactor that moved it
+    # to satisfy that constraint would be answering the wrong question. An
+    # unreadable timeline, or
     # one with no visible `labeled` event, leaves the clock at `stale`'s
     # value: reconcile_ruling stands down on that same read, so no nudge
     # follows either way, and an unreadable fact invents no verdict.

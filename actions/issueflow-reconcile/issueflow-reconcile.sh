@@ -1405,8 +1405,16 @@ last_issue_ruling_activity() { # $1 issue, $2 created_at → epoch; non-zero on 
   # narrowing removed. Nothing is invented either — the only consumer of this
   # clock is reconcile_ruling's nudge, which re-reads the same timeline and
   # stands down when it cannot read it or sees no `labeled` event, so the
-  # fallback below reaches no verdict. It is the unfiltered, unfloored max,
-  # which is the conservative direction: it can only hold a nudge back.
+  # fallback below reaches no verdict unless that second read disagrees with
+  # this one. The fallback itself is the unfiltered, unfloored max, and it is
+  # NOT uniformly conservative: it holds a nudge back whenever a comment or
+  # `created_at` is the newest fact, but when the flag is newer than both, the
+  # floored clock is the HIGHER of the two and the fallback leans toward
+  # nudging. What bounds it is the second read, not the direction. The residual
+  # is the narrow case where this read fails and that one heals — which
+  # resurrects the #534 D2 misreport (a 90-day item, an hour-old flag, "no
+  # activity for 90 days") on that one pass, where shipped `main` does it on
+  # every pass.
   local n="$1" created="$2" flags="" rc=0 setter labeled comments
   flags="$(ruling_flag_row "$n")" || rc=$?
   comments="$(gh api --paginate "repos/$REPO/issues/$n/comments" \
