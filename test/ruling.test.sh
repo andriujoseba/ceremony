@@ -426,7 +426,7 @@ check "the carved-out body contains none of the withdrawn acts" 1 "" \
 check "the carved-out body carries exactly the shared rung-24 marker" 0 "1" \
   grep -cF "$RULING_RUNG24_MARKER" "$TMP/posted-117"
 check "the carved-out body carries no second marker" 1 "" \
-  grep -vF "$RULING_RUNG24_MARKER" "$TMP/posted-117" | grep -qF '<!--'
+  grep -qF '<!--' < <(grep -vF "$RULING_RUNG24_MARKER" "$TMP/posted-117")
 reconcile_ruling 117 "$T117" "$NOW" issue >/dev/null
 check "the carved-out comment posts only once per episode" 0 "1" posts 117
 
