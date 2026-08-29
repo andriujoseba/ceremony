@@ -108,7 +108,9 @@ esac
   "docs-sync: no $WORKFLOW — the pin lives there (the single" \
   "  'uses: heavy-duty/ceremony/.github/workflows/release.yml@<ref>' line)." \
   "  Add the release caller before syncing doctrine: the mirror is verified" \
-  "  against the pin, and without one there is nothing to verify against."
+  "  against the pin, and without one there is nothing to verify against." \
+  "  A repository that publishes no artifact still carries this caller:" \
+  "  the pin lives here and the artifact hook is optional."
 
 # A real `uses:` key only — a leading '#' anywhere before it is a comment
 # and does not count (see the header: ceremony's own release.yml carries

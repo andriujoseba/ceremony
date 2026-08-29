@@ -18,6 +18,12 @@ edits to this guide (#12).
   ([lib/facts.sh](../lib/facts.sh#L88-L101)), so the ceremony never needs
   the PR's own context. No PAT, no secrets: every permission the flow uses
   is the caller-declared `GITHUB_TOKEN` grant.
+- **Carry the release caller with the doctrine mirror**:
+  `.github/workflows/release.yml` contains the single `uses:` line whose ref
+  `docs-sync` reads to verify `.ceremony/`, so one pin governs machinery and
+  doctrine instead of creating a second thing to bump. A repository that
+  publishes no artifact still carries this caller: the pin lives here and the
+  artifact hook is optional.
 - **Pick the version backend**: `file` (a `VERSION` file — box, rig,
   incubator) or `package-json` (the `version` field, lockfile kept in sync
   on the post-release bump — cast). This is the workflow's one input; the

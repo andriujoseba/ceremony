@@ -185,6 +185,9 @@ rm -rf "$TMP/no-workflow"
 mkdir -p "$TMP/no-workflow"
 check "missing release.yml entirely → refuse, naming it" 1 \
   "no .github/workflows/release.yml" in_consumer no-workflow --check --source "$SRC"
+check "missing release.yml explains the no-artifact caller" 1 \
+  "publishes no artifact still carries this caller" \
+  in_consumer no-workflow --check --source "$SRC"
 
 # --- the manifest: single source of the set -----------------------------------
 

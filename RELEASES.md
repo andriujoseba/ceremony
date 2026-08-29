@@ -6,6 +6,19 @@ without version epics is not out of compliance. A repo-local roadmap is the
 map; each epic remains the source of truth for its own release. Where an older
 repo-local description differs from this file, this file governs.
 
+## Versioning and artifact publication
+
+A release has two halves: the repository records its progression, and it may
+publish an artifact. The first half is universal — a repository that publishes
+no artifact still releases by cutting a tag, stamping its version and
+assembling its changelog section. The artifact hook is the optional half.
+Describe repositories on the **publishes an artifact / does not publish an
+artifact** axis, never the **releases / does not release** axis.
+
+`heavy-duty/la-familia-infra` is the live worked example: its releases version
+infrastructure state and record that progression without publishing an
+installer, package or image.
+
 ## The ladder
 
 Represent each planned release with one version epic. The epic is the working
