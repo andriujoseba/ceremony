@@ -177,8 +177,8 @@ gh release view --repo heavy-duty/ceremony --json tagName -q .tagName
 With no tag argument `gh release view` returns the repository's latest
 release, which is the same read as the releases API's
 `/repos/heavy-duty/ceremony/releases/latest`. Read the whole vendored
-doctrine set at that tag — the files [`docs/VENDORED.txt`](VENDORED.txt)
-declares — not a mixture of refs. The rule governs only while the pin is
+doctrine set at that tag — the files `docs/VENDORED.txt` declares — not a
+mixture of refs. The rule governs only while the pin is
 absent: once the repository carries one, the pin is the ref,
 [as it is everywhere else](#version-pinning).
 
