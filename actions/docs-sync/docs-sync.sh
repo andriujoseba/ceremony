@@ -49,6 +49,34 @@ set -euo pipefail
 # any non-regular node before touching anything: the fix for a symlink is
 # a human deleting it, never a tool following it.
 #
+# A THIRD FILE CLASS: THE GUARDED SCAFFOLD (#559). The mirror is a whole
+# file ceremony owns; the root AGENTS.md stub is a whole file the consumer
+# owns after the first write. `.github/pull_request_template.md` is neither,
+# and it cannot become either. It cannot join the mirror — a pull request
+# template only works at `.github/pull_request_template.md`, and `.ceremony/`
+# is where GitHub never looks — and a stub lets a consumer's copy sit at the
+# version it was scaffolded from forever, which is the measured defect:
+# heavy-duty/crew's template was still ceremony 0.4.0's, fourteen releases
+# behind, while the duty engine renders a `## Round log` shape that copy does
+# not have. So ceremony owns a DELIMITED REGION of a file that otherwise
+# belongs to the consumer: --fix writes the region and never a byte outside
+# it, --check verifies the region at the mirror's severity, and everything
+# above and below survives every future bump.
+#
+# THE MARKERS ARE WRITTEN BY --fix AND THE SOURCE FILE DOES NOT CARRY THEM.
+# Putting them in ceremony's own template would push them into ceremony's own
+# PR bodies and make the source's bytes and the block's bytes two different
+# things to compare; writing them at install time keeps the comparison exact
+# — extract the block, cmp against the source file, done. They are HTML
+# comments, so they render as nothing.
+#
+# AND THE BOUNDARY IS FOUND BY COUNTING WHOLE LINES, NEVER BY A sed RANGE.
+# `sed '/start/,/end/'` on a file whose end marker is missing matches to
+# end-of-file, so the naive --fix deletes everything the consumer wrote below
+# a truncated block. Unbalanced or duplicated markers are a REFUSAL in both
+# modes — the block's boundaries are unknown, and repairing means guessing at
+# which of the consumer's bytes are ours.
+#
 # TWO FILES ARE SPECIAL, both deliberately:
 #   * `.ceremony/README.md` is GENERATED here — the machine-managed marker
 #     plus where the pin lives — instead of per-file banners, so every
@@ -74,6 +102,14 @@ WORKFLOW=".github/workflows/release.yml"
 MIRROR=".ceremony"
 MANIFEST="docs/VENDORED.txt"
 README_NAME="README.md"
+SCAFFOLD_MANIFEST="docs/SCAFFOLDED.txt"
+
+# One constant pair for every guarded scaffold, not one per path: a block
+# sits alone in its own file, so the file already says which scaffold it is
+# and the marker never has to. The literal is #559's, whose E2 fixes these
+# bytes; a second manifest entry inherits them unchanged.
+SCAFFOLD_START="<!-- ceremony:pr-template:start -->"
+SCAFFOLD_END="<!-- ceremony:pr-template:end -->"
 
 die() {
   printf '%s\n' "$@" >&2
@@ -137,11 +173,19 @@ ref="$(printf '%s\n' "${pin_lines[0]}" | sed -E 's/^.*@//; s/[[:space:]#].*$//')
 # --- the source tree ----------------------------------------------------------
 
 fetch_tmp=""
+# Block extraction compares whole files rather than shell variables: `$(…)`
+# strips trailing newlines, which is the one byte a byte-identity check is
+# most likely to differ by.
+scratch=""
 # An if, not `&&`: the trap's last status becomes the script's exit code,
 # and a bare `[ -n ] && rm` returns 1 whenever there was nothing to clean —
 # turning every --source success into a failure.
-cleanup() { if [ -n "$fetch_tmp" ]; then rm -rf "$fetch_tmp"; fi; }
+cleanup() {
+  if [ -n "$fetch_tmp" ]; then rm -rf "$fetch_tmp"; fi
+  if [ -n "$scratch" ]; then rm -rf "$scratch"; fi
+}
 trap cleanup EXIT
+scratch="$(mktemp -d)"
 
 if [ -n "$source_dir" ]; then
   [ -d "$source_dir" ] || die "docs-sync: --source: no such directory: $source_dir"
@@ -259,6 +303,84 @@ in_manifest() {
   return 1
 }
 
+# --- the scaffold manifest ------------------------------------------------------
+
+# Read from the SOURCE tree for the same reason the mirror's manifest is
+# (see above): the set is decided at the pinned ref, so a bump that adds or
+# drops a scaffold re-shapes it in the same PR, with no second list.
+#
+# A MISSING OR EMPTY FILE IS NO SCAFFOLDS, NOT A REFUSAL — unlike
+# $MANIFEST, whose absence means the ref predates the mirror and cannot
+# govern one. Every ref before #559 has no $SCAFFOLD_MANIFEST, and those
+# refs govern working consumers today: dying here would turn this feature
+# into a flag day for every repo pinned behind it.
+scaffolds=()
+scaffold_manifest_file="$src/$SCAFFOLD_MANIFEST"
+if [ -f "$scaffold_manifest_file" ]; then
+  mapfile -t scaffolds < <(grep -v '^[[:space:]]*$' "$scaffold_manifest_file" || true)
+fi
+if [ "${#scaffolds[@]}" -gt 0 ]; then
+  for f in "${scaffolds[@]}"; do
+    case "$f" in
+      /* | *..*)
+        die "docs-sync: refusing scaffold path '$f' — a guarded scaffold is" \
+          "  written inside the consumer's own tree, and that path escapes it."
+        ;;
+    esac
+    [ -f "$src/$f" ] || die \
+      "docs-sync: $SCAFFOLD_MANIFEST names '$f' but $origin has no such file —" \
+      "  fix $SCAFFOLD_MANIFEST in heavy-duty/ceremony."
+    # The end marker is written on its own line directly after the source's
+    # bytes, so a source file with no final newline would splice the marker
+    # onto its last line and make the block unparseable the moment it is
+    # written. Caught here, at the source, rather than in every consumer.
+    if [ -s "$src/$f" ] && [ "$(tail -c 1 "$src/$f" | wc -l)" -eq 0 ]; then
+      die "docs-sync: the scaffold source '$f' in $origin has no final newline," \
+        "  so the end marker would land on its last line. Fix it in" \
+        "  heavy-duty/ceremony."
+    fi
+  done
+fi
+
+# _block_lines FILE — print '<status> <start> <end>' for FILE's one marked
+# block. status is `ok` (with 1-based line numbers of the two marker lines),
+# `none`, `unbalanced` or `duplicated`; the two numbers are 0 unless ok.
+#
+# grep -n -x -F: whole-line, fixed-string, line-numbered. Whole-line matching
+# is what makes a marker quoted inside the consumer's own prose harmless, and
+# counting the hits is what makes the unterminated case a refusal instead of
+# a range that runs to end-of-file.
+_block_lines() {
+  local file="$1" starts ends ns ne
+  starts="$(grep -n -x -F -e "$SCAFFOLD_START" "$file" | cut -d: -f1 || true)"
+  ends="$(grep -n -x -F -e "$SCAFFOLD_END" "$file" | cut -d: -f1 || true)"
+  ns="$(printf '%s' "$starts" | grep -c . || true)"
+  ne="$(printf '%s' "$ends" | grep -c . || true)"
+
+  if [ "$ns" -eq 0 ] && [ "$ne" -eq 0 ]; then
+    printf 'none 0 0\n'
+  elif [ "$ns" -gt 1 ] || [ "$ne" -gt 1 ]; then
+    printf 'duplicated 0 0\n'
+  elif [ "$ns" -eq 0 ] || [ "$ne" -eq 0 ]; then
+    printf 'unbalanced 0 0\n'
+  elif [ "$starts" -gt "$ends" ]; then
+    printf 'unbalanced 0 0\n'
+  else
+    printf 'ok %s %s\n' "$starts" "$ends"
+  fi
+}
+
+# _block_current FILE START END SRCFILE — is the block's byte content exactly
+# SRCFILE's? head|tail rather than a sed range: the line numbers are already
+# known, and nothing here can run past the end marker.
+_block_current() {
+  local file="$1" s="$2" e="$3" srcfile="$4" extracted rc=0
+  extracted="$scratch/block"
+  head -n "$((e - 1))" "$file" | tail -n +"$((s + 1))" >"$extracted"
+  cmp -s "$extracted" "$srcfile" || rc=$?
+  return "$rc"
+}
+
 # Every file physically present in the mirror, relative to it. sorted so
 # messages come out in a stable order.
 mirror_files() {
@@ -346,6 +468,36 @@ guard_plain_tree() {
       "  nothing this tool could do to it is right. Refusing both modes:" \
       "  remove it, then re-run docs-sync --fix to scaffold the stub."
   fi
+
+  # The same refusal for every guarded scaffold, and for the directories on
+  # the way to it: --fix writes that path, so a symlink anywhere along it
+  # sends the write outside the consumer's tree exactly as it would in the
+  # mirror (PR #43's review round).
+  if [ "${#scaffolds[@]}" -gt 0 ]; then
+    local sf d
+    for sf in "${scaffolds[@]}"; do
+      if [ -L "$sf" ]; then
+        die "docs-sync: the guarded scaffold $sf is a symlink — --fix would" \
+          "  write the ceremony-owned block through it, anywhere the CI token" \
+          "  can reach. Refusing both modes: replace the symlink with a" \
+          "  regular file (or delete it and re-run docs-sync --fix)."
+      fi
+      if [ -e "$sf" ] && [ ! -f "$sf" ]; then
+        die "docs-sync: $sf exists but is not a regular file — nothing this" \
+          "  tool could do to it is right. Refusing both modes: remove it," \
+          "  then re-run docs-sync --fix."
+      fi
+      d="$(dirname "$sf")"
+      while [ "$d" != "." ] && [ "$d" != "/" ]; do
+        if [ -L "$d" ]; then
+          die "docs-sync: $d is a symlink, and the guarded scaffold $sf is" \
+            "  written through it. Refusing both modes: replace the symlink" \
+            "  with a real directory, then re-run docs-sync --fix."
+        fi
+        d="$(dirname "$d")"
+      done
+    done
+  fi
 }
 
 # --- check ----------------------------------------------------------------------
@@ -401,8 +553,57 @@ run_check() {
     "  $MIRROR/ is missing, so 'you are a reviewer here' has no entry point." \
     "  Fix: run docs-sync --fix (scaffolds it once; edit it freely after)."
 
+  # The guarded scaffolds, at the mirror's severity and for the mirror's
+  # reason: a check nobody's CI fails on is the sometimes-unread doc again.
+  local status bs be
+  if [ "${#scaffolds[@]}" -gt 0 ]; then
+    for f in "${scaffolds[@]}"; do
+      if [ ! -f "$f" ]; then
+        complain "docs-sync: $f is missing — ceremony owns a marked block in" \
+          "  that file at $origin, and this tree has no file to carry it." \
+          "  Fix: run docs-sync --fix and commit the result."
+        continue
+      fi
+      read -r status bs be < <(_block_lines "$f")
+      case "$status" in
+        none)
+          complain "docs-sync: $f carries no ceremony-owned block — no" \
+            "  '$SCAFFOLD_START' line. The rest of the file is yours; the" \
+            "  block is ceremony's, at $origin. Fix: run docs-sync --fix" \
+            "  (it appends the block and leaves your content alone)."
+          ;;
+        duplicated)
+          complain "docs-sync: $f carries more than one ceremony marker line," \
+            "  so which bytes are ceremony's is ambiguous and --fix will not" \
+            "  guess. Leave exactly one '$SCAFFOLD_START' and one" \
+            "  '$SCAFFOLD_END' by hand, then run docs-sync --fix" \
+            "  ($origin)."
+          ;;
+        unbalanced)
+          complain "docs-sync: $f has unbalanced ceremony markers — a" \
+            "  '$SCAFFOLD_START' without its '$SCAFFOLD_END' after it. The" \
+            "  block has no end, so --fix will not guess where your content" \
+            "  resumes. Close the block by hand, then run docs-sync --fix" \
+            "  ($origin)."
+          ;;
+        ok)
+          if ! _block_current "$f" "$bs" "$be" "$src/$f"; then
+            complain "docs-sync: the ceremony-owned block in $f has drifted" \
+              "  from $origin. That block is machine-written and is never" \
+              "  edited in place — it is changed in heavy-duty/ceremony," \
+              "  through its own flow. Fix: run docs-sync --fix (or re-run" \
+              "  after bumping the pin, if the drift is a stale pin)."
+          fi
+          ;;
+      esac
+    done
+  fi
+
   [ "$failures" -eq 0 ] || die "docs-sync: $failures problem(s) — see above."
   echo "docs-sync: $MIRROR/ is an exact mirror of $origin (${#manifest[@]} files)"
+  if [ "${#scaffolds[@]}" -gt 0 ]; then
+    echo "docs-sync: ${#scaffolds[@]} guarded scaffold(s) carry a current ceremony-owned block"
+  fi
 }
 
 # --- fix ------------------------------------------------------------------------
@@ -443,6 +644,71 @@ run_fix() {
   if [ ! -e AGENTS.md ]; then
     stub_content >AGENTS.md
     note "created the root AGENTS.md stub (scaffolded once, never overwritten)"
+  fi
+
+  local status bs be srcfile rebuilt
+  if [ "${#scaffolds[@]}" -gt 0 ]; then
+    for f in "${scaffolds[@]}"; do
+      srcfile="$src/$f"
+      if [ ! -e "$f" ]; then
+        mkdir -p "$(dirname "$f")"
+        {
+          printf '%s\n' "$SCAFFOLD_START"
+          cat "$srcfile"
+          printf '%s\n' "$SCAFFOLD_END"
+        } >"$f"
+        note "created $f carrying the ceremony-owned block"
+        continue
+      fi
+      read -r status bs be < <(_block_lines "$f")
+      case "$status" in
+        none)
+          # APPEND, never overwrite: an existing hand-maintained template is
+          # content, not garbage. The newline is added only when the file
+          # does not already end in one, so the consumer's bytes stay a
+          # strict prefix of the result either way.
+          if [ -s "$f" ] && [ "$(tail -c 1 "$f" | wc -l)" -eq 0 ]; then
+            printf '\n' >>"$f"
+          fi
+          {
+            printf '%s\n' "$SCAFFOLD_START"
+            cat "$srcfile"
+            printf '%s\n' "$SCAFFOLD_END"
+          } >>"$f"
+          note "appended the ceremony-owned block to $f (its existing content is untouched)"
+          ;;
+        duplicated | unbalanced)
+          # A refusal, not a repair — the same call guard_plain_tree makes
+          # about a symlink, and for the same reason: the boundaries are
+          # unknown, so every repair guesses at which of the consumer's
+          # bytes are ceremony's. This is the branch a sed range would have
+          # answered by deleting the rest of the file.
+          die "docs-sync: cannot fix $f — its ceremony markers are $status," \
+            "  so where the block ends is unknown and every repair would" \
+            "  guess at which of your bytes are ours. --fix refuses rather" \
+            "  than delete content below a broken marker. Leave exactly one" \
+            "  '$SCAFFOLD_START' line and one '$SCAFFOLD_END' line after it," \
+            "  then re-run docs-sync --fix."
+          ;;
+        ok)
+          if ! _block_current "$f" "$bs" "$be" "$srcfile"; then
+            # head -n / tail -n +N reproduce the outside regions byte for
+            # byte, including a final line with no newline: the block is
+            # replaced and nothing else in the file is even read as text.
+            rebuilt="$scratch/rebuilt"
+            head -n "$((bs - 1))" "$f" >"$rebuilt"
+            {
+              printf '%s\n' "$SCAFFOLD_START"
+              cat "$srcfile"
+              printf '%s\n' "$SCAFFOLD_END"
+            } >>"$rebuilt"
+            tail -n +"$((be + 1))" "$f" >>"$rebuilt"
+            cat "$rebuilt" >"$f"
+            note "updated the ceremony-owned block in $f (bytes outside the markers untouched)"
+          fi
+          ;;
+      esac
+    done
   fi
 
   if [ "$changed" -eq 0 ]; then
