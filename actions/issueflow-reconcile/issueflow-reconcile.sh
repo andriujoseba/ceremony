@@ -1377,7 +1377,48 @@ last_issue_comment_activity() { # $1 issue, $2 created_at → epoch; non-zero on
   # and no machine comment can be exempted without exempting that one too.
   # Reading authorship back into the clock would mean a body read this issue
   # forbids.
+  #
+  # NO authorship filter belongs in this function or in issue_activity_at
+  # (#534 D6). The ruling clock alone excludes a party, and it has its own
+  # computation below: the evidence, operator and claim clocks ask whether
+  # owed work arrived — a relation with no flag-setter in it — and narrowing
+  # them here would stop the claim clock seeing a builder's own comments.
   issue_activity_at "$1" "$2" comments-only
+}
+
+last_issue_ruling_activity() { # $1 issue, $2 created_at → epoch; non-zero on a failed read
+  # The ruling nudge's clock, and only it (#534 D1/D2). Deliberately NOT
+  # issue_activity_at with a third mode: that computation serves three clocks
+  # that must keep counting every comment (D6), and the difference here is not
+  # which sources are read but which authors count — the setter's comments are
+  # not activity on the wait they are silencing, and the clock floors at the
+  # current `labeled` event rather than at the item's creation.
+  #
+  # The COMMENTS read is checked, and a failure reports rather than answering
+  # an age, exactly as the clocks above do (#247 D1): swallowed, this one
+  # would fall back to a value that nudges a decider answered yesterday.
+  #
+  # The TIMELINE read is deliberately soft, and that is #284 D1 held to on a
+  # path that now reads the timeline again. A failed timeline read must not
+  # skip the whole issue: it stopped being an input to any clock, and holding
+  # an unrelated blockers->ready flip hostage to it is exactly what that
+  # narrowing removed. Nothing is invented either — the only consumer of this
+  # clock is reconcile_ruling's nudge, which re-reads the same timeline and
+  # stands down when it cannot read it or sees no `labeled` event, so the
+  # fallback below reaches no verdict. It is the unfiltered, unfloored max,
+  # which is the conservative direction: it can only hold a nudge back.
+  local n="$1" created="$2" flags="" rc=0 setter labeled comments
+  flags="$(ruling_flag_row "$n")" || rc=$?
+  comments="$(gh api --paginate "repos/$REPO/issues/$n/comments" \
+    --jq '.[] | [.user.login, .created_at] | @tsv')" || return 1
+  if [ "$rc" != 0 ]; then
+    date -d "$(printf '%s\n%s\n' "$created" "$(cut -f2 <<<"$comments")" \
+      | sort | tail -n1)" +%s
+    return 0
+  fi
+  setter="${flags%%$'\t'*}"
+  labeled="${flags##*$'\t'}"
+  date -d "$(ruling_clock_at "$setter" "$labeled" <<<"$comments")" +%s
 }
 
 reconcile_board_flags() { # $1 issue, $2 concluded queue state — board flags (#293)
@@ -1557,26 +1598,36 @@ reconcile_issue() {
       || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
   fi
 
+  # The ruling clock, read here for the same reason and one more. Here means
+  # before EVERY branch below and before the two cross-cutting nudges, so no
+  # comment this pass writes can date the item it is about to nudge (#284,
+  # #534 D4) — the branches that used to hand this block a value are exactly
+  # the branches that post first, and that is why the read moved up rather
+  # than being reused down there.
+  #
+  # It no longer rides the operator or evidence read, which are the same
+  # computation as each other and a different one from this: under #534 D1
+  # the ruling clock drops the flag-setter's comments and floors at the
+  # current `labeled` event, so a shared value would answer a different
+  # question with the same number. Two reads on an item carrying both flags,
+  # and only on items carrying this one.
+  if has_issue_label needs-ruling; then
+    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+    guarded_read ruling_age last_issue_ruling_activity "$n" "$created" \
+      || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+  fi
+
   if has_issue_label claimed; then
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
     issue_has_open_pr "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
-    # Under a pending ruling, the ruling clock is read at the top of the
-    # branch, before anything either arm below can post — the derived
-    # transition comment, the reclaim notice and the claimed-unassigned flag
-    # are all comments, and a read taken after one would date the issue by
-    # this sweep's own writing (#284; the hazard #274 met from the other
-    # side). Two clocks on purpose: `age` below counts the assignment
-    # because the assignment IS the claim; the ruling waits on a human, and
-    # an assignment says nothing about whether the decider answered.
-    if has_issue_label needs-ruling; then
-      if [ -n "${operator_age:-}" ]; then
-        ruling_age="$operator_age"
-      else
-        created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-        guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
-          || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
-      fi
-    fi
+    # The ruling clock is already in hand, read above this branch and before
+    # anything either arm can post — the derived transition comment, the
+    # reclaim notice and the claimed-unassigned flag are all comments, and a
+    # read taken after one would date the issue by this sweep's own writing
+    # (#284; the hazard #274 met from the other side). Two clocks on purpose:
+    # `age` below counts the assignment because the assignment IS the claim;
+    # the ruling waits on a human, and an assignment says nothing about
+    # whether the decider answered.
     merged_ref_pr="$(post_merge_pr_for_issue "$n")"
     if [ -n "$merged_ref_pr" ]; then
       transition_marker="$(post_merge_transition_marker "$merged_ref_pr")"
@@ -1667,13 +1718,14 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
       guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
         || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
     fi
-    # On this surface the ruling clock IS this read (#284 D6): both nudges
-    # wait on comments and nothing else, so the evidence clock is handed to
-    # the ruling block rather than read again — and handed HERE, before the
-    # assigned-flag comment and the evidence nudge below, so neither wait is
-    # ever answered by anything this pass writes. `post-merge` +
-    # `needs-ruling` now costs one comments read where it cost three.
-    ruling_age="$evidence_age"
+    # The ruling clock is NOT this read, and the reuse that used to stand
+    # here is severed (#534 D4/D6). Both nudges wait on comments, but not on
+    # the same comments: the evidence clock counts every one, and the ruling
+    # clock drops the flag-setter's and floors at the `labeled` event, so one
+    # value cannot serve both without one of them lying. The ruling clock is
+    # read above this branch instead — before the assigned-flag comment and
+    # the evidence nudge below, so neither wait is ever answered by anything
+    # this pass writes.
     if [ "$assignees" -gt 0 ] || has_issue_label attention; then
       ensure_comment "$n" post-merge-assigned \
         'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
@@ -1842,22 +1894,12 @@ judges that prose; the link is the payload.
       run gh issue edit "$n" -R "$REPO" --remove-label stale >/dev/null
       log "#$n: unstale (a ruling is pending)"
     fi
-    # The ruling clock reads comments only (#284 D1): an `assigned` event is
-    # the claim clock's fact, and counting it here let claiming a flagged
-    # issue buy its escalation another 7 quiet days. The reclaim clock
-    # (`age`) must never reach this call — the branches that write comments
-    # before this block (`claimed`, `post-merge`) arrive holding
-    # `ruling_age` already, read before anything they post; the fresh read
-    # serves the paths that arrive empty-handed.
-    if [ -z "${ruling_age:-}" ]; then
-      if [ -n "${operator_age:-}" ]; then
-        ruling_age="$operator_age"
-      else
-        created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-        guarded_read ruling_age last_issue_comment_activity "$n" "$created" \
-          || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
-      fi
-    fi
+    # The ruling clock reads comments only (#284 D1), skips the flag-setter's
+    # and floors at the current `labeled` event (#534 D1/D2). The reclaim
+    # clock (`age`) must never reach this call, and no read happens here:
+    # `ruling_age` was taken at the top of the pass, under the same label
+    # gate and before any branch or nudge could post. Reading it here instead
+    # would date the item by the operator nudge and the board flags above.
     reconcile_ruling "$n" "$ruling_age" "$NOW"
   fi
 }

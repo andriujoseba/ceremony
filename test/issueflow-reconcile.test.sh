@@ -2472,11 +2472,13 @@ check "...and nothing claims it was" 1 "" \
   grep -qF '#81: needs-triage (no queue state)' <<<"$broken_mint"
 
 # -- 3. the blockers->ready flip, then a failed COMMENTS read ----------------
-# The read that guards this branch is the marker check ahead of the parse
-# echo: a broken comments endpoint skips there, before the echo or the flip
-# is staged. The timeline is no longer an input on this path at all (#284
-# D1 — the ruling clock reads comments alone), so the unreadable-timeline
-# case moved from "skips everything" to its own pin below.
+# A broken comments endpoint skips this branch before the echo or the flip is
+# staged. The read that reports it is the ruling clock's, taken at the top of
+# the pass under this fixture's `needs-ruling` (#534 D4) rather than the
+# marker check ahead of the parse echo; both are the same comments endpoint
+# and the same skip, so what moved is which read names it. The timeline is
+# still not an input to any clock (#284 D1), and #534's ruling clock keeps it
+# that way by soft-failing its own timeline read — the pin below.
 printf '%s\n' '{"number":82,"state":"closed"}' \
   >"$ORDER/repos_owner_repo_issues_82.json"
 order_fixture 83 '[{"name":"blocked"},{"name":"needs-ruling"}]' 'Blocked by #82.'
@@ -2491,7 +2493,7 @@ check "...and posting the blockers-cleared comment" 0 "" order_wrote 83 comment
 order_breaks 83 comments
 broken_flip="$(order_run)"
 check "a failed comments read skips the blockers->ready composition" 0 \
-  "issueflow: #83: skipped this pass — could not read its comments: $GH_STUB_STDERR" \
+  "issueflow: #83: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
   printf '%s\n' "$broken_flip"
 check "...leaving the issue blocked" 1 "" order_wrote 83 edit
 check "...with no comment posted about it" 1 "" order_wrote 83 comment
@@ -2512,10 +2514,12 @@ check "...and the ruling ladder says what it could not read" 0 \
   printf '%s\n' "$narrowed_flip"
 
 # -- 4. a posted nudge, then a failed COMMENTS read -------------------------
-# The comment-only half of the class: the epic nudge's own marker check is
-# the read that fails, so the nudge is never staged and the skip reports the
-# truth. A comment is as much a mutation as a label — it is the thing
-# markers exist to make idempotent.
+# The comment-only half of the class: the comments endpoint the epic nudge's
+# marker check needs is broken, so the nudge is never staged and the skip
+# reports the truth. Under this fixture's `needs-ruling` the ruling clock's
+# read reaches that endpoint first and names the skip (#534 D4); the marker
+# check is the same read one statement later. A comment is as much a mutation
+# as a label — it is the thing markers exist to make idempotent.
 order_fixture 84 '[{"name":"epic"},{"name":"needs-ruling"}]' \
   '## Task list
 
@@ -2530,7 +2534,7 @@ check "...by posting a comment" 0 "" order_wrote 84 comment
 order_breaks 84 comments
 broken_nudge="$(order_run)"
 check "a failed comments read skips the epic-nudge composition" 0 \
-  "issueflow: #84: skipped this pass — could not read its comments: $GH_STUB_STDERR" \
+  "issueflow: #84: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
   printf '%s\n' "$broken_nudge"
 check "...and the nudge comment is never posted" 1 "" order_wrote 84 comment
 check "...and nothing claims it was" 1 "" \

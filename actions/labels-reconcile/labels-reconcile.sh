@@ -1778,13 +1778,30 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   fi
 
   # ---- stale: real activity only, and blocked is legitimately quiet ----
-  last_activity="$(
+  # The two comment reads carry their author now, because the ruling clock
+  # below is a second max over THIS data and excludes one author (#534 D5).
+  # `stale` is unchanged by that: it still takes the five-source max whole,
+  # and the author column is dropped before it ever sees a timestamp. The
+  # reads stay inside the same command substitution shape they always had, so
+  # a failed read still yields no rows rather than taking the pass down.
+  local issue_comment_rows pr_comment_rows
+  issue_comment_rows="$(gh api --paginate "repos/$REPO/issues/$n/comments" \
+    --jq '.[] | [.user.login, .created_at] | @tsv' || :)"
+  pr_comment_rows="$(gh api --paginate "repos/$REPO/pulls/$n/comments" \
+    --jq '.[] | [.user.login, .created_at] | @tsv' || :)"
+  local unauthored_activity
+  unauthored_activity="$(
     {
       jq -r '.created_at' <<<"$PR_JSON"
       jq -r '.[].submitted_at' <<<"$REVIEWS_JSON"
-      gh api --paginate "repos/$REPO/issues/$n/comments" --jq '.[].created_at'
-      gh api --paginate "repos/$REPO/pulls/$n/comments" --jq '.[].created_at'
       gh api --paginate "repos/$REPO/pulls/$n/commits" --jq '.[].commit.committer.date'
+    } | sort
+  )"
+  last_activity="$(
+    {
+      printf '%s\n' "$unauthored_activity"
+      cut -f2 <<<"$issue_comment_rows"
+      cut -f2 <<<"$pr_comment_rows"
     } | sort | tail -n1
   )"
   last_activity_epoch="$(date -d "$last_activity" +%s)"
@@ -1844,7 +1861,40 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
   # side). Behind the flag check so flag-free PRs — all of them, almost
   # always — cost no extra API reads.
   if has_label needs-ruling; then
-    reconcile_ruling "$n" "$last_activity_epoch" "$NOW"
+    # The ruling clock is a SECOND max over the data `stale` already fetched,
+    # at no extra comment read (#534 D5/D6). It differs from `stale`'s in two
+    # ways and only two: the flag-setter's comments — issue comments and
+    # review comments alike, the same key on both — do not count, and the
+    # clock floors at the current `labeled` event. Reviews and commits pass
+    # through whole: triage neither reviews code nor pushes, so those are not
+    # the setter's acts, and a setter who did push has done something anybody
+    # would call activity. They ride the empty-login column ruling_clock_at
+    # never filters.
+    #
+    # Narrowing `stale` to this instead is the build D6 forbids: `stale` asks
+    # whether the PR moved at all, a question with no excluded party in it.
+    #
+    # The timeline read is the one new call, and it is paid only by a flagged
+    # PR — the same episode facts reconcile_ruling reads below, taken here
+    # because the clock is the caller's to compute and must be computed
+    # before this pass posts anything (#534 D4). An unreadable timeline, or
+    # one with no visible `labeled` event, leaves the clock at `stale`'s
+    # value: reconcile_ruling stands down on that same read, so no nudge
+    # follows either way, and an unreadable fact invents no verdict.
+    local ruling_row ruling_clock_epoch="$last_activity_epoch"
+    if ruling_row="$(ruling_flag_row "$n")"; then
+      ruling_clock_epoch="$(date -d "$(
+        ruling_clock_at "${ruling_row%%$'\t'*}" "${ruling_row##*$'\t'}" <<<"$(
+          # One row for the three unfiltered sources: they are already sorted,
+          # so their max is the only one of them that can win, and it enters
+          # under the empty login that means "counts whatever the setter did".
+          printf '\t%s\n' "$(tail -n1 <<<"$unauthored_activity")"
+          printf '%s\n' "$issue_comment_rows"
+          printf '%s\n' "$pr_comment_rows"
+        )"
+      )" +%s)"
+    fi
+    reconcile_ruling "$n" "$ruling_clock_epoch" "$NOW"
   fi
 
   # `attention` belongs on the assigned issue that owns the claim, never on
