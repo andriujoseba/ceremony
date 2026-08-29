@@ -26,7 +26,14 @@
 #     flag-setter's comments (#534 D1), and the property holds only because the
 #     setter can never be the identity the sweep posts as — neither
 #     reconciler writes this label, every mention of it in both files being a
-#     read, and LABELS.md carries the same rule as doctrine. Exempting a
+#     read, and LABELS.md carries the same rule as doctrine. The two
+#     identities cannot collide by configuration either, which is the stronger
+#     half of the same argument: every reconcile step in
+#     .github/workflows/labels-sweep.yml runs under
+#     `GH_TOKEN: ${{ github.token }}`, so the sweep posts as
+#     `github-actions[bot]`, while this label is applied by a builder or a
+#     human. The code-level grep bounds what this repo's files do; that line
+#     bounds who the poster is. Exempting a
 #     machine comment instead would mean exempting the nudge itself, which is
 #     the per-pass repeat the missing marker exists to prevent (#534 D3, D8).
 #   - The failure direction is always *flag*, never *act*: a bare flag is
