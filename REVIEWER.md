@@ -35,11 +35,11 @@ In order of authority:
    owns. The shape once served a post-merge criterion too — `Closes #137`
    closed its issue with such a criterion unmet, which is what bought the rule
    (#151) — and that path is retired, no mint producing one (#536). For a
-   `Refs #N` body, also verify that no closing
-   keyword immediately precedes `#N` anywhere in the body, even in prose
-   explaining the hand close: GitHub used that shape to close #209 and #212
-   (#200, #218). The `refs-not-closing` guard and GitHub's closing-issue graph
-   settle the check: a `Refs #N` head with a clean graph closes nothing, and a
+   `Refs #N` body, also verify that no closing keyword immediately precedes
+   `#N` anywhere in the body, even in prose explaining the hand close: GitHub
+   used that shape to close #209 and #212 (#200, #218). The
+   `refs-not-closing` guard and GitHub's closing-issue graph settle the
+   check: a `Refs #N` head with a clean graph closes nothing, and a
    closing keyword quoted inside a code span at such a head is not a defect or
    grounds for request-changes. The safe forms put the number first (`#N is
    closed by hand`) or omit it (`triage closes the issue by hand`). Check every

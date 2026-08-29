@@ -140,15 +140,15 @@ not to guess.
   hand once its criteria are met, the builder reporting there whether the PR
   merged or closed and clearing `offsite` in the same comment. The
   cross-repo merge never closes the authorizing issue (#13, #16).
-- **A same-repo PR always carries `Closes #N`.** There is no acceptance-criteria
-  shape that does not: the mint already asked of every criterion whether its
-  evidence can exist before the merge and split out the ones whose evidence
-  cannot, so nothing is left for the merge to hand on. Where you meet one that
-  survived — a criterion whose subject does not exist until the change is on
-  the base branch, a workflow trigger proved live, a released artifact — it is
-  a **defect in the issue**: report it there and let triage split it, the same
-  move you make for a criterion beyond your reach. Never write `Refs #N` to
-  route around it (#151, #536).
+- **A same-repo PR always carries `Closes #N`.** There is no
+  acceptance-criteria shape that does not: the mint already asked of every
+  criterion whether its evidence can exist before the merge and split out the
+  ones whose evidence cannot, so nothing is left for the merge to hand on.
+  Where you meet one that survived — a criterion whose subject does not exist
+  until the change is on the base branch, a workflow trigger proved live, a
+  released artifact — it is a **defect in the issue**: report it there and let
+  triage split it, the same move you make for a criterion beyond your reach.
+  Never write `Refs #N` to route around it (#151, #536).
 - On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence
