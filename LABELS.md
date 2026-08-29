@@ -214,7 +214,14 @@ never activity, or the sweep would reset itself — and each surface's clock
 reads what exists on it: on a pull request, comments, reviews and commits;
 on an issue, comments alone. An assignment is the claim clock's fact, not
 the ruling's — claiming a flagged issue does not answer it, and buys the
-escalation no quiet (#284).
+escalation no quiet (#284). On the same axis, a comment by the current
+episode's flag-setter is not activity on this clock, and the clock runs from
+that `labeled` event rather than from the item's creation: the setter owes a
+published re-read at the late rungs, so counting those re-reads would let the
+party owing them silence the reminder addressed to the party owing the
+decision, and dropping them without the floor would report an old item as
+quiet since before the ruling existed. Reviews and commits still count in
+full, whoever wrote them, and no other clock excludes anybody (#284, #534).
 
 `offsite` is issue-only and records that a claimed issue's deliverable lives
 in another repository, where a closing reference cannot make a local open PR

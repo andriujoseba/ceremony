@@ -931,6 +931,133 @@ expect "no label edit across both sweeps names the ruling flag" \
   no "$(grep -q 'needs-ruling' "$RTMP/edits" 2>/dev/null && echo yes || echo no)"
 
 # ---------------------------------------------------------------------------
+# The PR surface takes the same clock rule (#534): the flag-setter's own
+# comments are not activity and the clock floors at the `labeled` event, while
+# `stale` keeps the whole five-source max over the same fetched data. The
+# exclusion is comment-shaped — issue comments and review comments on one key,
+# reviews and commits counted whole, whoever wrote them (D5).
+# ---------------------------------------------------------------------------
+pr_ruling_fixture() { # $1 PR, $2 setter, $3 flag age days, $4 extra comment objects
+  local flag=$((RNOW - $3 * 86400))
+  jq -n --arg at "$(iso_at "$flag")" --arg who "$2" \
+    '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":$who},"created_at":$at}]' \
+    >"$RTMP/repos_owner_repo_issues_${1}_timeline.json"
+  jq -n --arg at "$(iso_at $((flag - 60)))" --arg who "$2" \
+    --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z\nDefault:  none — hard block' \
+    --arg d2 "$(iso_at $((flag + 2 * 86400)))" \
+    --arg d4 "$(iso_at $((flag + 4 * 86400)))" \
+    --arg d6 "$(iso_at $((flag + 6 * 86400)))" \
+    --argjson extra "${4:-[]}" \
+    '[{"user":{"login":$who},"created_at":$at,"html_url":"https://x/esc","body":$b},
+      {"user":{"login":$who},"created_at":$d2,"html_url":"https://x/rr2","body":"re-read: it holds"},
+      {"user":{"login":$who},"created_at":$d4,"html_url":"https://x/rr4","body":"re-read: it holds"},
+      {"user":{"login":$who},"created_at":$d6,"html_url":"https://x/rr6","body":"re-read: it holds"}] + $extra' \
+    >"$RTMP/repos_owner_repo_issues_${1}_comments.json"
+}
+nudge_count() { # grep -c prints 0 AND exits 1 on no match — take the number, not the status
+  local c
+  c="$(grep -c 'a ruling on this item has been pending' "$RTMP/posted-$1" 2>/dev/null)" || :
+  printf '%s' "${c:-0}"
+}
+
+# The reviews are older than the flag here, so the only thing that could
+# silence this clock is the setter's own thread. The rung markers are not
+# pre-seeded, unlike probe 77's: a seeded marker is a sweep comment inside the
+# window, and a machine comment does still reset this clock (D8) — seeding one
+# would move the number this case exists to measure. The 24h rung therefore
+# fires in the same pass, and these rows are about the nudge specifically.
+pr_ruling_fixture 190 setter 8
+setter_pr="$(ruling_sweep_probe "needs-ruling" 190 0 "" 9)"
+expect "a PR whose only comments are the setter's still nudges" \
+  yes "$(grep -q 'ruling nudge' <<<"$setter_pr" && echo yes || echo no)"
+expect "...exactly once" 1 "$(nudge_count 190)"
+expect "...reporting the flag's age, not the last re-read's" \
+  yes "$(grep -qF 'no activity for 8 days' "$RTMP/posted-190" && echo yes || echo no)"
+
+# One comment from a panelist, at day 6 of the episode, and the clock resets.
+pr_ruling_fixture 191 setter 8 "$(jq -n --arg who "$BOT1" \
+  --arg at "$(iso_at $((RNOW - 2 * 86400)))" \
+  '[{"user":{"login":$who},"created_at":$at,"html_url":"https://x/rev","body":"reading it now"}]')"
+reviewer_spoke="$(ruling_sweep_probe "needs-ruling" 191 0 "" 9)"
+expect "a panelist's comment at day 6 holds the nudge" \
+  no "$(grep -q 'ruling nudge' <<<"$reviewer_spoke" && echo yes || echo no)"
+expect "...and nothing was posted at all" 0 "$(nudge_count 191)"
+
+# D5: the exclusion is comment-shaped. Here the setter IS a panelist, and its
+# APPROVAL a day old counts in full — a build that dropped the setter's
+# reviews and commits with its comments would nudge a decider answered
+# yesterday. The control below moves only the reviews.
+pr_ruling_fixture 192 "$BOT1" 8
+setter_reviewed="$(ruling_sweep_probe "needs-ruling" 192 0 "" 1)"
+expect "the setter's own review still counts — the exclusion is comment-shaped" \
+  no "$(grep -q 'ruling nudge' <<<"$setter_reviewed" && echo yes || echo no)"
+pr_ruling_fixture 193 "$BOT1" 8
+setter_reviewed_old="$(ruling_sweep_probe "needs-ruling" 193 0 "" 9)"
+expect "...and with that review older than the flag, the same PR nudges" \
+  yes "$(grep -q 'ruling nudge' <<<"$setter_reviewed_old" && echo yes || echo no)"
+
+# The other half of the same key: a review comment on the pulls endpoint is
+# excluded exactly as an issue comment is, so the setter cannot buy quiet
+# there either.
+pr_ruling_fixture 194 setter 8
+jq -n --arg at "$(iso_at $((RNOW - 3600)))" \
+  '[{"user":{"login":"setter"},"created_at":$at}]' \
+  >"$RTMP/repos_owner_repo_pulls_194_comments.json"
+setter_review_comment="$(ruling_sweep_probe "needs-ruling" 194 0 "" 9)"
+expect "an hour-old review comment by the setter does not hold the nudge" \
+  yes "$(grep -q 'ruling nudge' <<<"$setter_review_comment" && echo yes || echo no)"
+
+# D6, at the source: `stale` keeps the five-source max. A build that narrows
+# it to the ruling clock fails here before any fixture has to notice.
+stale_block="$(sed -n '/^  # ---- stale: real activity only/,/^  last_activity_epoch=/p' \
+  actions/labels-reconcile/labels-reconcile.sh)"
+# shellcheck disable=SC2016 # the five sources are asserted as source literals
+for src in "jq -r '.created_at' <<<\"\$PR_JSON\"" \
+  "jq -r '.[].submitted_at' <<<\"\$REVIEWS_JSON\"" \
+  'issues/$n/comments' 'pulls/$n/comments' 'pulls/$n/commits'; do
+  expect "the stale clock still reads $src" \
+    yes "$(grep -qF -- "$src" <<<"$stale_block" && echo yes || echo no)"
+done
+expect "...and the ruling clock is not what stale grades" \
+  no "$(grep -q 'ruling_clock_epoch' <<<"$stale_block" && echo yes || echo no)"
+# Live, because the source pin above cannot see it: a build that narrows
+# `stale`'s clock to the ruling clock's rule leaves every endpoint literal in
+# place and still reds this. An unflagged PR, quiet for ten days apart from one
+# comment an hour ago by the identity that WOULD be a flag-setter elsewhere —
+# `stale` counts it, having no excluded party in its question at all (D6).
+jq -n --arg at "$(iso_at $((RNOW - 3600)))" \
+  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/s","body":"still here"}]' \
+  >"$RTMP/repos_owner_repo_issues_196_comments.json"
+unflagged_fresh="$(ruling_sweep_probe "state:addressing" 196 0 "" 10)"
+expect "an hour-old comment keeps an unflagged PR off stale, whoever wrote it" \
+  no "$(grep -q 'stale (' <<<"$unflagged_fresh" && echo yes || echo no)"
+# The control that makes the row above mean something: the same PR with no
+# comment at all is ten days quiet and does go stale.
+printf '[]\n' >"$RTMP/repos_owner_repo_issues_197_comments.json"
+unflagged_quiet="$(ruling_sweep_probe "state:addressing" 197 0 "" 10)"
+expect "...while the same PR with nothing on it goes stale" \
+  yes "$(grep -q 'stale (' <<<"$unflagged_quiet" && echo yes || echo no)"
+# The cost, counted rather than asserted in prose (D6). The ruling clock is a
+# second max over data `stale` already fetched, so it pays for no comment read
+# of its own: the two issue-comment reads are `stale`'s and reconcile_ruling's,
+# exactly as before this issue, and the review comments are read once. What a
+# flagged PR does now pay is a second `timeline` read — the episode's setter
+# and `labeled` time have to be in hand BEFORE the pass posts, and
+# reconcile_ruling reads them again for its own comments. That is disclosed
+# here rather than left to be discovered, and it is paid on flagged PRs alone,
+# which is the control below.
+endpoint_calls() { grep -cxF "repos/owner/repo/$1" "$RTMP/api-calls"; }
+expect "the ruling clock adds no comment read of its own" 2 \
+  "$(endpoint_calls issues/190/comments)"
+expect "...and the review comments are still read once" 1 \
+  "$(endpoint_calls pulls/190/comments)"
+expect "...while the timeline is read twice: the clock's, then the sweep's" 2 \
+  "$(endpoint_calls issues/190/timeline)"
+ruling_sweep_probe "state:addressing" 195 0 "" 9 >/dev/null
+expect "an unflagged PR reads no timeline at all" 0 \
+  "$(grep -cxF "repos/owner/repo/issues/195/timeline" "$RTMP/api-calls" || true)"
+
+# ---------------------------------------------------------------------------
 # The attention pass on the PR surface (#232): every PR target is malformed,
 # assigned or not. The episode marker makes the comment once-per-labeling;
 # every other board mutation remains the ordinary state machine's concern.

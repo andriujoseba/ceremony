@@ -431,6 +431,174 @@ check "the rung half fired" 0 "" grep -qF "$RULING_RUNG12_MARKER" "$TMP/posted-2
 reconcile_ruling 21 "$T21" "$NOW" >/dev/null
 check "both halves are once-per-episode" 0 "2" posts 21
 
+# ---------------------------------------------------------------------------
+# The ruling clock (#534): the setter's own comments are not activity, and the
+# clock floors at the current `labeled` event. Pure first, then end to end
+# through a caller — because the clock is the CALLER's to compute (D4), a
+# fixture that hands reconcile_ruling a hand-picked epoch cannot see this rule
+# at all.
+# ---------------------------------------------------------------------------
+
+CL=2026-08-20T00:00:00Z
+check "the setter's own comment is not activity" 0 "$CL" \
+  ruling_clock_at setter "$CL" <<<"$(printf 'setter\t2026-08-26T00:00:00Z\n')"
+check "somebody else's comment is" 0 "2026-08-26T00:00:00Z" \
+  ruling_clock_at setter "$CL" <<<"$(printf 'danmt\t2026-08-26T00:00:00Z\n')"
+check "one non-setter comment carries a thread of the setter's" 0 "2026-08-22T00:00:00Z" \
+  ruling_clock_at setter "$CL" <<<"$(printf 'setter\t2026-08-21T00:00:00Z\ndanmt\t2026-08-22T00:00:00Z\nsetter\t2026-08-26T00:00:00Z\n')"
+check "no comments at all floors at the labeled event" 0 "$CL" \
+  ruling_clock_at setter "$CL" </dev/null
+check "a comment older than the flag cannot lower the clock" 0 "$CL" \
+  ruling_clock_at setter "$CL" <<<"$(printf 'danmt\t2020-01-01T00:00:00Z\n')"
+# The empty-login column is how the PR surface feeds reviews and commits
+# through: comment-shaped exclusion only (D5).
+check "an unattributed row always counts — reviews and commits are not filtered" 0 \
+  "2026-08-30T00:00:00Z" \
+  ruling_clock_at setter "$CL" <<<"$(printf '\t2026-08-30T00:00:00Z\nsetter\t2026-09-01T00:00:00Z\n')"
+# A re-flag by a different actor changes who is excluded, from that event on —
+# the rule is the episode's identity, never a role or a login list.
+check "a re-flag by another actor moves the exclusion" 0 "2026-08-26T00:00:00Z" \
+  ruling_clock_at danmt "$CL" <<<"$(printf 'setter\t2026-08-26T00:00:00Z\ndanmt\t2026-08-27T00:00:00Z\n')"
+check "an unreadable setter drops nobody — it never widens to the whole board" 0 \
+  "2026-08-26T00:00:00Z" \
+  ruling_clock_at "" "$CL" <<<"$(printf 'setter\t2026-08-26T00:00:00Z\n')"
+
+# A caller, exactly as both reconcilers are: read the episode's facts and the
+# comments, compute the clock with the shared rule, and only then sweep.
+sweep() { # $1 issue number, $2 now (default $NOW)
+  local row comments
+  row="$(ruling_flag_row "$1")" || return $?
+  comments="$(gh api --paginate "repos/$REPO/issues/$1/comments" \
+    --jq '.[] | [.user.login, .created_at] | @tsv')"
+  reconcile_ruling "$1" \
+    "$(date -d "$(ruling_clock_at "${row%%$'\t'*}" "${row##*$'\t'}" <<<"$comments")" +%s)" \
+    "${2:-$NOW}"
+}
+# The nudge alone, isolated from whatever else a pass posted — the WHOLE
+# record between the stub's separators, not the tail from the addressee line
+# down: a marker sits ABOVE its body, so a record starting at the addressee is
+# a marker pin that can never see the marker it is pinning.
+nudge_record() {
+  awk '/^----$/ { if (index(buf, "a ruling on this item has been pending")) printf "%s", buf
+                  buf = ""; next }
+       { buf = buf $0 "\n" }' "$TMP/posted-$1"
+}
+nudges() { grep -c 'a ruling on this item has been pending' "$TMP/posted-$1" || true; }
+
+# -- the setter's re-reads no longer silence the clock (D1, D2) --------------
+# crew#207's shape: 8 days flagged, a conforming escalation at the flag, and
+# the setter's own re-reads at days 2, 4 and 6. Shipped, each re-read bought
+# another 7 quiet days and the decider was never paged.
+#
+# The rung markers are NOT pre-seeded here, unlike the #12 fixture above, and
+# that is the fixture saying something rather than being careless: a seeded
+# rung marker is a sweep comment inside the window, and a machine comment does
+# still reset this clock (D8). Seeding one would move the very number this
+# case exists to measure. So the 24h rung fires in the same pass, and the
+# assertions are about the nudge specifically.
+S0=$((NOW - 8 * 86400))
+jq -n --arg at "$(iso "$S0")" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
+  >"$(timeline_file 30)"
+setter_thread() { # $1 issue, $2 the flag epoch, $3 an extra "login epoch" pair or ""
+  # The optional row's two fields are only computed when the row is asked for.
+  # Expanded unconditionally, `iso ""` reaches `date -d @` and prints its
+  # complaint to stderr; the empty result then happens to be what the caller
+  # meant, so the suite stayed green while emitting a diagnostic on the
+  # helper's primary path.
+  local other="" other_at=""
+  if [ -n "${3:-}" ]; then
+    other="${3%% *}"
+    other_at="$(iso "${3##* }")"
+  fi
+  jq -n --arg esc "$(iso "$(($2 - 60))")" --arg b "$TPL" \
+    --arg d2 "$(iso "$(($2 + 2 * 86400))")" \
+    --arg d4 "$(iso "$(($2 + 4 * 86400))")" \
+    --arg d6 "$(iso "$(($2 + 6 * 86400))")" \
+    --arg other "$other" --arg other_at "$other_at" \
+    '[{"user":{"login":"setter"},"created_at":$esc,"html_url":"https://x/esc","body":$b},
+      {"user":{"login":"setter"},"created_at":$d2,"html_url":"https://x/rr2","body":"re-read: the default still holds"},
+      {"user":{"login":"setter"},"created_at":$d4,"html_url":"https://x/rr4","body":"re-read: still holds"},
+      {"user":{"login":"setter"},"created_at":$d6,"html_url":"https://x/rr6","body":"re-read: still holds"}]
+     + (if $other == "" then [] else
+         [{"user":{"login":$other},"created_at":$other_at,"html_url":"https://x/other","body":"looking"}] end)' \
+    >"$(comments_file "$1")"
+}
+# The builder is pinned before the sweep that reads it. Every must-nudge row
+# below would be satisfied by an empty comments file — a thread with nothing to
+# exclude nudges for the wrong reason and looks the same in a green run — so
+# the fixture's contents are asserted, not assumed, and the build is asserted
+# silent so a re-introduced unguarded expansion reds a row instead of scrolling
+# past.
+setter_noise="$(setter_thread 30 "$S0" "" 2>&1)"
+check "the setter-only thread builds with no shell diagnostic" 0 "[]" \
+  printf '[%s]' "$setter_noise"
+check "...and its fixture holds exactly four comments, all the setter's" 0 "[4 setter]" \
+  printf '[%s]' \
+  "$(jq -r '"\(length) \([.[].user.login] | unique | join(","))"' "$(comments_file 30)")"
+check "...being the escalation and the day-2, day-4 and day-6 re-reads" 0 \
+  "[https://x/esc,https://x/rr2,https://x/rr4,https://x/rr6]" \
+  printf '[%s]' "$(jq -r '[.[].html_url] | join(",")' "$(comments_file 30)")"
+sweep 30 >/dev/null
+check "the setter's own re-reads do not hold off the nudge" 0 "1" nudges 30
+check "...and the days figure is measured from the labeled event, not the last re-read" 0 \
+  "" grep -qF 'no activity for 8 days' <<<"$(nudge_record 30)"
+check "...naming the setter without tagging them" 1 "" grep -qF '@setter' <<<"$(nudge_record 30)"
+# D3, pinned on the body that was actually posted: no marker of any kind.
+check "the nudge body carries no marker at all" 1 "" grep -qF '<!--' <<<"$(nudge_record 30)"
+# The self-rate-limit survives D1 because the sweep is never the setter: the
+# nudge it posted is the newest comment that counts, so the window closes.
+sweep 30 >/dev/null
+check "a second sweep straight after the nudge posts nothing" 0 "1" nudges 30
+# And it is a WINDOW, not a once-per-episode gate — the property the missing
+# marker buys and the one a marker would silently take away (D3). Eight more
+# quiet days and the same episode is paged again.
+sweep 30 $((NOW + 8 * 86400)) >/dev/null
+check "eight more quiet days page the same episode again" 0 "2" nudges 30
+
+# -- one non-setter comment still resets it (D1) -----------------------------
+jq -n --arg at "$(iso "$S0")" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
+  >"$(timeline_file 31)"
+setter_thread 31 "$S0" "danmt $((S0 + 6 * 86400))"
+# The guard's other side: asked for, the optional row is really written.
+check "the non-setter call adds a fifth comment, by the other login" 0 "[5 danmt]" \
+  printf '[%s]' "$(jq -r '"\(length) \(.[-1].user.login)"' "$(comments_file 31)")"
+sweep 31 >/dev/null
+check "the decider's own comment at day 6 holds the nudge" 0 "0" nudges 31
+
+# -- the floor (D2): with the setter's comments gone, most flagged items have
+# no counting comment at all, and the shipped clock then fell back to the
+# item's `created_at` and read an old item as quiet since long before the
+# ruling existed. Here the floor IS the answer — `created_at` is not an input
+# to this function at all. The whole composition, an item created 90 days ago
+# and flagged an hour ago, is driven in test/issueflow-reconcile.test.sh,
+# where the caller is the thing that used to supply that fallback. ----------
+jq -n --arg at "$(iso "$((NOW - 3600))")" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
+  >"$(timeline_file 32)"
+printf '[]\n' >"$(comments_file 32)"
+sweep 32 >/dev/null
+check "an hour-old flag with no comments does not nudge" 0 "0" nudges 32
+check "...though the bare-flag check still speaks, which is not this clock's business" 0 "" \
+  grep -qF "$RULING_BARE_MARKER" "$TMP/posted-32"
+jq -n --arg at "$(iso "$S0")" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
+  >"$(timeline_file 33)"
+printf '[]\n' >"$(comments_file 33)"
+sweep 33 >/dev/null
+check "the same item flagged 8 days ago nudges once" 0 "1" nudges 33
+check "...reporting 8 days, the age of the flag and not of the issue" 0 "" \
+  grep -qF 'no activity for 8 days' <<<"$(nudge_record 33)"
+
+# -- the episode facts, and what an unreadable one costs ---------------------
+check "the flag row is the newest episode's actor and time" 0 "" \
+  test "$(ruling_flag_row 33)" = "$(printf 'setter\t%s' "$(iso "$S0")")"
+check "an unreadable timeline is exit 1, distinguishable from an absent event" 1 "" \
+  ruling_flag_row 999
+printf '[]\n' >"$(timeline_file 34)"
+check "a readable timeline with no labeled event is exit 2" 2 "" ruling_flag_row 34
+
 # -- across every scenario above: not one label write ------------------------
 check "the ruling sweep never wrote a label" 1 "" test -f "$TMP/edits"
 
