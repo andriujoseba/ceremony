@@ -1020,6 +1020,23 @@ for src in "jq -r '.created_at' <<<\"\$PR_JSON\"" \
 done
 expect "...and the ruling clock is not what stale grades" \
   no "$(grep -q 'ruling_clock_epoch' <<<"$stale_block" && echo yes || echo no)"
+# Live, because the source pin above cannot see it: a build that narrows
+# `stale`'s clock to the ruling clock's rule leaves every endpoint literal in
+# place and still reds this. An unflagged PR, quiet for ten days apart from one
+# comment an hour ago by the identity that WOULD be a flag-setter elsewhere —
+# `stale` counts it, having no excluded party in its question at all (D6).
+jq -n --arg at "$(iso_at $((RNOW - 3600)))" \
+  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/s","body":"still here"}]' \
+  >"$RTMP/repos_owner_repo_issues_196_comments.json"
+unflagged_fresh="$(ruling_sweep_probe "state:addressing" 196 0 "" 10)"
+expect "an hour-old comment keeps an unflagged PR off stale, whoever wrote it" \
+  no "$(grep -q 'stale (' <<<"$unflagged_fresh" && echo yes || echo no)"
+# The control that makes the row above mean something: the same PR with no
+# comment at all is ten days quiet and does go stale.
+printf '[]\n' >"$RTMP/repos_owner_repo_issues_197_comments.json"
+unflagged_quiet="$(ruling_sweep_probe "state:addressing" 197 0 "" 10)"
+expect "...while the same PR with nothing on it goes stale" \
+  yes "$(grep -q 'stale (' <<<"$unflagged_quiet" && echo yes || echo no)"
 # The cost, counted rather than asserted in prose (D6). The ruling clock is a
 # second max over data `stale` already fetched, so it pays for no comment read
 # of its own: the two issue-comment reads are `stale`'s and reconcile_ruling's,
