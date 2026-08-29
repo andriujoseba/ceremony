@@ -76,6 +76,11 @@ check "a missing default line is unparseable" 0 "UNPARSEABLE" \
 check "a timestamp off the default line is somebody's prose" 0 "UNPARSEABLE" \
   ruling_default_decision <<<$'the deadline 2026-07-23T21:00Z came up above\nDefault:  soonish'
 
+PR_HARD_DESC='`Default: none` — a hard block; no default ever fires'
+check "the pure PR rung-24 body is byte-identical to the merge-base golden" 0 "" \
+  diff -u "$ROOT/test/fixtures/ruling-rung24-pr.golden.md" \
+  <(ruling_rung24_body pr HARDBLOCK "$PR_HARD_DESC" setter)
+
 rows="$(printf 'setter %s https://x/first\nsetter %s https://x/late\nbystander %s https://x/other\nsetter %s https://x/early-out\n' \
   "$((L - 300))" "$((L + 600))" "$((L - 60))" "$((L - 5000))")"
 check "the nudge links the earliest in-window escalation by the setter" 0 "https://x/first" \
@@ -225,14 +230,22 @@ posts() { [ -f "$TMP/posted-$1" ] && grep -c '^----$' "$TMP/posted-$1" || echo 0
 timeline_file() { printf '%s/repos_owner_repo_issues_%s_timeline.json' "$TMP" "$1"; }
 comments_file() { printf '%s/repos_owner_repo_issues_%s_comments.json' "$TMP" "$1"; }
 
+# The surface is a required caller fact. Both invalid shapes fail before any
+# endpoint can be read, so they cannot post even if a fixture appears later.
+check "a missing ruling surface fails loudly" 2 "surface" \
+  reconcile_ruling 8 "$NOW" "$NOW"
+check "an unrecognised ruling surface fails loudly" 2 "must be issue or pr" \
+  reconcile_ruling 8 "$NOW" "$NOW" discussion
+check "invalid ruling surfaces post nothing" 0 "0" posts 8
+
 # -- bare flag, swept twice: exactly one comment -----------------------------
 T=$((NOW - 3600))
 jq -n --arg at "$(iso "$T")" \
   '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
   >"$(timeline_file 9)"
 printf '[]\n' >"$(comments_file 9)"
-check "a bare flag is commented on" 0 "ruling flag is bare" reconcile_ruling 9 "$T" "$NOW"
-check "...and the sweep never posted twice" 0 "" reconcile_ruling 9 "$T" "$NOW"
+check "a bare flag is commented on" 0 "ruling flag is bare" reconcile_ruling 9 "$T" "$NOW" issue
+check "...and the sweep never posted twice" 0 "" reconcile_ruling 9 "$T" "$NOW" issue
 check "one bare comment across two sweeps" 0 "1" posts 9
 check "the bare comment carries its marker" 0 "" \
   grep -qF '<!-- ceremony:needs-ruling-bare -->' "$TMP/posted-9"
@@ -248,7 +261,7 @@ jq -n --arg at "$(iso "$T")" \
 jq -n --arg at "$(iso "$((T - 840))")" --arg b "$TPL_BOLD" \
   '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc","body":$b}]' \
   >"$(comments_file 10)"
-reconcile_ruling 10 "$T" "$NOW" >/dev/null
+reconcile_ruling 10 "$T" "$NOW" issue >/dev/null
 check "an accompanied conforming flag posts nothing" 0 "0" posts 10
 
 # -- re-flag: judged on its own escalation, marker scoped per event ----------
@@ -262,7 +275,7 @@ jq -n --arg esc "$(iso "$((T1 - 60))")" --arg marked "$(iso "$((T1 + 300))")" \
   '[{"user":{"login":"setter"},"created_at":$esc,"html_url":"https://x/esc1","body":"the first escalation"},
     {"user":{"login":"sweep-bot"},"created_at":$marked,"html_url":"https://x/bare1","body":"<!-- ceremony:needs-ruling-bare -->\nolder episode"}]' \
   >"$(comments_file 11)"
-reconcile_ruling 11 "$T2" "$NOW" >/dev/null
+reconcile_ruling 11 "$T2" "$NOW" issue >/dev/null
 check "a re-flag is re-checked against its own escalation" 0 "1" posts 11
 
 # -- nudge: fires past 7 quiet days, links the escalation, resets itself -----
@@ -279,7 +292,7 @@ jq -n --arg at "$(iso "$((T0 - 60))")" --arg b "$TPL" \
     {"user":{"login":"sweep-bot"},"created_at":$r12,"html_url":"https://x/r12","body":"<!-- ceremony:needs-ruling-rung12 -->\nrung"},
     {"user":{"login":"sweep-bot"},"created_at":$r24,"html_url":"https://x/r24","body":"<!-- ceremony:needs-ruling-rung24 -->\nrung"}]' \
   >"$(comments_file 12)"
-check "8 quiet days nudge" 0 "ruling nudge" reconcile_ruling 12 "$T0" "$NOW"
+check "8 quiet days nudge" 0 "ruling nudge" reconcile_ruling 12 "$T0" "$NOW" issue
 check "one nudge posted" 0 "1" posts 12
 check "the nudge links the escalation comment" 0 "" grep -qF 'https://x/esc12' "$TMP/posted-12"
 check "the nudge addresses the decider" 0 "" grep -qF '@danmt' "$TMP/posted-12"
@@ -291,7 +304,7 @@ check "the nudge carries no marker — the comment itself resets the window" 1 "
 newest_at="$(jq -r 'map(.created_at) | max' "$(comments_file 12)")"
 check "the posted nudge is now the newest activity" 0 "" \
   test "$(date -d "$newest_at" +%s)" = "$NOW"
-reconcile_ruling 12 "$(date -d "$newest_at" +%s)" "$NOW" >/dev/null
+reconcile_ruling 12 "$(date -d "$newest_at" +%s)" "$NOW" issue >/dev/null
 check "a sweep right after the nudge holds its silence" 0 "1" posts 12
 
 # -- 6 quiet days: silence. The flag itself is fresh (label churn is not
@@ -302,12 +315,12 @@ jq -n --arg at "$(iso "$((NOW - 3600))")" \
 jq -n --arg at "$(iso "$((NOW - 3660))")" --arg b "$TPL" \
   '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc13","body":$b}]' \
   >"$(comments_file 13)"
-reconcile_ruling 13 $((NOW - 6 * 86400)) "$NOW" >/dev/null
+reconcile_ruling 13 $((NOW - 6 * 86400)) "$NOW" issue >/dev/null
 check "6 quiet days do not nudge, and a fresh flag sits on rung 0" 0 "0" posts 13
 
 # -- unreadable timeline: nothing happens ------------------------------------
 check "an unreadable timeline invents no verdict" 0 "timeline unreadable" \
-  reconcile_ruling 14 "$T" "$NOW"
+  reconcile_ruling 14 "$T" "$NOW" issue
 check "...and posts nothing" 0 "0" posts 14
 
 # -- malformed escalation, rung 0: the shape comment, exactly once -----------
@@ -320,8 +333,8 @@ jq -n --arg at "$(iso "$((T15 - 60))")" \
   '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc15","body":$b}]' \
   >"$(comments_file 15)"
 check "a malformed escalation is commented on" 0 "escalation malformed" \
-  reconcile_ruling 15 "$T15" "$NOW"
-reconcile_ruling 15 "$T15" "$NOW" >/dev/null
+  reconcile_ruling 15 "$T15" "$NOW" issue
+reconcile_ruling 15 "$T15" "$NOW" issue >/dev/null
 check "one shape comment across two sweeps" 0 "1" posts 15
 check "the shape comment names exactly the missing label" 0 "" \
   grep -qF 'missing required field labels: **Recommend:**' "$TMP/posted-15"
@@ -342,8 +355,8 @@ jq -n --arg at "$(iso "$((T16 - 60))")" --arg b "$TPL_BOLD" \
   '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc16","body":$b}]' \
   >"$(comments_file 16)"
 check "the 12h rung fires despite recent activity — rungs never reset" 0 "12h rung" \
-  reconcile_ruling 16 $((NOW - 60)) "$NOW"
-reconcile_ruling 16 $((NOW - 60)) "$NOW" >/dev/null
+  reconcile_ruling 16 $((NOW - 60)) "$NOW" issue
+reconcile_ruling 16 $((NOW - 60)) "$NOW" issue >/dev/null
 check "one 12h rung comment, once per episode" 0 "1" posts 16
 check "the rung comment is addressed to the flag-setter" 0 "" grep -qF '@setter' "$TMP/posted-16"
 check "the rung comment names the hard block" 0 "" grep -qF 'Default: none' "$TMP/posted-16"
@@ -351,6 +364,18 @@ check "no nudge rode along — activity is recent and the nudge does reset" 1 ""
   grep -qF '@danmt' "$TMP/posted-16"
 check "the rung comment carries its marker" 0 "" \
   grep -qF "$RULING_RUNG12_MARKER" "$TMP/posted-16"
+
+# The 12h body is surface-agnostic. Drive the same shaped hard block through
+# the PR surface and pin the posted bytes, not merely selected phrases.
+jq -n --arg at "$(iso "$T16")" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
+  >"$(timeline_file 116)"
+jq -n --arg at "$(iso "$((T16 - 60))")" --arg b "$TPL_BOLD" \
+  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc116","body":$b}]' \
+  >"$(comments_file 116)"
+reconcile_ruling 116 $((NOW - 60)) "$NOW" pr >/dev/null
+check "the 12h rung body is byte-identical on issue and PR surfaces" 0 "" \
+  cmp "$TMP/posted-16" "$TMP/posted-116"
 
 # -- the ladder walked on the cron: 12h rung at 13h, 24h rung at 25h ---------
 L17=$((NOW - 25 * 3600))
@@ -360,17 +385,62 @@ jq -n --arg at "$(iso "$L17")" \
 jq -n --arg at "$(iso "$((L17 - 60))")" --arg b "$TPL" \
   '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc17","body":$b}]' \
   >"$(comments_file 17)"
-reconcile_ruling 17 "$L17" $((L17 + 13 * 3600)) >/dev/null
+reconcile_ruling 17 "$L17" $((L17 + 13 * 3600)) issue >/dev/null
 check "a sweep at 13h posts the 12h rung" 0 "1" posts 17
 check "the rung comment names the stated deadline" 0 "" \
   grep -qF '2026-07-23T21:00Z' "$TMP/posted-17"
 check "a sweep at 25h posts the 24h rung — one comment per rung" 0 "24h rung" \
-  reconcile_ruling 17 "$L17" "$NOW"
+  reconcile_ruling 17 "$L17" "$NOW" issue
 check "two rung comments total" 0 "2" posts 17
 check "the 24h comment names triage's past-24h authority" 0 "" \
   grep -qF 'triage picks the option' "$TMP/posted-17"
-reconcile_ruling 17 "$L17" "$NOW" >/dev/null
+check "a timed issue default keeps the builder late-rung instruction" 0 "" \
+  grep -qF 'proceeds regardless' "$TMP/posted-17"
+reconcile_ruling 17 "$L17" "$NOW" issue >/dev/null
 check "...and never a third within the episode" 0 "2" posts 17
+
+# -- issue hard block: the late-rung picks are withdrawn, but the setter's
+# re-read and the decider's nudge remain visible duties ---------------------
+T117=$((NOW - 25 * 3600))
+jq -n --arg at "$(iso "$T117")" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
+  >"$(timeline_file 117)"
+jq -n --arg at "$(iso "$((T117 - 60))")" --arg b "$TPL_BOLD" \
+  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc117","body":$b}]' \
+  >"$(comments_file 117)"
+check "an issue hard block posts the carved-out rung-24 reminder" 0 \
+  "late rungs do not fire" reconcile_ruling 117 "$T117" "$NOW" issue
+check "the carved-out body addresses and names the flag-setter" 0 "" \
+  grep -qF 'flag-setter, @setter' "$TMP/posted-117"
+check "the carved-out body asks for a published re-read against what landed" 0 "" \
+  grep -qF 'published re-read of the default against what has landed' "$TMP/posted-117"
+check "the carved-out body says the flag waits for the human" 0 "" \
+  grep -qF 'the flag waits for the human' "$TMP/posted-117"
+check "the carved-out body reports the hard block as before" 0 "" \
+  grep -qF "$PR_HARD_DESC" "$TMP/posted-117"
+check "the carved-out body names the remaining decider nudge" 0 "" \
+  grep -qF "decider's 7-day nudge" "$TMP/posted-117"
+check "the carved-out body contains none of the withdrawn acts" 1 "" \
+  grep -qE 'proceeds regardless|as a PR|triage picks the option|there is no further timer' \
+  "$TMP/posted-117"
+check "the carved-out body carries exactly the shared rung-24 marker" 0 "1" \
+  grep -cF "$RULING_RUNG24_MARKER" "$TMP/posted-117"
+check "the carved-out body carries no second marker" 1 "" \
+  grep -vF "$RULING_RUNG24_MARKER" "$TMP/posted-117" | grep -qF '<!--'
+reconcile_ruling 117 "$T117" "$NOW" issue >/dev/null
+check "the carved-out comment posts only once per episode" 0 "1" posts 117
+
+# The same hard block on a PR keeps the existing full ladder byte-for-byte.
+jq -n --arg at "$(iso "$T117")" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
+  >"$(timeline_file 118)"
+jq -n --arg at "$(iso "$((T117 - 60))")" --arg b "$TPL_BOLD" \
+  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc118","body":$b}]' \
+  >"$(comments_file 118)"
+reconcile_ruling 118 "$T117" "$NOW" pr >/dev/null
+check "the posted PR hard-block body matches the merge-base golden" 0 "" \
+  diff -u "$ROOT/test/fixtures/ruling-rung24-pr.golden.md" \
+  <(sed '/^----$/d' "$TMP/posted-118")
 
 # -- first observed past 24h: the missed 12h moment is not paged after the
 # fact — the 24h comment carries the whole remaining duty ---------------------
@@ -382,11 +452,15 @@ jq -n --arg at "$(iso "$((T18 - 60))")" \
   --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z\nDefault:  when it feels right' \
   '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc18","body":$b}]' \
   >"$(comments_file 18)"
-reconcile_ruling 18 "$T18" "$NOW" >/dev/null
+reconcile_ruling 18 "$T18" "$NOW" issue >/dev/null
 check "a rung first observed past 24h pages once, not retroactively" 0 "1" posts 18
 check "only the 24h comment fired" 1 "" grep -qF "$RULING_RUNG12_MARKER" "$TMP/posted-18"
 check "the unparseable default is reported, not guessed" 0 "" \
   grep -qF 'unparseable' "$TMP/posted-18"
+check "an unparseable issue default takes the carved-out branch" 0 "" \
+  grep -qF 'late rungs do not fire' "$TMP/posted-18"
+check "an unparseable issue default contains none of the withdrawn acts" 1 "" \
+  grep -qE 'proceeds regardless|as a PR|triage picks the option' "$TMP/posted-18"
 
 # -- a re-flag climbs its own ladder: old rung markers belong to the old
 # episode -------------------------------------------------------------------
@@ -402,7 +476,7 @@ jq -n --arg esc "$(iso "$((TB - 60))")" --arg b "$TPL" \
     {"user":{"login":"sweep-bot"},"created_at":$r24,"html_url":"https://x/r24","body":"<!-- ceremony:needs-ruling-rung24 -->\nold episode"},
     {"user":{"login":"setter"},"created_at":$esc,"html_url":"https://x/esc19","body":$b}]' \
   >"$(comments_file 19)"
-reconcile_ruling 19 "$TB" "$NOW" >/dev/null
+reconcile_ruling 19 "$TB" "$NOW" issue >/dev/null
 check "a re-flag climbs its own ladder — old rung markers do not stick" 0 "1" posts 19
 check "the re-flag's rung comment is the 12h rung" 0 "" \
   grep -qF "$RULING_RUNG12_MARKER" "$TMP/posted-19"
@@ -412,7 +486,7 @@ jq -n --arg at "$(iso "$T")" \
   '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
   >"$(timeline_file 20)"
 check "an unreadable comment list invents no verdict" 0 "comments unreadable" \
-  reconcile_ruling 20 "$T" "$NOW"
+  reconcile_ruling 20 "$T" "$NOW" issue
 check "...and it posts nothing" 0 "0" posts 20
 
 # -- malformed AND on a rung: the shape is owed and the ladder still climbs --
@@ -424,11 +498,11 @@ jq -n --arg at "$(iso "$((T21 - 60))")" \
   --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z' \
   '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc21","body":$b}]' \
   >"$(comments_file 21)"
-reconcile_ruling 21 "$T21" "$NOW" >/dev/null
+reconcile_ruling 21 "$T21" "$NOW" issue >/dev/null
 check "a malformed escalation still climbs the ladder — two comments" 0 "2" posts 21
 check "the shape half fired" 0 "" grep -qF "$RULING_SHAPE_MARKER" "$TMP/posted-21"
 check "the rung half fired" 0 "" grep -qF "$RULING_RUNG12_MARKER" "$TMP/posted-21"
-reconcile_ruling 21 "$T21" "$NOW" >/dev/null
+reconcile_ruling 21 "$T21" "$NOW" issue >/dev/null
 check "both halves are once-per-episode" 0 "2" posts 21
 
 # ---------------------------------------------------------------------------
@@ -472,7 +546,7 @@ sweep() { # $1 issue number, $2 now (default $NOW)
     --jq '.[] | [.user.login, .created_at] | @tsv')"
   reconcile_ruling "$1" \
     "$(date -d "$(ruling_clock_at "${row%%$'\t'*}" "${row##*$'\t'}" <<<"$comments")" +%s)" \
-    "${2:-$NOW}"
+    "${2:-$NOW}" issue
 }
 # The nudge alone, isolated from whatever else a pass posted — the WHOLE
 # record between the stub's separators, not the tail from the addressee line

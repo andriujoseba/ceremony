@@ -1905,7 +1905,7 @@ reconcile_pr() { # $1 = PR number; relies on the globals set from its fetch
         )"
       )" +%s)"
     fi
-    reconcile_ruling "$n" "$ruling_clock_epoch" "$NOW"
+    reconcile_ruling "$n" "$ruling_clock_epoch" "$NOW" pr
   fi
 
   # `attention` belongs on the assigned issue that owns the claim, never on

@@ -191,6 +191,57 @@ ruling_default_decision() { # escalation body on stdin → DEADLINE <ts> | HARDB
   fi
 }
 
+ruling_rung24_body() { # $1 surface, $2 parsed default, $3 description, $4 setter
+  # The surface and parsed default select doctrine; the description and setter
+  # are interpolation only. Keeping the whole comment pure lets the fixture
+  # pin the unchanged PR body without driving gh (#537 D1–D4).
+  [ "$#" -eq 4 ] || {
+    echo "ruling_rung24_body: surface, parsed default, description and setter are required" >&2
+    return 2
+  }
+  local surface="$1" state="$2" described="$3" setter="$4"
+  case "$surface" in issue|pr) ;; *)
+    echo "ruling_rung24_body: surface must be issue or pr, got: $surface" >&2
+    return 2 ;;
+  esac
+
+  if [ "$surface" = issue ] \
+    && { [ "$state" = HARDBLOCK ] || [ "$state" = UNPARSEABLE ]; }; then
+    cat <<EOF
+$RULING_RUNG24_MARKER
+@$setter — this ruling is 24 hours past its \`labeled\` event: the ladder's
+24h rung ([BUILDER.md — the ruling ask](https://github.com/heavy-duty/ceremony/blob/main/BUILDER.md#the-ruling-ask),
+heavy-duty/ceremony#50 D13). Mechanically read, the escalation carries
+$described.
+
+The ladder's late rungs do not fire on this issue-borne flag
+([heavy-duty/ceremony#526](https://github.com/heavy-duty/ceremony/issues/526)):
+the flag waits for the human. At this moment the flag-setter, @$setter, owes
+a published re-read of the default against what has landed and of any doubt
+that still stands. The remaining machine event is the decider's 7-day nudge.
+The rungs run on the \`labeled\` clock and do not reset on activity; this
+comment fires once per flag episode.
+EOF
+  else
+    cat <<EOF
+$RULING_RUNG24_MARKER
+@$setter — this ruling is 24 hours past its \`labeled\` event: the ladder's
+24h rung ([BUILDER.md — the ruling ask](https://github.com/heavy-duty/ceremony/blob/main/BUILDER.md#the-ruling-ask),
+heavy-duty/ceremony#50 D13). Mechanically read, the escalation carries
+$described.
+
+At 24h the builder proceeds regardless, **as a PR**: pick an option and
+state in the PR body which way you went and what doubt remains. Nothing
+merges by this — the human still gates the merge. Past 24h the choice is
+triage's to make: triage picks the option, records it as a decision, and
+remains accountable; the operator may overturn it at merge. The rungs run on
+the \`labeled\` clock and do not reset on activity; this comment fires once
+per flag episode and covers everything past 24h — there is no further
+timer.
+EOF
+  fi
+}
+
 ruling_nudge_decision() { # $1 now, $2 last real-activity epoch → NUDGE | KEEP
   # Real activity only, as the caller's surface defines it: the PR sweep
   # supplies comments, reviews and commits; the issue sweeps supply comments
@@ -318,8 +369,16 @@ ruling_flag_row() { # $1 item number → "setter<TAB>labeled_at"
   ruling_newest_flag <<<"$flags"
 }
 
-reconcile_ruling() { # $1 item number, $2 last real-activity epoch, $3 now
-  local n="$1" last_activity="$2" now="$3"
+reconcile_ruling() { # $1 item number, $2 last real-activity epoch, $3 now, $4 issue | pr
+  if [ "$#" -ne 4 ]; then
+    echo "reconcile_ruling: item, activity epoch, now and surface are required" >&2
+    return 2
+  fi
+  local n="$1" last_activity="$2" now="$3" surface="$4"
+  case "$surface" in issue|pr) ;; *)
+    echo "reconcile_ruling: surface must be issue or pr, got: $surface" >&2
+    return 2 ;;
+  esac
   : "${REPO:?reconcile_ruling: REPO is required}"
 
   # The newest `labeled` event for the flag: actor + timestamp. A failed read
@@ -458,21 +517,14 @@ reset on activity; this comment fires once per flag episode." >/dev/null
       fi
       if [ "$rung" = RUNG24 ] \
         && [ "$(ruling_bare_comment_needed "$labeled_epoch" "$marked_rung24")" = POST ]; then
-        run gh issue comment "$n" -R "$REPO" --body "$RULING_RUNG24_MARKER
-@$setter — this ruling is 24 hours past its \`labeled\` event: the ladder's
-24h rung ([BUILDER.md — the ruling ask](https://github.com/heavy-duty/ceremony/blob/main/BUILDER.md#the-ruling-ask),
-heavy-duty/ceremony#50 D13). Mechanically read, the escalation carries
-$described.
-
-At 24h the builder proceeds regardless, **as a PR**: pick an option and
-state in the PR body which way you went and what doubt remains. Nothing
-merges by this — the human still gates the merge. Past 24h the choice is
-triage's to make: triage picks the option, records it as a decision, and
-remains accountable; the operator may overturn it at merge. The rungs run on
-the \`labeled\` clock and do not reset on activity; this comment fires once
-per flag episode and covers everything past 24h — there is no further
-timer." >/dev/null
-        log "#$n: ruling at the 24h rung — commented (the builder proceeds as a PR; past 24h is triage's)"
+        run gh issue comment "$n" -R "$REPO" \
+          --body "$(ruling_rung24_body "$surface" "$state" "$described" "$setter")" >/dev/null
+        if [ "$surface" = issue ] \
+          && { [ "$state" = HARDBLOCK ] || [ "$state" = UNPARSEABLE ]; }; then
+          log "#$n: ruling at the 24h rung — commented (late rungs do not fire; the setter re-reads)"
+        else
+          log "#$n: ruling at the 24h rung — commented (the builder proceeds as a PR; past 24h is triage's)"
+        fi
       fi
     fi
   fi
