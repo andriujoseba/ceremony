@@ -492,4 +492,247 @@ check "the archive lands beside the extraction root, not in it" 0 \
 check "the extraction root is its own directory" 0 'src="$fetch_tmp/src"' \
   cat "$SCRIPT"
 
+# --- the guarded scaffold (#559) ------------------------------------------------
+# The third file class: ceremony owns a delimited region of a file that
+# otherwise belongs to the consumer. Its source tree is SEPARATE from $SRC on
+# purpose. $SRC carries no docs/SCAFFOLDED.txt, so every row above is
+# simultaneously the proof that a ref predating this feature still syncs — a
+# missing scaffold manifest is "no scaffolds", not a refusal, and making it
+# fatal would be a flag day for every consumer pinned behind this release.
+
+MARK_START='<!-- ceremony:pr-template:start -->'
+MARK_END='<!-- ceremony:pr-template:end -->'
+TEMPLATE='.github/pull_request_template.md'
+
+# Deliberately not the real template, for the reason the fake doc set is not
+# the real five: a script that hardcodes ceremony's own bytes passes a suite
+# built from them and fails a consumer.
+SRC_SCAF="$TMP/src-scaffold"
+mkdir -p "$SRC_SCAF/docs" "$SRC_SCAF/.github"
+printf 'AGENTS.md\n' >"$SRC_SCAF/docs/VENDORED.txt"
+printf '# router v1\n' >"$SRC_SCAF/AGENTS.md"
+printf '%s\n' "$TEMPLATE" >"$SRC_SCAF/docs/SCAFFOLDED.txt"
+printf 'Closes #\n\n## Acceptance criteria\n' >"$SRC_SCAF/$TEMPLATE"
+
+# The same source one character later — the drift a --check must catch.
+SRC_SCAF2="$TMP/src-scaffold-v2"
+cp -r "$SRC_SCAF" "$SRC_SCAF2"
+printf 'Closes #\n\n## Acceptance criteriaX\n' >"$SRC_SCAF2/$TEMPLATE"
+
+# scaf <name> — a consumer pinned at 0.3.0 whose doctrine mirror is already
+# current and whose guarded scaffold is ABSENT, so every row below fails on
+# the scaffold state it authors itself and never on the mirror. The template
+# is removed after the sync rather than never written: that way the helper
+# also proves --fix wrote one, and a regression that stops writing it turns
+# the rm into a visible error instead of a silently identical fixture.
+scaf() {
+  consumer "$1" 0.3.0
+  in_consumer "$1" --fix --source "$SRC_SCAF" >/dev/null 2>&1
+  rm "$TMP/$1/$TEMPLATE"
+}
+
+# The two halves of the file that are the CONSUMER's, extracted by the same
+# whole-line rule the tool uses. These are what the byte comparisons below
+# compare — the criterion asks for a byte comparison of the outside regions,
+# not a look at the diff.
+above_block() {
+  local f="$1" s
+  s="$(grep -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
+  head -n "$((s - 1))" "$f"
+}
+below_block() {
+  local f="$1" e
+  e="$(grep -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
+  tail -n +"$((e + 1))" "$f"
+}
+# The block's own bytes, marker lines excluded.
+inner_block() {
+  local f="$1" s e
+  s="$(grep -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
+  e="$(grep -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
+  head -n "$((e - 1))" "$f" | tail -n +"$((s + 1))"
+}
+extract() { "$1" "$2" >"$3"; }
+
+# --- E3: the set comes from the SOURCE tree ------------------------------------
+
+scaf manifest-source
+# A consumer-side manifest naming a different file: read from the consumer,
+# the tool would guard OTHER.md and never the template.
+printf 'OTHER.md\n' >"$TMP/manifest-source/docs/SCAFFOLDED.txt"
+check "the scaffold set is read from the source, not the consumer" 1 \
+  "$TEMPLATE is missing" in_consumer manifest-source --check --source "$SRC_SCAF"
+check_absent "a consumer-side scaffold manifest names nothing the tool obeys" 1 \
+  "OTHER.md" in_consumer manifest-source --check --source "$SRC_SCAF"
+
+consumer no-scaffold-manifest 0.3.0
+in_consumer no-scaffold-manifest --fix --source "$SRC" >/dev/null 2>&1
+check "a source with no scaffold manifest syncs clean (every ref before #559)" 0 \
+  "exact mirror" in_consumer no-scaffold-manifest --check --source "$SRC"
+check_absent "and says nothing about guarded scaffolds at all" 0 \
+  "guarded scaffold" in_consumer no-scaffold-manifest --check --source "$SRC"
+
+# --- E4: absent file ------------------------------------------------------------
+
+scaf absent
+check "--check fails when the guarded scaffold is absent" 1 \
+  "$TEMPLATE is missing" in_consumer absent --check --source "$SRC_SCAF"
+check "the absent diagnostic names the pin" 1 \
+  "pin is heavy-duty/ceremony@0.3.0" in_consumer absent --check --source "$SRC_SCAF"
+check "the absent diagnostic names --fix as the repair" 1 \
+  "run docs-sync --fix" in_consumer absent --check --source "$SRC_SCAF"
+
+check "--fix creates the file carrying the block" 0 \
+  "created $TEMPLATE" in_consumer absent --fix --source "$SRC_SCAF"
+extract inner_block "$TMP/absent/$TEMPLATE" "$TMP/absent-inner"
+check "the created block is byte-identical to the source file" 0 "" \
+  cmp "$TMP/absent-inner" "$SRC_SCAF/$TEMPLATE"
+check "a second --check on the created file exits 0" 0 \
+  "1 guarded scaffold(s) carry a current ceremony-owned block" \
+  in_consumer absent --check --source "$SRC_SCAF"
+
+# --- E5: repo-specific text above AND below a drifted block ---------------------
+
+printf '# Our template\n\nRead CONTRIBUTING first.\n' >"$TMP/above.txt"
+printf '\n## Deployment notes\n\nStaging first, always.\n' >"$TMP/below.txt"
+
+scaf surround
+{
+  cat "$TMP/above.txt"
+  printf '%s\n' "$MARK_START"
+  printf 'an old block from 0.4.0\n'
+  printf '%s\n' "$MARK_END"
+  cat "$TMP/below.txt"
+} >"$TMP/surround/$TEMPLATE"
+
+check "--check fails on a drifted block" 1 \
+  "has drifted" in_consumer surround --check --source "$SRC_SCAF"
+check "--fix updates the drifted block" 0 \
+  "updated the ceremony-owned block" in_consumer surround --fix --source "$SRC_SCAF"
+
+extract above_block "$TMP/surround/$TEMPLATE" "$TMP/surround-above"
+extract below_block "$TMP/surround/$TEMPLATE" "$TMP/surround-below"
+extract inner_block "$TMP/surround/$TEMPLATE" "$TMP/surround-inner"
+check "every byte ABOVE the markers survives --fix" 0 "" \
+  cmp "$TMP/surround-above" "$TMP/above.txt"
+check "every byte BELOW the markers survives --fix" 0 "" \
+  cmp "$TMP/surround-below" "$TMP/below.txt"
+check "and the block itself is now the source's bytes" 0 "" \
+  cmp "$TMP/surround-inner" "$SRC_SCAF/$TEMPLATE"
+check "--check passes after the repair" 0 "guarded scaffold(s)" \
+  in_consumer surround --check --source "$SRC_SCAF"
+
+# --- E5: an existing hand-maintained template with no block ---------------------
+
+scaf noblock
+cat "$TMP/above.txt" >"$TMP/noblock/$TEMPLATE"
+check "--check fails when the file carries no ceremony block" 1 \
+  "carries no ceremony-owned block" in_consumer noblock --check --source "$SRC_SCAF"
+check "--fix APPENDS rather than overwriting" 0 \
+  "appended the ceremony-owned block" in_consumer noblock --fix --source "$SRC_SCAF"
+extract above_block "$TMP/noblock/$TEMPLATE" "$TMP/noblock-above"
+check "the pre-existing content survives byte-for-byte" 0 "" \
+  cmp "$TMP/noblock-above" "$TMP/above.txt"
+extract inner_block "$TMP/noblock/$TEMPLATE" "$TMP/noblock-inner"
+check "the appended block is the source's bytes" 0 "" \
+  cmp "$TMP/noblock-inner" "$SRC_SCAF/$TEMPLATE"
+
+# A file with no final newline is the case that splices the start marker onto
+# the consumer's last line, losing that line's content to a comment.
+scaf noblock-nonl
+printf 'no trailing newline here' >"$TMP/noblock-nonl/$TEMPLATE"
+check "--fix appends to a file with no final newline" 0 \
+  "appended the ceremony-owned block" in_consumer noblock-nonl --fix --source "$SRC_SCAF"
+check "and that last line is still its own line" 0 "" \
+  grep -qxF 'no trailing newline here' "$TMP/noblock-nonl/$TEMPLATE"
+check "--check passes on the appended result" 0 "guarded scaffold(s)" \
+  in_consumer noblock-nonl --check --source "$SRC_SCAF"
+
+# --- E4: three broken shapes, three non-zero exits ------------------------------
+
+# 1. unbalanced — a start with no end. The build this rejects is a sed range,
+#    which matches to end-of-file and lets --fix delete everything below.
+scaf unbalanced
+{
+  cat "$TMP/above.txt"
+  printf '%s\n' "$MARK_START"
+  printf 'a block that never closes\n'
+  cat "$TMP/below.txt"
+} >"$TMP/unbalanced/$TEMPLATE"
+check "--check fails on unbalanced markers" 1 \
+  "unbalanced ceremony markers" in_consumer unbalanced --check --source "$SRC_SCAF"
+check "--fix REFUSES unbalanced markers rather than guessing" 1 \
+  "its ceremony markers are unbalanced" in_consumer unbalanced --fix --source "$SRC_SCAF"
+check "and says why it refuses instead of repairing" 1 \
+  "guess at which of your bytes are ours" in_consumer unbalanced --fix --source "$SRC_SCAF"
+check "and the refusal left the consumer's content below the marker intact" 0 "" \
+  grep -qxF 'Staging first, always.' "$TMP/unbalanced/$TEMPLATE"
+
+# 2. duplicated — a second start marker.
+scaf duplicated
+{
+  printf '%s\n' "$MARK_START"
+  printf 'first\n'
+  printf '%s\n' "$MARK_START"
+  printf 'second\n'
+  printf '%s\n' "$MARK_END"
+} >"$TMP/duplicated/$TEMPLATE"
+check "--check fails on a second start marker" 1 \
+  "more than one ceremony marker line" in_consumer duplicated --check --source "$SRC_SCAF"
+check "--fix refuses a duplicated marker too" 1 \
+  "its ceremony markers are duplicated" in_consumer duplicated --fix --source "$SRC_SCAF"
+
+# 3. drift by exactly one character — the stub build's failure mode, which is
+#    what a scaffold-once-never-again implementation looks like after a bump.
+scaf onechar
+in_consumer onechar --fix --source "$SRC_SCAF" >/dev/null 2>&1
+check "--check fails on a block one character behind the source" 1 \
+  "has drifted" in_consumer onechar --check --source "$SRC_SCAF2"
+check "--fix brings it forward" 0 "updated the ceremony-owned block" \
+  in_consumer onechar --fix --source "$SRC_SCAF2"
+extract inner_block "$TMP/onechar/$TEMPLATE" "$TMP/onechar-inner"
+check "and the block is now the newer source's bytes" 0 "" \
+  cmp "$TMP/onechar-inner" "$SRC_SCAF2/$TEMPLATE"
+
+# --- E5: idempotence ------------------------------------------------------------
+
+scaf idem
+cat "$TMP/above.txt" >"$TMP/idem/$TEMPLATE"
+in_consumer idem --fix --source "$SRC_SCAF" >/dev/null 2>&1
+cp -r "$TMP/idem" "$TMP/idem-first"
+check "a second --fix reports nothing to do" 0 "nothing to do" \
+  in_consumer idem --fix --source "$SRC_SCAF"
+check "and leaves the tree byte-identical to the first run's" 0 "" \
+  diff -r "$TMP/idem-first" "$TMP/idem"
+
+# --- the plain-file refusal reaches the scaffold too -----------------------------
+
+scaf link
+rm -f "$TMP/link/$TEMPLATE"
+ln -s /tmp/somewhere-else "$TMP/link/$TEMPLATE"
+check "a symlinked scaffold is refused, not written through" 1 \
+  "is a symlink" in_consumer link --check --source "$SRC_SCAF"
+check "and --fix refuses it as well" 1 "is a symlink" \
+  in_consumer link --fix --source "$SRC_SCAF"
+
+# --- structural: the boundary is never a sed pattern range ----------------------
+# The unterminated-marker build is the one the criteria reject behaviorally
+# above; this row is what stops it being reintroduced as an "equivalent"
+# refactor. Anchored before any '#' so the header essay naming the hazard
+# does not red its own rule.
+
+check "no sed pattern range walks the markers" 1 "" \
+  grep -qE "^[^#]*sed .*/$MARK_START" "$SCRIPT"
+check "the marker literals are #559's, byte for byte" 0 \
+  "SCAFFOLD_START=\"$MARK_START\"" cat "$SCRIPT"
+check "the end marker literal too" 0 "SCAFFOLD_END=\"$MARK_END\"" cat "$SCRIPT"
+# E2: the markers are written at install time and the source never carries
+# them, so the block's bytes and the source's bytes stay one thing to compare.
+check "ceremony's own template carries no marker" 1 "" \
+  grep -qF "$MARK_START" "$ROOT/$TEMPLATE"
+check "the real manifest names the template" 0 "" \
+  grep -qxF "$TEMPLATE" "$ROOT/docs/SCAFFOLDED.txt"
+check "and the mirror manifest still does not" 1 "" \
+  grep -qF "pull_request_template" "$ROOT/docs/VENDORED.txt"
+
 summary
