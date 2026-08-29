@@ -104,15 +104,18 @@ Every issue you mint carries, in this order:
 - **Tasks**: the steps, checkboxed, in order.
 - **Acceptance criteria**: checkboxed, verifiable, and honest — these become
   the builder's definition of done and the reviewer's review spec, verbatim.
-  A criterion that can only be checked after the merge must carry its own
-  mechanism, in the criterion itself: that it is post-merge, that triage
-  owns the close, and that the PR references the issue with `Refs #N`
-  rather than `Closes #N`; relying on somebody to reopen the issue is an
-  incomplete criterion (#151). The merge moves the issue to `post-merge` and
-  releases the claim. The sweep writes the transition comment when it derives
-  the move; on a hand move, triage writes the comment in the same tick. In
-  either case triage follows up with the remaining criteria, their owner, and
-  the wake condition for completion.
+  **The split is decided at the mint.** Ask of each criterion whether its
+  evidence can exist before the PR merges; a criterion whose evidence cannot
+  is **not carried by this issue** — it is minted as its own issue, which
+  declares this one as its blocker. Asking at the mint rather than at the
+  merge is what keeps an issue's close one event instead of a queue (#151,
+  #536).
+
+  **That successor issue carries the outstanding criteria verbatim**, has one
+  owner class — builder-owned or operator-owned, never both — and names its
+  evidence surface, the command or observation that produces the evidence,
+  and the wake condition that brings someone back to tick it. It cites the
+  issue it was split from.
 
   **Classify each criterion at mint on a second axis as well: who can
   produce its evidence.** A builder's session is not assumed to reach the
@@ -365,7 +368,10 @@ Repositories that adopt version epics follow [RELEASES.md](RELEASES.md).
   criteria and close under the criterion's existing contract. If corrective
   build work becomes necessary, move it to `ready` or mint a fresh `ready`
   issue: any builder claims from current `main`, the original builder has no
-  special standing, and re-entry does not set `attention`.
+  special standing, and re-entry does not set `attention`. **The queue is
+  closed to new entrants** — the split above happens at the mint, so no mint
+  produces one and the queue only drains — and it is retired when it empties.
+  Until then it governs every issue already in it (#538).
 - Automation never guesses intent. Resolve the conflict comments it leaves on
   malformed queue states, and close or extend completed epics when nudged.
 - **Close obsolete issues** with the reason and a link to what obsoleted
