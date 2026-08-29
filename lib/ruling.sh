@@ -19,6 +19,16 @@
 #     before the `labeled` event. The back-window exists because the natural
 #     ordering is post-the-escalation-then-set-the-label, seconds apart; a
 #     strictly-after rule would flag every correctly-formed escalation.
+#   - The 7-day nudge carries NO idempotency marker, and a build that gives
+#     it one is a regression, not a tidy-up (#50 D10). It self-rate-limits
+#     because its own comment is activity on the clock it reads. That now
+#     rests on a second fact as well: the clock stops counting the
+#     flag-setter's comments (#534 D1), and the property holds only because the
+#     setter can never be the identity the sweep posts as — neither
+#     reconciler writes this label, every mention of it in both files being a
+#     read, and LABELS.md carries the same rule as doctrine. Exempting a
+#     machine comment instead would mean exempting the nudge itself, which is
+#     the per-pass repeat the missing marker exists to prevent (#534 D3, D8).
 #   - The failure direction is always *flag*, never *act*: a bare flag is
 #     commented on, never removed (removing would delete somebody's
 #     escalation on the strength of a timestamp heuristic), and an
@@ -179,12 +189,54 @@ ruling_nudge_decision() { # $1 now, $2 last real-activity epoch → NUDGE | KEEP
   # supplies comments, reviews and commits; the issue sweeps supply comments
   # alone — an `assigned` event is the claim clock's fact, and counting it
   # let a claim silence a pending ruling (#284). Never label churn, or the
-  # sweep would reset its own clock. The nudge needs NO marker: the
+  # sweep would reset its own clock. Neither surface counts the flag-setter's
+  # own comments, and both floor the clock at the current `labeled` event —
+  # that is ruling_clock_at below, and it is why this decision's epoch is the
+  # caller's to compute (#534 D1, D2, D4). The nudge needs NO marker: the
   # nudge comment is itself activity, so posting it resets this window and
   # the rule self-rate-limits to at most one nudge per 7 quiet days. That is
   # deliberate — a later refactor that "fixes" it by adding a marker breaks
   # exactly the property that makes it safe on a 15-minute cron.
   if [ "$(($1 - $2))" -gt "$RULING_NUDGE_AFTER" ]; then echo NUDGE; else echo KEEP; fi
+}
+
+ruling_clock_at() { # $1 setter, $2 the episode's labeled ISO;
+                    # "login<TAB>iso8601" rows on stdin → the clock's ISO
+  # THE one spelling of the ruling nudge's clock, both surfaces (#534 D1, D2,
+  # D4). Two rules, and the second exists only because of the first:
+  #
+  #   - A comment by the flag-setter of the CURRENT episode is not activity.
+  #     Under #526 the setter OWES a published re-read at the 24h and past-24h
+  #     rungs, so the party owing the re-read was silencing the clock that
+  #     pages the party owing the decision — by design, not by accident.
+  #     crew#207 carried the flag 7d 1h on one episode with twelve
+  #     hand-published re-reads and no nudge, and was closed undecided.
+  #   - The clock floors at that `labeled` event. With the setter's escalation
+  #     dropped, and on most flagged items that is the only comment, a clock
+  #     falling back to the item's `created_at` would read an issue opened
+  #     months ago as quiet for months and nudge on the first pass after the
+  #     flag went up, reporting a `days` count predating the ruling. Before
+  #     the labeled event no ruling was pending, so there is nothing to
+  #     measure there. This also repairs that misreport in the shipped nudge.
+  #
+  # Keyed to the episode's identity and never to a role, a login list or a
+  # config knob: a re-flag by a different actor changes who is excluded, from
+  # that event onward, because ruling_newest_flag re-derives the setter.
+  #
+  # A row with an EMPTY login always counts — that is how the PR surface feeds
+  # reviews and commits through unfiltered (#534 D5): the exclusion is
+  # comment-shaped, and a setter who pushes a commit has done something
+  # anybody would call real activity. An empty setter drops nothing, because
+  # an unreadable actor must never widen the exclusion to the whole board.
+  #
+  # ISO-8601 UTC sorts lexically, so no date parsing happens here — the caller
+  # converts the one answer, exactly as issue_activity_at does.
+  local setter="$1" labeled="$2"
+  {
+    printf '%s\n' "$labeled"
+    awk -F'\t' -v s="$setter" \
+      'NF && $2 != "" && !(s != "" && $1 == s) { print $2 }'
+  } | sort | tail -n1
 }
 
 ruling_newest_flag() { # "login<TAB>iso8601" lines on stdin → the newest line
@@ -240,6 +292,25 @@ ruling_escalation_url() { # same contract, url column only — the nudge's link
 # carries the flag. Needs REPO; uses the caller's run() and log().
 # ---------------------------------------------------------------------------
 
+ruling_flag_row() { # $1 item number → "setter<TAB>labeled_at"
+  # The current episode's two facts, read from the `labeled` events. Exit 1
+  # is an unreadable timeline, exit 2 a readable one with no visible event
+  # (a hiccup, or an import) — distinguished because the sweep says which,
+  # and identical in consequence: an unreadable fact never invents a verdict.
+  #
+  # One spelling, three readers (#534 D4). reconcile_ruling needs it to
+  # address its comments; both callers need it BEFORE the pass posts
+  # anything, to floor the ruling clock and name whose comments do not count.
+  # Those callers pay one timeline read on flagged items only — the same read
+  # this function makes below, on the handful of items carrying the flag.
+  local flags
+  flags="$(gh api --paginate "repos/$REPO/issues/$1/timeline" \
+    --jq '.[] | select(.event == "labeled" and .label.name == "needs-ruling")
+          | [.actor.login, .created_at] | @tsv' 2>/dev/null)" || return 1
+  [ -n "$flags" ] || return 2
+  ruling_newest_flag <<<"$flags"
+}
+
 reconcile_ruling() { # $1 item number, $2 last real-activity epoch, $3 now
   local n="$1" last_activity="$2" now="$3"
   : "${REPO:?reconcile_ruling: REPO is required}"
@@ -248,20 +319,18 @@ reconcile_ruling() { # $1 item number, $2 last real-activity epoch, $3 now
   # skips BOTH checks — the nudge's specified content links the escalation
   # comment, which only these facts identify, and half-verdicts on half-read
   # facts is the exact shape the reconciler's standing rule forbids.
-  local flags newest setter labeled_at labeled_epoch
-  if ! flags="$(gh api --paginate "repos/$REPO/issues/$n/timeline" \
-    --jq '.[] | select(.event == "labeled" and .label.name == "needs-ruling")
-          | [.actor.login, .created_at] | @tsv' 2>/dev/null)"; then
+  local newest rc=0 setter labeled_at labeled_epoch
+  newest="$(ruling_flag_row "$n")" || rc=$?
+  if [ "$rc" = 1 ]; then
     log "#$n: ruling timeline unreadable — no verdict invented this pass"
     return 0
   fi
-  if [ -z "$flags" ]; then
+  if [ "$rc" != 0 ]; then
     # The label is on the item but no labeled event is visible (a timeline
     # hiccup, or an import). Same treatment as unreadable: do nothing.
     log "#$n: ruling flag has no visible labeled event — no verdict invented this pass"
     return 0
   fi
-  newest="$(ruling_newest_flag <<<"$flags")"
   setter="${newest%%$'\t'*}"
   labeled_at="${newest##*$'\t'}"
   labeled_epoch="$(date -d "$labeled_at" +%s)"
@@ -407,6 +476,11 @@ timer." >/dev/null
     # reconciler trusts for the merge gate, defaulted the same way. The
     # flag-setter is named but deliberately not tagged: address the decider,
     # never the whole thread's cast (#50 D10).
+    #
+    # `$last_activity` is the caller's ruling clock (ruling_clock_at, #534
+    # D4), so `days` counts from the newest comment that is not the
+    # setter's, and from the `labeled` event where there is none. It is
+    # never a count of total silence on the thread, and the body says so.
     local decider="${HUMAN_REVIEWER:-danmt}" days esc_url esc_line
     days=$(((now - last_activity) / 86400))
     esc_url="$(ruling_escalation_url "$setter" "$labeled_epoch" <<<"$rows")"
@@ -418,6 +492,8 @@ timer." >/dev/null
     run gh issue comment "$n" -R "$REPO" --body "@$decider — a ruling on this item has been pending with no activity for ${days} days. $esc_line
 
 Per heavy-duty/ceremony#50 D6/D7 the flag-setter ($setter) owns closing this out: judge when agreement is reached, record the ruling as a decision in one comment, remove the label, and return the item to its flow in that same comment.
+
+*The clock this counts does not read the flag-setter's own comments, and it runs from the \`labeled\` event rather than from the item's creation (heavy-duty/ceremony#534): the party owing a published re-read must not be able to silence the reminder addressed to the party owing the decision. Reviews and commits still count in full.*
 
 *This nudge is comment-only and carries no idempotency marker on purpose: the comment itself is activity, so posting it resets the 7-day window and the rule self-rate-limits. Do not add a marker.*" >/dev/null
     log "#$n: ruling nudge (${days}d quiet — the decider owes an answer)"
