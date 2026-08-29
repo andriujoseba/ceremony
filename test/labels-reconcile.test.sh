@@ -956,7 +956,7 @@ pr_ruling_fixture() { # $1 PR, $2 setter, $3 flag age days, $4 extra comment obj
 }
 nudge_count() { # grep -c prints 0 AND exits 1 on no match — take the number, not the status
   local c
-  c="$(grep -c '^@danmt — a ruling on this item' "$RTMP/posted-$1" 2>/dev/null)" || :
+  c="$(grep -c 'a ruling on this item has been pending' "$RTMP/posted-$1" 2>/dev/null)" || :
   printf '%s' "${c:-0}"
 }
 

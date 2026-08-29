@@ -465,19 +465,25 @@ check "an unreadable setter drops nobody — it never widens to the whole board"
 
 # A caller, exactly as both reconcilers are: read the episode's facts and the
 # comments, compute the clock with the shared rule, and only then sweep.
-sweep() { # $1 issue number
+sweep() { # $1 issue number, $2 now (default $NOW)
   local row comments
   row="$(ruling_flag_row "$1")" || return $?
   comments="$(gh api --paginate "repos/$REPO/issues/$1/comments" \
     --jq '.[] | [.user.login, .created_at] | @tsv')"
   reconcile_ruling "$1" \
     "$(date -d "$(ruling_clock_at "${row%%$'\t'*}" "${row##*$'\t'}" <<<"$comments")" +%s)" \
-    "$NOW"
+    "${2:-$NOW}"
 }
-# The nudge alone, isolated from whatever else a pass posted. Its first line is
-# the addressee; its record ends at the stub's separator.
-nudge_record() { sed -n '/^@danmt — a ruling on this item/,/^----$/p' "$TMP/posted-$1"; }
-nudges() { grep -c '^@danmt — a ruling on this item' "$TMP/posted-$1" || true; }
+# The nudge alone, isolated from whatever else a pass posted — the WHOLE
+# record between the stub's separators, not the tail from the addressee line
+# down: a marker sits ABOVE its body, so a record starting at the addressee is
+# a marker pin that can never see the marker it is pinning.
+nudge_record() {
+  awk '/^----$/ { if (index(buf, "a ruling on this item has been pending")) printf "%s", buf
+                  buf = ""; next }
+       { buf = buf $0 "\n" }' "$TMP/posted-$1"
+}
+nudges() { grep -c 'a ruling on this item has been pending' "$TMP/posted-$1" || true; }
 
 # -- the setter's re-reads no longer silence the clock (D1, D2) --------------
 # crew#207's shape: 8 days flagged, a conforming escalation at the flag, and
@@ -516,9 +522,15 @@ check "...and the days figure is measured from the labeled event, not the last r
 check "...naming the setter without tagging them" 1 "" grep -qF '@setter' <<<"$(nudge_record 30)"
 # D3, pinned on the body that was actually posted: no marker of any kind.
 check "the nudge body carries no marker at all" 1 "" grep -qF '<!--' <<<"$(nudge_record 30)"
-# The self-rate-limit survives D1 because the sweep is never the setter.
+# The self-rate-limit survives D1 because the sweep is never the setter: the
+# nudge it posted is the newest comment that counts, so the window closes.
 sweep 30 >/dev/null
 check "a second sweep straight after the nudge posts nothing" 0 "1" nudges 30
+# And it is a WINDOW, not a once-per-episode gate — the property the missing
+# marker buys and the one a marker would silently take away (D3). Eight more
+# quiet days and the same episode is paged again.
+sweep 30 $((NOW + 8 * 86400)) >/dev/null
+check "eight more quiet days page the same episode again" 0 "2" nudges 30
 
 # -- one non-setter comment still resets it (D1) -----------------------------
 jq -n --arg at "$(iso "$S0")" \
