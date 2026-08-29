@@ -76,7 +76,7 @@ check "a missing default line is unparseable" 0 "UNPARSEABLE" \
 check "a timestamp off the default line is somebody's prose" 0 "UNPARSEABLE" \
   ruling_default_decision <<<$'the deadline 2026-07-23T21:00Z came up above\nDefault:  soonish'
 
-PR_HARD_DESC='`Default: none` — a hard block; no default ever fires'
+PR_HARD_DESC="\`Default: none\` — a hard block; no default ever fires"
 check "the pure PR rung-24 body is byte-identical to the merge-base golden" 0 "" \
   diff -u "$ROOT/test/fixtures/ruling-rung24-pr.golden.md" \
   <(ruling_rung24_body pr HARDBLOCK "$PR_HARD_DESC" setter)
