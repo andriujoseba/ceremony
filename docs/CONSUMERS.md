@@ -148,6 +148,40 @@ operator add the repository to the fleet's `repos.txt`. Pointing the fleet at
 it earlier turns a missing label from a setup omission into a partially
 mutated claim that the builder cannot repair.
 
+### The doctrine ref before a pin exists
+
+A governed repo answers "which ceremony rules govern me?" with its pin:
+`AGENTS.md` routes every role to `.ceremony/`, and `docs-sync` verifies that
+mirror against the single `uses:` ref in `.github/workflows/release.yml`. One
+pin, one ref. A fleet-worked repository that carries neither half — no
+`.ceremony/` mirror and no workflow caller, so no pin — has no such ref, and
+an instruction to read ceremony directly names none.
+
+**A fleet-worked repository with no ceremony pin reads doctrine at the latest
+published ceremony release tag, never at `main`.** The reason travels with the
+rule: every other board in this fleet runs at a released tag, so a rule that
+has not shipped should not reshape an unpinned board that no other agent is
+reading the same way. Two agents given the same instruction on the same day
+otherwise resolve it differently, and unshipped doctrine both adds and removes
+work depending on which board it lands on (#548).
+
+**The latest release is the newest published, non-draft, non-prerelease
+release** — not the newest tag, which may be a prerelease or a tag no release
+was cut from, and not what `VERSION` holds on the default branch, which names
+the version being prepared rather than one that has shipped. Resolve it:
+
+```sh
+gh release view --repo heavy-duty/ceremony --json tagName -q .tagName
+```
+
+With no tag argument `gh release view` returns the repository's latest
+release, which is the same read as the releases API's
+`/repos/heavy-duty/ceremony/releases/latest`. Read the whole vendored
+doctrine set at that tag — the files `docs/VENDORED.txt` declares — not a
+mixture of refs. The rule governs only while the pin is
+absent: once the repository carries one, the pin is the ref,
+[as it is everywhere else](#version-pinning).
+
 ## Bootstrap a new repo
 
 The greenfield path (incubator's, #16) — the repo never owns a copy of
