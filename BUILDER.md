@@ -140,16 +140,15 @@ not to guess.
   hand once its criteria are met, the builder reporting there whether the PR
   merged or closed and clearing `offsite` in the same comment. The
   cross-repo merge never closes the authorizing issue (#13, #16).
-- **`Closes #N` does not survive a post-merge criterion.** Where the issue
-  body says a criterion can only be checked after the merge — a workflow
-  trigger proved live, a released artifact, anything whose subject does not
-  exist until the change is on the base branch — the same-repo PR says
-  `Refs #N`; the issue goes `post-merge` at the merge, the builder walks
-  away, and triage owns verification and closure on the evidence, returning
-  the issue to `ready` or minting a fresh one where corrective work is
-  needed — claimable by any builder from current `main`, the original having
-  no special standing. The issue body says so — you never judge which
-  qualify — and absent it `Closes #N` is the default (#151).
+- **A same-repo PR always carries `Closes #N`.** There is no
+  acceptance-criteria shape that does not: the mint already asked of every
+  criterion whether its evidence can exist before the merge and split out the
+  ones whose evidence cannot, so nothing is left for the merge to hand on.
+  Where you meet one that survived — a criterion whose subject does not exist
+  until the change is on the base branch, a workflow trigger proved live, a
+  released artifact — it is a **defect in the issue**: report it there and let
+  triage split it, the same move you make for a criterion beyond your reach.
+  Never write `Refs #N` to route around it (#151, #536).
 - On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
   immediately before `#N` anywhere in the body, including the sentence

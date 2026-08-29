@@ -104,15 +104,18 @@ Every issue you mint carries, in this order:
 - **Tasks**: the steps, checkboxed, in order.
 - **Acceptance criteria**: checkboxed, verifiable, and honest — these become
   the builder's definition of done and the reviewer's review spec, verbatim.
-  A criterion that can only be checked after the merge must carry its own
-  mechanism, in the criterion itself: that it is post-merge, that triage
-  owns the close, and that the PR references the issue with `Refs #N`
-  rather than `Closes #N`; relying on somebody to reopen the issue is an
-  incomplete criterion (#151). The merge moves the issue to `post-merge` and
-  releases the claim. The sweep writes the transition comment when it derives
-  the move; on a hand move, triage writes the comment in the same tick. In
-  either case triage follows up with the remaining criteria, their owner, and
-  the wake condition for completion.
+  **The split is decided at the mint.** Ask of each criterion whether its
+  evidence can exist before the PR merges; a criterion whose evidence cannot
+  is **not carried by this issue** — it is minted as its own issue, which
+  declares this one as its blocker. Asking at the mint rather than at the
+  merge is what keeps an issue's close one event instead of a queue (#151,
+  #536).
+
+  **That successor issue carries the outstanding criteria verbatim**, has one
+  owner class — builder-owned or operator-owned, never both — and names its
+  evidence surface, the command or observation that produces the evidence,
+  and the wake condition that brings someone back to tick it. It cites the
+  issue it was split from.
 
   **Classify each criterion at mint on a second axis as well: who can
   produce its evidence.** A builder's session is not assumed to reach the
@@ -134,14 +137,13 @@ Every issue you mint carries, in this order:
   in a comment and not in a covering sentence: that it is operator-owned,
   **its evidence** — the command, and the surface that command must run on —
   and **its wake condition**, the event that brings someone back to tick it.
-  A criterion saying only that it is operator-owned is as incomplete as a
-  post-merge one naming no mechanism.
+  A criterion saying only that it is operator-owned is incomplete.
 
-  **The two axes are independent, and neither is read off the other.**
-  Operator-owned does not make a criterion post-merge, post-merge does not
-  make one operator-owned, and one that is both carries both mechanisms, the
-  post-merge mechanism above holding unchanged for every criterion it
-  already governed.
+  **Reach is the axis classified at mint, and after #536 it is the only
+  one.** A criterion whose evidence cannot exist before the merge is not
+  carried by the issue at all, so there is no second classification left to
+  make: the after-close question is answered by the mint-time split above,
+  and never by a second axis read off a criterion the issue keeps (#536).
 
   **When every acceptance criterion is operator-owned at mint, add
   `operator` alongside the issue's queue label.** That issue's body names the
@@ -155,11 +157,8 @@ Every issue you mint carries, in this order:
   the issue unmarked and kept the per-criterion mechanism. Such a criterion no
   longer stays where it is; it relocates, by the route below (#491, #488).
 
-  **That reversal is at the issue level only, and the paragraph above stands
-  unchanged.** The two axes are still independent *per criterion*:
-  operator-owned still does not make a criterion post-merge, and post-merge
-  still does not make one operator-owned. What #491 also said — that issue
-  ownership is not read off criterion reach — is what changes, and only
+  **That reversal is at the issue level only.** What #491 also said — that
+  issue ownership is not read off criterion reach — is what changes, and only
   because an issue may no longer hold both classes: with mixing forbidden, an
   issue's class follows from its criteria's because there is nothing else left
   for it to be. Criterion reach and issue ownership remain different
@@ -170,9 +169,9 @@ Every issue you mint carries, in this order:
   operator-owned criteria move **verbatim** into their own issue; the original
   is left with a remainder that is wholly PR-checkable; and its PR merges with
   `Closes #N`. The evidence is neither waited on at the merge door nor
-  deferred to a `post-merge` tail. It becomes tracked work carrying its own
-  claim and its own wake condition, which is the whole of the route: an issue
-  is not held open to remember something a separate issue can hold (#488).
+  deferred past it. It becomes tracked work carrying its own claim and its
+  own wake condition, which is the whole of the route: an issue is not held
+  open to remember something a separate issue can hold (#488).
 
   **The relocation precedes the merge.** Before the merge it is a route;
   after the merge it is a repair — the same moves, but performed on an issue
@@ -365,7 +364,10 @@ Repositories that adopt version epics follow [RELEASES.md](RELEASES.md).
   criteria and close under the criterion's existing contract. If corrective
   build work becomes necessary, move it to `ready` or mint a fresh `ready`
   issue: any builder claims from current `main`, the original builder has no
-  special standing, and re-entry does not set `attention`.
+  special standing, and re-entry does not set `attention`. **The queue is
+  closed to new entrants** — the split above happens at the mint, so no mint
+  produces one and the queue only drains — and it is retired when it empties.
+  Until then it governs every issue already in it (#538).
 - Automation never guesses intent. Resolve the conflict comments it leaves on
   malformed queue states, and close or extend completed epics when nudged.
 - **Close obsolete issues** with the reason and a link to what obsoleted
