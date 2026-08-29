@@ -517,7 +517,9 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
     # nudge stay silent because the comment it posted is now the activity.
     REPO="${PROBE_REPO:-owner/repo}" NOW="${PROBE_NOW:-$INOW}"
     ISSUE_LABELS="$2"
-    ISSUE_JSON="$(jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
+    # `PROBE_CREATED` moves the issue's own creation date, which only the
+    # clocks' fallback floor ever reads — #534 D2's whole subject.
+    ISSUE_JSON="$(jq -n --arg at "${PROBE_CREATED:-$(iso_at $((INOW - 10 * 86400)))}" \
       --argjson assignees "$assignee_json" --arg body "$body" \
       '{created_at: $at, assignees: $assignees, body: $body}')"
     case "$open_pr" in
@@ -1266,6 +1268,123 @@ check "...and ruling_age is never fed by the reclaim clock" 1 "" \
 
 # shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
 check "the #284 probes perform no issue edits" 0 "$ruling_clock_edits_before" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+
+# -- the issue-side clock skips the flag-setter and floors at the flag (#534) -
+# #526 made the setter OWE a published re-read at the late rungs, and every
+# re-read reset this clock — so the party owing the re-read silenced the
+# reminder addressed to the party owing the decision. crew#207 carried the
+# flag 7d 1h on one episode with twelve hand-published re-reads and no nudge.
+# Every must-nudge probe below was run against the pre-#534 sweep and went
+# red; every must-not-nudge probe went green there and stays green here.
+setter_clock_edits_before="$(wc -l <"$TMP/issue-edits")"
+ruling_setter_thread() { # $1 issue, $2 the flag's age in seconds, $3 "" | "<login> <age>"
+  local flag=$((INOW - $2))
+  jq -n --arg l "$(iso_at "$flag")" \
+    '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
+    >"$(tfix "$1")"
+  jq -n --arg esc "$(iso_at $((flag - 60)))" \
+    --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z\nDefault:  none — hard block' \
+    --arg d2 "$(iso_at $((flag + 2 * 86400)))" \
+    --arg d4 "$(iso_at $((flag + 4 * 86400)))" \
+    --arg d6 "$(iso_at $((flag + 6 * 86400)))" \
+    --arg other "${3%% *}" --arg other_at "$(iso_at "$((INOW - ${3##* }))")" \
+    '[{"user":{"login":"setter"},"created_at":$esc,"html_url":"https://x/esc","body":$b},
+      {"user":{"login":"setter"},"created_at":$d2,"html_url":"https://x/rr2","body":"re-read: the default still holds"},
+      {"user":{"login":"setter"},"created_at":$d4,"html_url":"https://x/rr4","body":"re-read: still holds"},
+      {"user":{"login":"setter"},"created_at":$d6,"html_url":"https://x/rr6","body":"re-read: still holds"}]
+     + (if $other == "" then [] else
+         [{"user":{"login":$other},"created_at":$other_at,"html_url":"https://x/d","body":"still thinking"}] end)' \
+    >"$(cfix "$1")"
+}
+
+ruling_setter_thread 120 $((8 * 86400)) ""
+setter_only="$(issue_probe 120 $'ready\nneeds-ruling' 0)"
+check "the setter's own re-reads no longer silence the ruling nudge" 0 "" \
+  grep -q 'ruling nudge' <<<"$setter_only"
+check "...and the days figure is the flag's age, not the last re-read's" 0 "" \
+  grep -qF 'no activity for 8 days' "$TMP/posted-120"
+
+ruling_setter_thread 121 $((8 * 86400)) "decider $((6 * 86400))"
+decider_spoke="$(issue_probe 121 $'ready\nneeds-ruling' 0)"
+check "one comment from anybody else still resets the clock" 1 "" \
+  grep -q 'ruling nudge' <<<"$decider_spoke"
+
+# The floor, with the input that used to supply the fallback: an issue opened
+# 90 days ago and flagged an hour ago read as 90 days quiet and nudged on the
+# first pass after the flag went up, reporting a `days` count from before the
+# ruling existed. Under D1 that is the ordinary case, not a corner: with the
+# setter's escalation dropped, most flagged items have no counting comment.
+PROBE_CREATED_90="$(iso_at $((INOW - 90 * 86400)))"
+jq -n --arg l "$(iso_at $((INOW - 3600)))" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
+  >"$(tfix 122)"
+printf '[]\n' >"$(cfix 122)"
+fresh_flag="$(PROBE_CREATED="$PROBE_CREATED_90" issue_probe 122 $'ready\nneeds-ruling' 0)"
+check "a 90-day-old issue flagged an hour ago draws no nudge" 1 "" \
+  grep -q 'ruling nudge' <<<"$fresh_flag"
+jq -n --arg l "$(iso_at $((INOW - 8 * 86400)))" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
+  >"$(tfix 123)"
+printf '[]\n' >"$(cfix 123)"
+aged_flag="$(PROBE_CREATED="$PROBE_CREATED_90" issue_probe 123 $'ready\nneeds-ruling' 0)"
+check "the same issue flagged 8 days ago nudges" 0 "" \
+  grep -q 'ruling nudge' <<<"$aged_flag"
+check "...reporting 8 days and not 90" 0 "" \
+  grep -qF 'no activity for 8 days' "$TMP/posted-123"
+
+# The read is still ahead of the write, on a branch that never handed the
+# ruling block a value before. `blocked` + `needs-ruling` with an unseeded
+# parse echo posts that echo first; the pre-#534 sweep took its ruling clock
+# in the tail, read its own echo as the item's sign of life, and went quiet.
+ruling_setter_thread 124 $((8 * 86400)) ""
+blocked_echo="$(issue_probe 124 $'blocked\nneeds-ruling' 0 false "" 'Blocked by #999.')"
+check "the parse echo this pass posted does not date the item it nudges" 0 "" \
+  grep -q 'ruling nudge' <<<"$blocked_echo"
+check "...and the echo really did go out in that same pass" 0 "1" \
+  grep -cF '<!-- issueflow:blockers-parsed-999' "$TMP/posted-124"
+
+# D6, at the source: the exclusion lives in the ruling clock and nowhere
+# else. The shared computation and its two other wrappers gain no authorship
+# filter — narrowing them there would stop the claim clock seeing a builder's
+# own comments and the evidence clock seeing triage's.
+issueflow_src="$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+clock_body() { # $1 function name → its source, definition line to closing brace
+  sed -n "/^$1() {/,/^}/p" "$issueflow_src"
+}
+for fn in issue_activity_at last_issue_activity last_issue_comment_activity; do
+  # shellcheck disable=SC2016 # the jq author key is asserted as a literal
+  check "$fn gains no authorship filter" 1 "" \
+    grep -qF '.user.login' <<<"$(clock_body "$fn")"
+done
+# The positive control beside them: the one clock that does exclude somebody
+# reads the author, so the three rows above are asserting a real absence.
+# shellcheck disable=SC2016 # the jq author key is asserted as a literal
+check "the ruling clock alone reads the comment's author" 0 "" \
+  grep -qF '.user.login' <<<"$(clock_body last_issue_ruling_activity)"
+check "...and it is the only clock reconcile_ruling is ever fed" 0 "1" \
+  grep -cF 'guarded_read ruling_age last_issue_ruling_activity' "$issueflow_src"
+# Live, not by inspection: the evidence clock still returns the newest
+# comment on a thread whose newest comment is the flag-setter's.
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/s","body":"re-read"}]' \
+  >"$(cfix 125)"
+jq -n --arg l "$(iso_at $((INOW - 8 * 86400)))" \
+  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
+  >"$(tfix 125)"
+clock_read_125() { # $1 clock fn
+  ( REPO=owner/repo
+    # shellcheck disable=SC2317 # reached indirectly, through the clock under test
+    gh() { issue_stub_gh "$@"; }
+    "$1" 125 "$(iso_at $((INOW - 10 * 86400)))" )
+}
+check "the evidence clock still counts the setter's comment" 0 "$((INOW - 3600))" \
+  clock_read_125 last_issue_comment_activity
+check "...and the ruling clock, on that same thread, floors at the flag" 0 \
+  "$((INOW - 8 * 86400))" clock_read_125 last_issue_ruling_activity
+
+# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
+check "the #534 probes perform no issue edits" 0 "$setter_clock_edits_before" \
   bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
 # -- non-triggers stay byte-for-byte outside the transition ------------------

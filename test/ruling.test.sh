@@ -528,14 +528,19 @@ setter_thread 31 "$S0" "danmt $((S0 + 6 * 86400))"
 sweep 31 >/dev/null
 check "the decider's own comment at day 6 holds the nudge" 0 "0" nudges 31
 
-# -- the floor (D2): the shipped clock reported an old item as quiet for ------
-# months the moment it was flagged, because it fell back to created_at.
+# -- the floor (D2): with the setter's comments gone, most flagged items have
+# no counting comment at all, and the shipped clock then fell back to the
+# item's `created_at` and read an old item as quiet since long before the
+# ruling existed. Here the floor IS the answer — `created_at` is not an input
+# to this function at all. The whole composition, an item created 90 days ago
+# and flagged an hour ago, is driven in test/issueflow-reconcile.test.sh,
+# where the caller is the thing that used to supply that fallback. ----------
 jq -n --arg at "$(iso "$((NOW - 3600))")" \
   '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$at}]' \
   >"$(timeline_file 32)"
 printf '[]\n' >"$(comments_file 32)"
 sweep 32 >/dev/null
-check "a 90-day-old item flagged an hour ago does not nudge" 0 "0" nudges 32
+check "an hour-old flag with no comments does not nudge" 0 "0" nudges 32
 check "...though the bare-flag check still speaks, which is not this clock's business" 0 "" \
   grep -qF "$RULING_BARE_MARKER" "$TMP/posted-32"
 jq -n --arg at "$(iso "$S0")" \
