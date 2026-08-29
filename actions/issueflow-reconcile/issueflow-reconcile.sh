@@ -1908,7 +1908,7 @@ judges that prose; the link is the payload.
     # `ruling_age` was taken at the top of the pass, under the same label
     # gate and before any branch or nudge could post. Reading it here instead
     # would date the item by the operator nudge and the board flags above.
-    reconcile_ruling "$n" "$ruling_age" "$NOW"
+    reconcile_ruling "$n" "$ruling_age" "$NOW" issue
   fi
 }
 

@@ -1258,8 +1258,8 @@ check "reconcile_ruling is never handed the reclaim clock" 1 "" \
   grep -E '^[^#]*reconcile_ruling.*\$age' \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 # shellcheck disable=SC2016 # the call site is asserted as a literal
-check "...its one call site is fed the comments-only clock" 0 "1" \
-  grep -cF 'reconcile_ruling "$n" "$ruling_age" "$NOW"' \
+check "...its one call site is fed the comments-only clock and issue surface" 0 "1" \
+  grep -cF 'reconcile_ruling "$n" "$ruling_age" "$NOW" issue' \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 # shellcheck disable=SC2016 # the guarded_read is asserted as a literal
 check "...and ruling_age is never fed by the reclaim clock" 1 "" \
