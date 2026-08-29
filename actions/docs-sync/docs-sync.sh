@@ -342,7 +342,7 @@ if [ "${#scaffolds[@]}" -gt 0 ]; then
   done
 fi
 
-# _block_lines FILE — print '<status> <start> <end>' for FILE's one marked
+# block_lines FILE — print '<status> <start> <end>' for FILE's one marked
 # block. status is `ok` (with 1-based line numbers of the two marker lines),
 # `none`, `unbalanced` or `duplicated`; the two numbers are 0 unless ok.
 #
@@ -350,7 +350,7 @@ fi
 # is what makes a marker quoted inside the consumer's own prose harmless, and
 # counting the hits is what makes the unterminated case a refusal instead of
 # a range that runs to end-of-file.
-_block_lines() {
+block_lines() {
   local file="$1" starts ends ns ne
   starts="$(grep -n -x -F -e "$SCAFFOLD_START" "$file" | cut -d: -f1 || true)"
   ends="$(grep -n -x -F -e "$SCAFFOLD_END" "$file" | cut -d: -f1 || true)"
@@ -370,10 +370,10 @@ _block_lines() {
   fi
 }
 
-# _block_current FILE START END SRCFILE — is the block's byte content exactly
+# block_current FILE START END SRCFILE — is the block's byte content exactly
 # SRCFILE's? head|tail rather than a sed range: the line numbers are already
 # known, and nothing here can run past the end marker.
-_block_current() {
+block_current() {
   local file="$1" s="$2" e="$3" srcfile="$4" extracted rc=0
   extracted="$scratch/block"
   head -n "$((e - 1))" "$file" | tail -n +"$((s + 1))" >"$extracted"
@@ -564,7 +564,7 @@ run_check() {
           "  Fix: run docs-sync --fix and commit the result."
         continue
       fi
-      read -r status bs be < <(_block_lines "$f")
+      read -r status bs be < <(block_lines "$f")
       case "$status" in
         none)
           complain "docs-sync: $f carries no ceremony-owned block — no" \
@@ -587,7 +587,7 @@ run_check() {
             "  ($origin)."
           ;;
         ok)
-          if ! _block_current "$f" "$bs" "$be" "$src/$f"; then
+          if ! block_current "$f" "$bs" "$be" "$src/$f"; then
             complain "docs-sync: the ceremony-owned block in $f has drifted" \
               "  from $origin. That block is machine-written and is never" \
               "  edited in place — it is changed in heavy-duty/ceremony," \
@@ -660,7 +660,7 @@ run_fix() {
         note "created $f carrying the ceremony-owned block"
         continue
       fi
-      read -r status bs be < <(_block_lines "$f")
+      read -r status bs be < <(block_lines "$f")
       case "$status" in
         none)
           # APPEND, never overwrite: an existing hand-maintained template is
@@ -691,7 +691,7 @@ run_fix() {
             "  then re-run docs-sync --fix."
           ;;
         ok)
-          if ! _block_current "$f" "$bs" "$be" "$srcfile"; then
+          if ! block_current "$f" "$bs" "$be" "$srcfile"; then
             # head -n / tail -n +N reproduce the outside regions byte for
             # byte, including a final line with no newline: the block is
             # replaced and nothing else in the file is even read as text.
