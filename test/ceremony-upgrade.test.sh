@@ -233,11 +233,26 @@ unchanged "the default mode leaves the tree byte-identical" "$TMP/happy" \
 
 check "--check refuses to look like it moved anything" 0 "" \
   in_consumer happy --source "$SRC" 0.7.7
-check_absent "--check never claims to have rewritten a ref" 0 "rewrote the ceremony ref" \
+check_absent "--check never claims to have rewritten a ref" 0 "rewrote" \
   in_consumer happy --source "$SRC" 0.7.7
 
-check "--fix rewrites the refs" 0 "rewrote the ceremony ref in 4 file(s) to @0.7.7" \
+# The plan's own file count. It used to be the number of YAML files SCANNED,
+# not the number carrying a pin — a plan line that says "N ref(s) in M
+# file(s)" where M is neither. This fixture has 5 refs in 4 files under 6
+# YAML files, so all three numbers differ and the row can only pass for the
+# right reason.
+check "--check announces the refs and the files that carry them" 0 \
+  "$PIN_COUNT ceremony ref(s) in 4 file(s) under .github/" \
+  in_consumer happy --source "$SRC" 0.7.7
+
+check "--fix rewrites the refs" 0 "rewrote $PIN_COUNT ceremony ref(s) in 4 file(s) to @0.7.7" \
   in_consumer happy --fix --source "$SRC" 0.7.7
+# Its own fixture: `happy` has already moved by now, so this row would take
+# the "already at" branch and pass while asserting nothing about a rewrite.
+consumer verified 0.7.6
+check "--fix verifies the tree against the plan before it hands off" 0 \
+  "verified the tree against the plan" \
+  in_consumer verified --fix --source "$SRC" 0.7.7
 check "all $PIN_COUNT refs are at the target and none is left behind" 0 "$PIN_COUNT 0.7.7" \
   refs happy
 check_absent "no ref is left at the old tag" 0 "0.7.6" \

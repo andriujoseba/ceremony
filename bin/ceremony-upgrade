@@ -17,9 +17,9 @@ set -euo pipefail
 #
 #   1. A bare version string is not a pin. A consumer whose README mentions
 #      the old version, or whose CHANGELOG.md carries a `## 0.7.6` heading,
-#      is silently corrupted by a tree-wide substitution. So the rewrite is
-#      anchored to the `uses:` shape and touches nothing else, and --check
-#      leaves the tree byte-identical.
+#      is silently corrupted by a tree-wide substitution. So --fix rewrites
+#      exactly the lines --check enumerated, by line number, and looks at no
+#      other line in the file; --check leaves the tree byte-identical.
 #   2. Several pin moves are MIGRATIONS, not substitutions. `docs/CONSUMERS.md`
 #      records them as "available at `X` and later" notes, and crossing one
 #      without the accompanying hand edit is destructive rather than
@@ -29,12 +29,22 @@ set -euo pipefail
 #      it — "the whole label board goes down". So the refusal ships BEFORE any
 #      migration does, and it is this command's deliverable.
 #
-# EVERY CHECK RUNS BEFORE ANY WRITE. A refusal leaves the tree byte-identical,
-# which is asserted by the suite over the whole tree and not over the files
-# this tool would have touched. The alternative shape — rewrite the refs, then
-# discover the migration, then refuse — leaves a consumer pinned forward with
-# none of the hand edits that pin requires, which is strictly worse than never
-# having run the command.
+# A REFUSAL LEAVES THE TREE BYTE-IDENTICAL, asserted by the suite over the
+# whole tree and not over the files this tool would have touched. The
+# alternative shape — rewrite the refs, then discover the migration, then
+# refuse — leaves a consumer pinned forward with none of the hand edits that
+# pin requires, which is strictly worse than never having run the command.
+#
+# Two mechanisms hold that up, and it takes both. Every check this command
+# makes runs before any write — the ladder, the faults, the migration table.
+# But this command does not write alone: it calls docs-sync, whose scaffold
+# refusal fires inside its own fix loop, after it has written. So --fix is
+# also a TRANSACTION over a declared write territory (see below): it
+# snapshots that territory before the first byte, verifies the rewrite
+# against the plan afterwards, and restores the snapshot on any failure from
+# any depth — a refusal of its own, a non-zero docs-sync, a Ctrl-C. "Nothing
+# was written" is a promise about the tree at exit, not about the order the
+# checks happen to run in (codex-bot, PR #566 round 1).
 #
 # ALL THE REFS MOVE TOGETHER OR NONE DOES. A tree carrying two different
 # ceremony refs has no single pin; docs-sync already refuses such a tree at
@@ -194,26 +204,73 @@ mapfile -t yaml_files < <(
     \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort
 )
 
+# enumerate_pins — read every ceremony pin in the tree into pin_files,
+# pin_refs, pin_lines (1-based line numbers) and pin_file_list (the distinct
+# files, in order).
+#
+# THE ONE READER. The plan, every refusal, the rewrite and the post-write
+# verification all go through this function, so there is no second opinion
+# anywhere in the command about what a pin is. That is not tidiness: --fix
+# used to match by its own awk pattern, which was a SUPERSET of PIN_RE — it
+# lacked the '/' that anchors the repository name — so a `heavy-duty/ceremony`
+# SIBLING repo's `uses:` line was invisible to --check and rewritten by --fix
+# anyway, and a plan that named one ref wrote three at exit 0 (claude-bot,
+# round 1). The header essay above argues at length that a disagreement about
+# what a pin is must be unrepresentable between this command and docs-sync;
+# it was representable INSIDE this one. The repair is not a better second
+# pattern, it is no second pattern: --fix rewrites the LINE NUMBERS --check
+# enumerated, and nothing else in the file is even looked at.
 pin_files=()
 pin_refs=()
-for f in "${yaml_files[@]}"; do
-  if [ -L "$f" ]; then
-    grep -qE "$PIN_RE" "$f" 2>/dev/null || continue
-    die "$SELF: $f is a symlink and carries a ceremony pin — rewriting it" \
-      "  would write through the link, anywhere this process can reach." \
-      "  Refusing both modes: replace the symlink with a regular file."
-  fi
-  while IFS= read -r line; do
-    # The comment is stripped BEFORE the ref is taken, so a trailing note
-    # containing '@' cannot capture the greedy match; the path itself cannot
-    # contain '@' because the pattern above excludes it.
-    ref="$(printf '%s\n' "$line" | sed -E 's/[[:space:]]*#.*$//; s/^.*@//; s/[[:space:]]*$//')"
-    [ -n "$ref" ] || die \
-      "$SELF: a ceremony pin line in $f carries an empty ref after '@'."
-    pin_files+=("$f")
-    pin_refs+=("$ref")
-  done < <(grep -E "$PIN_RE" "$f" || true)
-done
+pin_lines=()
+pin_file_list=()
+enumerate_pins() {
+  local f line lineno ref had
+  pin_files=()
+  pin_refs=()
+  pin_lines=()
+  pin_file_list=()
+  for f in "${yaml_files[@]}"; do
+    if [ -L "$f" ]; then
+      grep -qE "$PIN_RE" "$f" 2>/dev/null || continue
+      die "$SELF: $f is a symlink and carries a ceremony pin — rewriting it" \
+        "  would write through the link, anywhere this process can reach." \
+        "  Refusing both modes: replace the symlink with a regular file."
+    fi
+    had=0
+    while IFS= read -r line; do
+      lineno="${line%%:*}"
+      line="${line#*:}"
+      # The comment is stripped BEFORE the ref is taken, so a trailing note
+      # containing '@' cannot capture the greedy match; the path itself cannot
+      # contain '@' because the pattern above excludes it.
+      ref="$(printf '%s\n' "$line" | sed -E 's/[[:space:]]*#.*$//; s/^.*@//; s/[[:space:]]*$//')"
+      [ -n "$ref" ] || die \
+        "$SELF: a ceremony pin line in $f carries an empty ref after '@'."
+      pin_files+=("$f")
+      pin_refs+=("$ref")
+      pin_lines+=("$lineno")
+      had=1
+    done < <(grep -nE "$PIN_RE" "$f" || true)
+    if [ "$had" -eq 1 ]; then
+      pin_file_list+=("$f")
+    fi
+  done
+}
+
+# pin_lines_in FILE — the pin line numbers in FILE, comma-joined, in the order
+# enumerate_pins found them. This is what the rewrite is aimed at.
+pin_lines_in() {
+  local want="$1" i out=""
+  for i in "${!pin_files[@]}"; do
+    if [ "${pin_files[$i]}" = "$want" ]; then
+      out="${out:+$out,}${pin_lines[$i]}"
+    fi
+  done
+  printf '%s\n' "$out"
+}
+
+enumerate_pins
 
 # ref_report — every pin, one per line, for the plan and for the refusals.
 # A refusal SAYS WHAT IT WOULD HAVE DONE, so the reader knows the refusal is
@@ -249,7 +306,7 @@ if [ "${#differing[@]}" -gt 0 ]; then
   {
     echo "$SELF: FAULT — this tree's ceremony refs are not all at one ref, so it has no single pin to move."
     echo
-    echo "  Every ceremony ref found (${#pin_files[@]} in ${#yaml_files[@]} file(s) under $GITHUB_DIR/):"
+    echo "  Every ceremony ref found (${#pin_files[@]} in ${#pin_file_list[@]} file(s) under $GITHUB_DIR/):"
     ref_report
     echo
     echo "  '${pin_files[0]}' is at @$current; these differ from it:"
@@ -282,8 +339,111 @@ fi
 # The heading shape is changelog-monotonic's — '## ' then a version-shaped
 # field 2 — so the two cannot disagree about what a release section is.
 scratch="$(mktemp -d)"
-cleanup() { rm -rf "$scratch"; }
+
+# --- the write territory, and the transaction over it ----------------------
+#
+# WHAT --fix IS ALLOWED TO CHANGE, declared in one place and snapshotted
+# before the first byte is written:
+#
+#   * $GITHUB_DIR/  — the pins this command rewrites, and (today) the one
+#                     guarded scaffold docs-sync writes
+#   * $MIRROR_DIR/  — the doctrine mirror docs-sync writes
+#   * the root's regular files — the AGENTS.md stub docs-sync scaffolds
+#
+# WHY A TRANSACTION AND NOT A PREFLIGHT. "Every check runs before any write"
+# was true of this command and false of the pair: docs-sync's own scaffold
+# refusal (`markers are duplicated|unbalanced`) fires INSIDE its fix loop,
+# after the mirror and the AGENTS.md stub are written — so a consumer whose
+# pull_request_template.md had a broken marker came out of `--fix` pinned
+# forward with a half-written mirror and none of the hand edits a pin implies.
+# That is the half-upgraded consumer this command exists to make
+# unrepresentable (codex-bot, round 1).
+#
+# Preflighting docs-sync's refusal list from here would mean a SECOND READER
+# of docs/SCAFFOLDED.txt and docs/VENDORED.txt, which is the same
+# two-readers-disagree bug the round's other blocker was — and a reader of a
+# format this command has no other reason to know. So the territory is
+# declared, not derived, and the day the declaration goes stale is caught in
+# ceremony's own CI rather than in a consumer: test/ceremony-upgrade.test.sh
+# reads both manifests and fails when a path they name falls outside these
+# roots. A ratchet, exactly like the availability-tag one — it cannot prove
+# the declaration complete, it closes the direction that is cheap to close.
+#
+# The rollback runs from the EXIT trap, so it covers every way out: a die, a
+# non-zero docs-sync, an unexpected failure under `set -e`, and (via the INT
+# and TERM traps below, which fall through to EXIT) a Ctrl-C mid-write.
+MIRROR_DIR=".ceremony"
+SNAP="$scratch/snapshot"
+ROOT_SNAP="$SNAP/__root__"
+snapshot_taken=0
+committed=0
+
+take_snapshot() {
+  local root f
+  mkdir -p "$SNAP" "$ROOT_SNAP"
+  for root in "$GITHUB_DIR" "$MIRROR_DIR"; do
+    if [ -e "$root" ]; then
+      cp -pPR "$root" "$SNAP/$root"
+    fi
+  done
+  while IFS= read -r -d '' f; do
+    cp -pPR "$f" "$ROOT_SNAP/${f##*/}"
+  done < <(find . -maxdepth 1 -type f -print0)
+  snapshot_taken=1
+}
+
+# Exact, not best-effort: a directory root is replaced wholesale from the
+# snapshot (or removed, if it did not exist), and at the root only the regular
+# files that appeared are deleted and only the ones that differ are written
+# back — so a file this run never touched keeps its inode.
+restore_snapshot() {
+  local root f base
+  for root in "$GITHUB_DIR" "$MIRROR_DIR"; do
+    if [ -e "$SNAP/$root" ]; then
+      rm -rf "$root" || return 1
+      cp -pPR "$SNAP/$root" "$root" || return 1
+    else
+      rm -rf "$root" || return 1
+    fi
+  done
+  while IFS= read -r -d '' f; do
+    base="${f##*/}"
+    if [ ! -e "$ROOT_SNAP/$base" ]; then
+      rm -f "$f" || return 1
+    fi
+  done < <(find . -maxdepth 1 -type f -print0)
+  while IFS= read -r -d '' f; do
+    base="${f##*/}"
+    if [ ! -e "./$base" ] || ! cmp -s "$f" "./$base"; then
+      cp -pPR "$f" "./$base" || return 1
+    fi
+  done < <(find "$ROOT_SNAP" -maxdepth 1 -type f -print0)
+}
+
+cleanup() {
+  # No `exit` on the success path: an EXIT trap that returns normally leaves
+  # the shell's own status alone, so a refusal keeps its non-zero.
+  trap - EXIT
+  if [ "$snapshot_taken" -eq 1 ] && [ "$committed" -eq 0 ]; then
+    if restore_snapshot; then
+      printf '%s\n' \
+        "$SELF: rolled back — the tree is byte-identical to what it was before this run." >&2
+    else
+      printf '%s\n' \
+        "$SELF: ROLLBACK FAILED after the run above failed. The snapshot of" \
+        "  $GITHUB_DIR/, $MIRROR_DIR/ and this tree's root files, taken before" \
+        "  the first write, is kept at:" \
+        "    $SNAP" \
+        "  It is NOT deleted, so the tree can be restored by hand. Nothing else" \
+        "  in this command will touch the tree." >&2
+      exit 1
+    fi
+  fi
+  rm -rf "$scratch"
+}
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ -n "$source_dir" ]; then
   [ -d "$source_dir" ] || die "$SELF: --source: no such directory: $source_dir"
@@ -397,11 +557,16 @@ if [ "$current_i" -eq "$target_i" ]; then
     exit 0
   fi
   echo "$SELF: re-syncing the doctrine mirror (docs-sync --fix)."
+  # Snapshotted like every other --fix path: docs-sync can refuse mid-write on
+  # a broken scaffold marker here too, and "a refusal leaves the tree
+  # byte-identical" has to hold on the branch where no pin moves as well.
+  take_snapshot
   if [ -n "$source_dir" ]; then
     bash "$DOCS_SYNC" --fix --source "$source_dir"
   else
     bash "$DOCS_SYNC" --fix
   fi
+  committed=1
   echo "$SELF: nothing to do — the pin was already at $target."
   exit 0
 fi
@@ -493,7 +658,7 @@ fi
 
 # --- the plan, and (only in --fix) the writes ------------------------------
 
-echo "$SELF: $current -> $target, ${#pin_files[@]} ceremony ref(s) in ${#yaml_files[@]} file(s) under $GITHUB_DIR/:"
+echo "$SELF: $current -> $target, ${#pin_files[@]} ceremony ref(s) in ${#pin_file_list[@]} file(s) under $GITHUB_DIR/:"
 ref_report
 echo "$SELF: no migration between $current and $target (checked ${#MIGRATIONS[@]} table entries against the ${#ladder[@]}-tag ladder at $ladder_origin)."
 
@@ -502,35 +667,138 @@ if [ "$mode" = "check" ]; then
   exit 0
 fi
 
-# The substitution is anchored to the pin shape and replaces the FIRST '@'
-# token on a matching line — which is the ref, the path having been forbidden
-# to contain '@'. A whole file is rewritten through a temporary and copied
-# back with `cat >`, so the file keeps its mode and its inode: the alternative
-# is `sed -i`, whose in-place semantics differ between GNU and BSD and whose
-# expression, applied to a whole workflow file, is the tool this command
-# exists to replace.
+# THE WRITES ARE THE PLAN, LINE FOR LINE. awk is aimed at the line NUMBERS
+# enumerate_pins reported and looks at no other line in the file, so "the
+# rewrite is anchored to the `uses:` shape and touches nothing else" is true
+# by construction rather than by a second pattern agreeing with the first.
+# On those lines it replaces the FIRST '@' token — which is the ref, the path
+# having been forbidden to contain '@'.
+#
+# The file is rewritten through a temporary and copied back with `cat >`, so
+# it keeps its mode and its inode: the alternative is `sed -i`, whose in-place
+# semantics differ between GNU and BSD and whose expression, applied to a
+# whole workflow file, is the tool this command exists to replace.
+#
+# A FILE THAT ENDED WITHOUT A NEWLINE STILL DOES. awk's `print` terminates
+# every record, so the last line of such a file came back one byte longer —
+# a byte outside the `uses:` line, which #561 G8 says this command never
+# touches (claude-bot, round 1). The byte is removed again below.
+#
+# The list is pin_file_list, the distinct files enumerate_pins found, so a
+# file carrying two pins is visited once. The previous shape kept a per-file
+# stamp keyed by `tr '/' '_'`, which is not injective — `a/b.yml` and
+# `a_b.yml` shared a stamp, the second was skipped, and the run still said
+# `done` at exit 0 (claude-bot, round 1). A key that cannot collide beats a
+# key that collides less: there is no key.
+take_snapshot
+
+planned_refs="${#pin_files[@]}"
+planned_files="${#pin_file_list[@]}"
+
 rewritten=0
-for f in "${pin_files[@]}"; do
-  # A file with two pins appears twice in pin_files; rewriting it once is
-  # enough, and awk has already moved both.
-  stamp="$scratch/done-$(printf '%s' "$f" | tr '/' '_')"
-  if [ -f "$stamp" ]; then
-    continue
+for f in "${pin_file_list[@]}"; do
+  final_nl=1
+  if [ -s "$f" ] && [ "$(tail -c 1 "$f" | wc -l)" -eq 0 ]; then
+    final_nl=0
   fi
-  : >"$stamp"
-  awk -v new="$target" '
-    $0 ~ /^[ \t]*(-[ \t]*)?uses:[ \t]*heavy-duty\/ceremony([^@ \t]*)?@/ {
-      sub(/@[^ \t#]+/, "@" new)
-    }
+  awk -v new="$target" -v want="$(pin_lines_in "$f")" '
+    BEGIN { n = split(want, a, ","); for (i = 1; i <= n; i++) target_line[a[i]] = 1 }
+    (NR in target_line) { sub(/@[^ \t#]+/, "@" new) }
     { print }
   ' "$f" >"$scratch/rewritten"
+  if [ "$final_nl" -eq 0 ]; then
+    size="$(wc -c <"$scratch/rewritten")"
+    if [ "$size" -gt 0 ]; then
+      head -c "$((size - 1))" "$scratch/rewritten" >"$scratch/trimmed"
+      mv "$scratch/trimmed" "$scratch/rewritten"
+    fi
+  fi
   cat "$scratch/rewritten" >"$f"
   rewritten=$((rewritten + 1))
 done
-echo "$SELF: rewrote the ceremony ref in $rewritten file(s) to @$target."
+
+# --- the rewrite verifies its own work ------------------------------------
+#
+# THE WRITES WERE NEVER CHECKED AGAINST THE PLAN, and that — not any one
+# regex — is what let both of round 1's rewrite defects ship silently
+# (claude-bot §3). Two assertions, and between them they say the whole of
+# what was announced:
+#
+#   1. Re-enumerate with PIN_RE, the same reader that produced the plan: the
+#      counts must be the counts printed above and every ref must now be
+#      @$target. A file skipped by a colliding key fails here loudly instead
+#      of passing as `done`.
+#   2. Outside the enumerated lines, every rewritten file must be byte-
+#      identical to its snapshot — compared with those lines masked out, plus
+#      the final-newline byte checked directly, since masking normalises it.
+#      A rewrite that reached a line the plan never named fails here, whatever
+#      made it reach.
+#
+# Either failure rolls the whole tree back through the EXIT trap.
+mask_pin_lines() {
+  awk -v want="$2" '
+    BEGIN { n = split(want, a, ","); for (i = 1; i <= n; i++) target_line[a[i]] = 1 }
+    (NR in target_line) { print "ceremony-upgrade:masked-pin-line"; next }
+    { print }
+  ' "$1"
+}
+has_final_newline() {
+  if [ ! -s "$1" ]; then
+    printf 'yes\n'
+  elif [ "$(tail -c 1 "$1" | wc -l)" -eq 0 ]; then
+    printf 'no\n'
+  else
+    printf 'yes\n'
+  fi
+}
+
+verify_failures=()
+for f in "${pin_file_list[@]}"; do
+  want="$(pin_lines_in "$f")"
+  mask_pin_lines "$SNAP/$f" "$want" >"$scratch/masked-before"
+  mask_pin_lines "$f" "$want" >"$scratch/masked-after"
+  if ! cmp -s "$scratch/masked-before" "$scratch/masked-after"; then
+    verify_failures+=("$f changed outside the ${want:-none} line(s) the plan named")
+  fi
+  if [ "$(has_final_newline "$SNAP/$f")" != "$(has_final_newline "$f")" ]; then
+    verify_failures+=("$f's final newline changed, and that byte is not part of any pin line")
+  fi
+done
+
+enumerate_pins
+if [ "${#pin_files[@]}" -ne "$planned_refs" ]; then
+  verify_failures+=("the plan named $planned_refs ceremony ref(s); the tree now carries ${#pin_files[@]}")
+fi
+if [ "${#pin_file_list[@]}" -ne "$planned_files" ]; then
+  verify_failures+=("the plan named $planned_files file(s) carrying a pin; the tree now has ${#pin_file_list[@]}")
+fi
+for i in "${!pin_refs[@]}"; do
+  if [ "${pin_refs[$i]}" != "$target" ]; then
+    verify_failures+=("${pin_files[$i]} line ${pin_lines[$i]} is still at @${pin_refs[$i]}, not @$target")
+  fi
+done
+
+if [ "${#verify_failures[@]}" -gt 0 ]; then
+  {
+    echo "$SELF: FAULT — the rewrite did not do what the plan said, so it is being undone."
+    echo
+    printf '    %s\n' "${verify_failures[@]}"
+    echo
+    echo "  This is a bug in $SELF, not something a consumer tree can cause and"
+    echo "  not something to work around by hand: --check announced a plan and"
+    echo "  --fix produced something else, which is the one thing this command"
+    echo "  must never do quietly. Please report it against heavy-duty/ceremony"
+    echo "  with the output above."
+  } >&2
+  exit 1
+fi
+echo "$SELF: rewrote $planned_refs ceremony ref(s) in $rewritten file(s) to @$target, and verified the tree against the plan."
 
 # The pin this reads is the one just written, which is why the call is here
-# and not before the rewrite.
+# and not before the rewrite. It is inside the transaction: docs-sync refuses
+# mid-write on a broken scaffold marker, and until this was snapshotted that
+# refusal left the consumer pinned forward with a half-written mirror
+# (codex-bot, round 1).
 echo "$SELF: re-syncing the doctrine mirror (docs-sync --fix)."
 if [ -n "$source_dir" ]; then
   bash "$DOCS_SYNC" --fix --source "$source_dir"
@@ -538,4 +806,7 @@ else
   bash "$DOCS_SYNC" --fix
 fi
 
+# Past every way this run could still fail: from here the tree keeps what was
+# written to it.
+committed=1
 echo "$SELF: $current -> $target done. Commit the ref(s) and the mirror together: the pin and the doctrine it governs are one change."
