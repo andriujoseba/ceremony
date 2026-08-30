@@ -779,11 +779,14 @@ check "markers documented on bare lines are markers: refused as duplicated" 1 \
   "more than one ceremony marker line" in_consumer documented --check --source "$SRC_SCAF"
 
 # That same file is the one the extractors above cannot answer about, and
-# the blast radius of not answering is graded rather than left to prose: a
-# helper that fed two line numbers to $(( )) would take $TMP with it and
-# turn one broken extraction into a dozen unrelated failures.
+# the blast radius of not answering is graded rather than left to prose.
+# inner_block specifically: its head|tail is a PIPELINE, so a fatal $(( ))
+# error there kills a subshell — which runs this file's EXIT trap and
+# rm -rf's $TMP — where the same error in above_block's simple command only
+# skips that one command. The second row is the one that matters, and it
+# only means anything below the first.
 check "an extractor that cannot answer fails its own row" 1 "" \
-  above_block "$TMP/documented/$TEMPLATE"
+  inner_block "$TMP/documented/$TEMPLATE"
 check "and the fixture tree is still standing after it" 0 "" \
   test -d "$TMP/documented"
 
