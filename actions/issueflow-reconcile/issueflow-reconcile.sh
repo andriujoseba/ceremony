@@ -21,7 +21,8 @@ ISSUEFLOW_STALE_HOURS="${ISSUEFLOW_STALE_HOURS:-48}"
 }
 NOW="$ISSUEFLOW_NOW"
 STALE_AFTER=$((ISSUEFLOW_STALE_HOURS * 3600))
-QUEUE_LABELS=(ready claimed blocked post-merge)
+QUEUE_LABELS=(ready claimed blocked)
+BUILDER_LABEL_AVAILABLE="${BUILDER_LABEL_AVAILABLE:-false}"
 TRIAGE_ACTORS=()
 # The operator nudge's addressee. This is the same human identity the PR-side
 # reconciler defaults to: the label names who owns the work, and a nudge that
@@ -274,6 +275,24 @@ queue_decision() { # labels on stdin -> KEEP | ADD_NEEDS_TRIAGE | FLAG_CONFLICT
   fi
 }
 
+owner_class_decision() { # labels on stdin -> ADD_BUILDER | REMOVE_BUILDER | KEEP
+  local labels label queue=false
+  labels="$(cat)"
+  for label in "${QUEUE_LABELS[@]}"; do
+    grep -qxF "$label" <<<"$labels" && queue=true
+  done
+  if [ "$queue" = false ] || grep -qxF epic <<<"$labels" \
+      || grep -qxF needs-triage <<<"$labels"; then
+    echo KEEP
+  elif grep -qxF operator <<<"$labels"; then
+    if grep -qxF builder <<<"$labels"; then echo REMOVE_BUILDER; else echo KEEP; fi
+  elif grep -qxF builder <<<"$labels"; then
+    echo KEEP
+  else
+    echo ADD_BUILDER
+  fi
+}
+
 author_decision() { # $1 = true when author is triage; labels on stdin
   local triage="$1" labels
   labels="$(cat)"
@@ -398,43 +417,6 @@ issues_with_failing_head() { # open-PR records on stdin -> issue numbers, dedupe
   # read is not a failed check. An issue with two open PRs, one red, counts —
   # its head cannot move until that PR does.
   awk -F '\t' '$2 == "FAILURE" { print $1 }' | sort -nu
-}
-
-unchecked_criteria() { # issue body on stdin -> unchecked task-list lines verbatim
-  awk '
-    /^[[:space:]]*([-*]|[0-9]+\.)[[:space:]]+\[[[:space:]]\]/ {
-      sub(/\r$/, "")
-      print
-    }
-  '
-}
-
-post_merge_decision() { # $1 merged Refs PR, $2 linked open PR, $3 already handled
-  local merged="$1" open_pr="$2" handled="$3" unchecked
-  unchecked="$(cat)"
-  if [ -n "$merged" ] && [ "$open_pr" = false ] && [ "$handled" = false ] \
-      && [ -n "$unchecked" ]; then echo TRANSITION
-  else echo KEEP
-  fi
-}
-
-post_merge_pr_for_issue() { # $1 issue; records are ISSUE<TAB>PR<TAB>MERGED_AT
-  # The deliverable is the PR that merged last, not the one numbered highest.
-  # Merge order is not number order in this family: crew#176's two Refs PRs
-  # merged #184 at 19:05:16Z and #182 at 19:05:18Z — the higher number two
-  # seconds earlier. Number order is also what spends a marker on the wrong
-  # PR: crew#321 carries `post-merge-transition-pr-326` while its real
-  # deliverable crew#322 — a lower number, merging later — is still open, so
-  # under the old rule the transition it owes could never fire (#242).
-  # mergedAt is ISO-8601 UTC, so it sorts as a string; ties break by highest
-  # PR number so the answer never depends on input order.
-  awk -F '\t' -v issue="$1" '$1 == issue { print $3 "\t" $2 }' \
-    <<<"${MERGED_REF_PR_RECORDS:-}" \
-    | sort -t $'\t' -k1,1 -k2,2n | tail -n1 | cut -f2
-}
-
-post_merge_transition_marker() { # $1 merged PR number
-  printf 'post-merge-transition-pr-%s\n' "$1"
 }
 
 issue_references() { # text on stdin -> LOCAL/CROSS<TAB>reference
@@ -725,9 +707,9 @@ unblocked_claimable() { # $1 = comma-joined labels -> 0 when the issue is unbloc
   # flagging it would report the fix as the defect. Anything else without
   # `ready` or `claimed` is out because it is not claimable — `needs-triage`
   # and a label-less issue are not states a builder can pick up, and an
-  # unlabeled one is getting `needs-triage` from this very pass. `epic` and
-  # `post-merge` are out by #288 D6 and #292 D1 alike — neither is picked by a
-  # builder — and they carry no queue label to admit them here anyway.
+  # unlabeled one is getting `needs-triage` from this very pass. An `epic` is
+  # out by #288 D6 and #292 D1 alike — builders never pick it — and it carries
+  # no queue label to admit it here anyway.
   case ",$1," in *,blocked,*) return 1 ;; esac
   case ",$1," in *,ready,*|*,claimed,*) return 0 ;; esac
   return 1
@@ -739,20 +721,18 @@ collision_in_scope() { # $1 = comma-joined labels -> 0 in the collision set
 
 window_in_scope() { # $1 = comma-joined labels -> 0 subject to the window rule
   # The same `unblocked`, not a second reading of it. Excluding only
-  # `blocked`/`epic`/`post-merge` here admitted `needs-triage` and a
+  # `blocked`/`epic` here admitted `needs-triage` and a
   # label-less issue, which left the sweep adding `needs-triage` to an
   # unlabeled issue and then, in the same pass, telling it about a membership
   # call made at mint time. Neither is claimable; #292's invariant is stated
-  # over the claimable set (D3b), and its exemptions say why — `epic` and
-  # `post-merge` are exempt *because neither is claimable*.
+  # over the claimable set (D3b), and `epic` is exempt because builders never
+  # claim it.
   unblocked_claimable "$1"
 }
 
 board_flags_in_scope() { # $1 = queue state concluded by this issue's pass
   # The board snapshot decides which issues might owe a flag, but this pass
-  # speaks only about the queue state it leaves behind (#327 D2). A derived
-  # claimed -> post-merge transition therefore cannot post the snapshot's
-  # now-false claim that the issue is still unblocked and claimable.
+  # speaks only about the queue state it leaves behind (#327 D2).
   unblocked_claimable "$1"
 }
 
@@ -1361,16 +1341,11 @@ last_issue_activity() { # $1 issue, $2 created_at → epoch; non-zero if a read 
 }
 
 last_issue_comment_activity() { # $1 issue, $2 created_at → epoch; non-zero on a failed read
-  # The evidence nudge's clock (#254), and the issue-side ruling clock with
-  # it (#284): on an issue, a comment is the only substantive activity
-  # toward a ruling. Same computation as the claim clock, one input fewer,
-  # and the input it drops is the one that would starve each criterion: on
-  # `post-merge` there is no claim for an assignment to protect, and an
-  # assignee there is the invalid composition the `post-merge-assigned` flag
-  # reports; under `needs-ruling` the assignment is the *claim's* fact, and
-  # counting it silenced the escalation at exactly the moment somebody
-  # started working through it. Either way, a wider clock would let board
-  # state buy the wait another 7 days of silence.
+  # The operator nudge and issue-side ruling clocks (#284): on an issue, a
+  # comment is the only substantive activity toward either obligation. Same
+  # computation as the claim clock, one input fewer: under `needs-ruling` the
+  # assignment is the *claim's* fact, and counting it silenced the escalation
+  # at exactly the moment somebody started working through it.
   #
   # A comment the sweep itself wrote is still activity here, deliberately:
   # the nudge carries no marker, so its own comment is what rate-limits it,
@@ -1482,11 +1457,11 @@ marker carries the collision itself, so an unchanged one never re-posts.*" >/dev
       if state_echo_needed "$n" window-nonmember "$marker"; then
         run gh issue comment "$n" -R "$REPO" --body "<!-- issueflow:$marker -->
 A release window is standing ($state) and this issue is neither one of its
-members nor an \`epic\` or \`post-merge\` issue.
+members nor an \`epic\`.
 
 #292's invariant: during a standing window — an open \`release\`-labeled issue
 with a non-empty membership record — the \`ready\` set is a subset of that
-record, \`epic\` and \`post-merge\` exempt. Every mint during a window is a
+record, \`epic\` exempt. Every mint during a window is a
 membership call, binary, made at mint time: **behind the gate**, this issue's
 own Dependencies declare the release issue as a blocker and the sweep releases
 it when the release closes; or **into the graph**, three writes in one tick —
@@ -1511,12 +1486,12 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
   fi
 
   # Emit only when this issue still has the queue state from which the board
-  # snapshot derived its flag. The same six-label set is concluded by
+  # snapshot derived its flag. The same five-label set is concluded by
   # reconcile_issue; omitting epic or needs-triage would silence stable heads,
   # while an initially unlabeled issue correctly waits for the next pass.
   snapshot_state="$(awk -F '\t' -v n="$n" '$1 == n {
     split($2, labels, ",")
-    for (i in labels) if (labels[i] ~ /^(needs-triage|epic|ready|claimed|blocked|post-merge)$/) print labels[i]
+    for (i in labels) if (labels[i] ~ /^(needs-triage|epic|ready|claimed|blocked)$/) print labels[i]
   }' <<<"${BOARD_RECORDS:-}")"
   [ "$snapshot_state" = "$2" ] || return 0
   for family in idle deep cycle stalled; do
@@ -1573,9 +1548,8 @@ an unchanged shape never re-posts and a changed one speaks.*" >/dev/null
 }
 
 reconcile_issue() {
-  local n="$1" decision refs cross_refs states age evidence_age operator_age ruling_age created assignees open_pr=false label owners
-  local merged_ref_pr="" transition_marker="" transition_handled=false parsed_set="" parse_marker=""
-  local unchecked="" remove_claimed=claimed
+  local n="$1" decision refs cross_refs states age operator_age ruling_age created assignees open_pr=false label owners
+  local parsed_set="" parse_marker=""
   local attention_active=true attention_suppression=""
   local concluded_queue_state=""
   for label in needs-triage epic "${QUEUE_LABELS[@]}"; do
@@ -1589,16 +1563,30 @@ reconcile_issue() {
       log "#$n: needs-triage (no queue state)" ;;
     FLAG_CONFLICT)
       ensure_comment "$n" queue-conflict \
-        'The issue-flow sweep found conflicting queue labels. It cannot infer intent safely; triage must leave exactly one of `needs-triage`, `epic`, `ready`, `claimed`, `blocked`, or `post-merge`.'
+        'The issue-flow sweep found conflicting queue labels. It cannot infer intent safely; triage must leave exactly one of `needs-triage`, `epic`, `ready`, `claimed`, or `blocked`.'
       log "#$n: conflicting queue labels; flagged"
       return ;;
   esac
 
+  # `builder` is the sweep's rendering of the hand-set `operator` decision.
+  # The taxonomy row arrives only after a consumer's bootstrap press, so the
+  # whole derivation is skipped before that press and the rest of the issue
+  # pass continues (#562 D2/D9).
+  if [ "$BUILDER_LABEL_AVAILABLE" = true ]; then
+    case "$(owner_class_decision <<<"$ISSUE_LABELS")" in
+      ADD_BUILDER)
+        run gh issue edit "$n" -R "$REPO" --add-label builder >/dev/null
+        log "#$n: derived builder owner class" ;;
+      REMOVE_BUILDER)
+        run gh issue edit "$n" -R "$REPO" --remove-label builder >/dev/null
+        log "#$n: removed derived builder owner class (operator owns it)" ;;
+    esac
+  fi
+
   # Read the operator clock before any queue branch can write a comment. The
-  # nudge is cross-cutting, so a blocked parse echo, a claim diagnostic or a
-  # post-merge nudge must not buy the operator another quiet week merely by
-  # running earlier in this pass. Comments alone count, exactly as on the
-  # post-merge evidence clock; label churn and assignments are board facts,
+  # nudge is cross-cutting, so a blocked parse echo or a claim diagnostic must
+  # not buy the operator another quiet week merely by running earlier in this
+  # pass. Comments alone count; label churn and assignments are board facts,
   # not progress on the operator-owned work (#491).
   if has_issue_label operator; then
     created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
@@ -1629,45 +1617,12 @@ reconcile_issue() {
     assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
     issue_has_open_pr "$n" <<<"${OPEN_PR_ISSUES:-}" && open_pr=true
     # The ruling clock is already in hand, read above this branch and before
-    # anything either arm can post — the derived transition comment, the
-    # reclaim notice and the claimed-unassigned flag are all comments, and a
-    # read taken after one would date the issue by this sweep's own writing
-    # (#284; the hazard #274 met from the other side). Two clocks on purpose:
+    # the reclaim notice or claimed-unassigned flag can post (#284). Two
+    # clocks on purpose:
     # `age` below counts the assignment because the assignment IS the claim;
     # the ruling waits on a human, and an assignment says nothing about
     # whether the decider answered.
-    merged_ref_pr="$(post_merge_pr_for_issue "$n")"
-    if [ -n "$merged_ref_pr" ]; then
-      transition_marker="$(post_merge_transition_marker "$merged_ref_pr")"
-      issue_comment_has_marker "$n" "$transition_marker" \
-        && transition_handled=true
-    fi
-    unchecked="$(unchecked_criteria <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
-    if [ "$(post_merge_decision "$merged_ref_pr" "$open_pr" "$transition_handled" \
-        <<<"$unchecked")" = TRANSITION ]; then
-      ensure_comment "$n" "$transition_marker" \
-        "The Refs-linked PR merged with these acceptance criteria still unchecked:
-
-$unchecked
-
-The merge releases the claim; no builder owes a draft. Triage owes completion in a follow-up comment that names the owner and wake condition."
-      owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
-      # `attention` is a demand for the assigned builder. The derived
-      # transition releases that builder, so carrying the demand forward
-      # would create an impossible parked-for state (#175 D4).
-      has_issue_label attention && remove_claimed=claimed,attention
-      if [ -n "$owners" ]; then
-        run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
-          --remove-label "$remove_claimed" --add-label post-merge >/dev/null
-      else
-        run gh issue edit "$n" -R "$REPO" \
-          --remove-label "$remove_claimed" --add-label post-merge >/dev/null
-      fi
-      log "#$n: merged Refs PR -> post-merge; claim released"
-      concluded_queue_state=post-merge
-      attention_active=false
-    else
-      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
       guarded_read age last_issue_activity "$n" "$created" \
         || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
       if [ "$(claim_clock_exempt <<<"$ISSUE_LABELS")" = EXEMPT ]; then
@@ -1711,64 +1666,6 @@ The merge releases the claim; no builder owes a draft. Triage owes completion in
           fi
         fi
       fi
-    fi
-  elif has_issue_label post-merge; then
-    assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
-    # The evidence nudge's clock is read BEFORE any comment this branch
-    # posts. `ensure_comment` below is itself activity, so reading after it
-    # would let the assigned-flag comment silence the nudge for another 7
-    # days — the same self-silencing the ruling nudge avoids by taking its
-    # clock from this same read, below.
-    if [ -n "${operator_age:-}" ]; then
-      evidence_age="$operator_age"
-    else
-      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-      guarded_read evidence_age last_issue_comment_activity "$n" "$created" \
-        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
-    fi
-    # The ruling clock is NOT this read, and the reuse that used to stand
-    # here is severed (#534 D4/D6). Both nudges wait on comments, but not on
-    # the same comments: the evidence clock counts every one, and the ruling
-    # clock drops the flag-setter's and floors at the `labeled` event, so one
-    # value cannot serve both without one of them lying. The ruling clock is
-    # read above this branch instead — before the assigned-flag comment and
-    # the evidence nudge below, so neither wait is ever answered by anything
-    # this pass writes.
-    if [ "$assignees" -gt 0 ] || has_issue_label attention; then
-      ensure_comment "$n" post-merge-assigned \
-        'This `post-merge` issue has an assignee or `attention`. The sweep will not undo hand-set intent; triage must clear the invalid composition or move the issue back into buildable queue state.'
-      log "#$n: assigned or attention-bearing post-merge issue flagged"
-    fi
-    attention_suppression=post-merge-assigned
-    # ---- the post-merge evidence nudge (#254), the ruling nudge's twin ----
-    # A `post-merge` item waits on named evidence with a named owner, and
-    # nothing nudged when the wait went quiet: crew#181's real-host criterion
-    # starved four separate times across two releases, crew#240/#264 sat
-    # until an operator happened to run the right read. Same 7-day rule, same
-    # constant, same no-marker property — `ruling_nudge_decision` is the one
-    # spelling of all three (lib/ruling.sh), and a second `7 * 24 * 3600`
-    # here is the drift that file exists to prevent.
-    #
-    # The addressee is the triage actor, not `HUMAN_REVIEWER`: `post-merge`
-    # is triage's completion queue by contract (TRIAGE.md), so a starving
-    # wake condition is triage's to answer, and routing it to the operator
-    # asks the wrong party for a move it does not owe. `triage-actors=` is
-    # mandatory config — `load_issueflow_config` refuses to run without it —
-    # so there is nothing to fall back to, and a silent fallback is exactly
-    # how the wrong addressee comes back.
-    if [ "$(ruling_nudge_decision "$NOW" "$evidence_age")" = NUDGE ]; then
-      local quiet_days=$(((NOW - evidence_age) / 86400))
-      run gh issue comment "$n" -R "$REPO" --body "@${TRIAGE_ACTORS[0]} — this \`post-merge\` item has had no comment for ${quiet_days} days: https://github.com/$REPO/issues/$n
-
-Its wake evidence is still owed. \`post-merge\` means the merge landed and
-triage owns completion — judge the remaining criteria against the evidence
-and close the issue, or say what is still outstanding and who owes it. The
-sweep names no criterion: which one starved is prose, and the machine never
-judges prose (the link is the payload).
-
-*This nudge is comment-only and carries no idempotency marker on purpose: the comment itself is activity, so posting it resets the 7-day window and the rule self-rate-limits to one nudge per 7 quiet days. Do not add a marker.*" >/dev/null
-      log "#$n: post-merge evidence nudge (${quiet_days}d quiet — triage owes the wake evidence)"
-    fi
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
     cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
@@ -1855,12 +1752,12 @@ See \`$release_doctrine_path\`. The operator blessing the order is the one step 
     fi
   fi
 
-  # ---- the operator-owned work nudge (#491), post-merge's quiet twin ----
+  # ---- the operator-owned work nudge (#491) -------------------------------
   # The body contract carries the evidence surface, command or observation,
   # and wake condition. The machine deliberately parses none of that prose:
   # the link is the payload, and the operator judges what the issue says is
-  # owed. Like post-merge this has no marker; its own comment is activity and
-  # self-rate-limits the rule to one nudge per seven quiet days.
+  # owed. It has no marker; its own comment is activity and self-rate-limits
+  # the rule to one nudge per seven quiet days.
   if has_issue_label operator \
     && [ "$(ruling_nudge_decision "$NOW" "$operator_age")" = NUDGE ]; then
     local operator_quiet_days=$(((NOW - operator_age) / 86400))
@@ -1876,8 +1773,8 @@ judges that prose; the link is the payload.
   fi
 
   # The flag composes with every build queue state, but requires an assignee.
-  # Existing post-merge/claimed diagnostics take precedence so one board bug
-  # draws one comment (#232 D5); the shared helper still logs the suppression.
+  # The claimed diagnostic takes precedence so one board bug draws one
+  # comment (#232 D5); the shared helper still logs the suppression.
   if [ "$attention_active" = true ] && has_issue_label attention; then
     [ -n "${assignees:-}" ] || assignees="$(jq '.assignees | length' <<<"$ISSUE_JSON")"
     reconcile_attention "$n" issue "$assignees" "$attention_suppression"
@@ -1935,7 +1832,37 @@ reconcile_opened_issue() {
   log "#$n: needs-triage (opened by $author)"
 }
 
-reconcile_issue_pass() { # $1 = issue — one issue's whole pass, in its own subshell
+closed_claim_release_marker() { # $1 issue
+  printf 'closed-claim-release-%s\n' "$1"
+}
+
+reconcile_closed_issue() { # recently updated closed issue payload is current
+  local n="$1" label remove="" owners released
+  for label in "${QUEUE_LABELS[@]}"; do
+    has_issue_label "$label" && remove="${remove:+$remove,}$label"
+  done
+  [ -n "$remove" ] || return 0
+  issue_comment_has_marker "$n" "$(closed_claim_release_marker "$n")" && return 0
+
+  owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
+  released="$(jq -r '[.assignees[].login | "@" + .] | if length == 0 then "none" else join(", ") end' <<<"$ISSUE_JSON")"
+  # `attention` is a demand for the assigned builder. Closing the issue
+  # releases that builder, so carrying the demand would create an impossible
+  # parked-for state (#175 D4).
+  has_issue_label attention && remove="$remove,attention"
+  has_issue_label builder && remove="$remove,builder"
+  ensure_comment "$n" "$(closed_claim_release_marker "$n")" \
+    "This issue closed while it still carried build-queue bookkeeping. The claim is released; released assignee(s): $released. The sweep is clearing the queue label, every assignee, and any \`attention\`."
+  if [ -n "$owners" ]; then
+    run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
+      --remove-label "$remove" >/dev/null
+  else
+    run gh issue edit "$n" -R "$REPO" --remove-label "$remove" >/dev/null
+  fi
+  log "#$n: closed issue queue bookkeeping cleared; claim released"
+}
+
+reconcile_issue_pass() { # $1 = issue, $2 = open|closed (default open)
   # The subshell is #91's resilience: one unreadable or broken issue must not
   # take the sweep down. What it is NOT is an errexit boundary — a command
   # whose status is tested by `||` runs with errexit suppressed, and the
@@ -1953,7 +1880,7 @@ reconcile_issue_pass() { # $1 = issue — one issue's whole pass, in its own sub
   # can land partially. Prevented is exactly what that is not — #519 D4 asks
   # for it to be reported, which is what ISSUEFLOW_WRITE_FAILED and the tail
   # below are for.
-  local n="$1" status=0
+  local n="$1" mode="${2:-open}" status=0
   (
     # Everything below stages rather than acts, and commits at the bottom —
     # so a skip taken at any read, and a crash at any statement, leaves the
@@ -1967,7 +1894,11 @@ reconcile_issue_pass() { # $1 = issue — one issue's whole pass, in its own sub
       || skip_issue "$n" "the issue read answered a payload that is not issue #$n carrying a label array"
     jq -e 'has("pull_request") | not' <<<"$ISSUE_JSON" >/dev/null || exit 0
     ISSUE_LABELS="$(jq -r '.labels[].name' <<<"$ISSUE_JSON")"
-    reconcile_issue "$n" || exit $?
+    if [ "$mode" = closed ]; then
+      reconcile_closed_issue "$n" || exit $?
+    else
+      reconcile_issue "$n" || exit $?
+    fi
     commit_staged_effects "$n"
   ) || status=$?
   if [ "$status" -eq "$ISSUEFLOW_SKIP" ]; then
@@ -2059,32 +1990,7 @@ main() {
           | ["CLOSING", tostring] | @tsv),
         ((.body // "") | split("\n")[] | ["BODY", .] | @tsv)' \
     | open_pr_issues)"
-  MERGED_REF_PR_RECORDS="$(gh api graphql --paginate -f owner="$owner" -f name="$name" -f query='
-    query($owner: String!, $name: String!, $endCursor: String) {
-      repository(owner: $owner, name: $name) {
-        pullRequests(first: 100, states: MERGED, after: $endCursor) {
-          nodes { number mergedAt body }
-          pageInfo { hasNextPage endCursor }
-        }
-      }
-    }' --jq '.data.repository.pullRequests.nodes[]
-      | .number as $pr | .mergedAt as $merged | .body | split("\n")[]
-      | [$pr, $merged, .] | @tsv' \
-    | while IFS= read -r record; do
-        # Split on exact tabs rather than IFS: tab is IFS whitespace, so bash
-        # collapses a run of them, and a middle column that ever came back
-        # empty would silently shift the body one field left. The body is
-        # arbitrary text and stays last, where the remainder belongs.
-        pr="${record%%$'\t'*}"
-        rest="${record#*$'\t'}"
-        merged="${rest%%$'\t'*}"
-        body="${rest#*$'\t'}"
-        while IFS= read -r issue; do
-          [ -n "$issue" ] && printf '%s\t%s\t%s\n' "$issue" "$pr" "$merged"
-        done < <(refs_references <<<"$body")
-      done)"
-
-  local n tail_line issue_numbers board_json release_numbers rn window_records
+  local n tail_line issue_numbers board_json closed_json closed_numbers closed_since repo_labels release_numbers rn window_records
   local rc release_body window_rendered="" blocker_graph graph_releasing shape_board_records
   local graph_red_heads
   # The pre-loop region NAMES THE STAGE IT DIED IN before the status
@@ -2101,6 +2007,29 @@ main() {
   # is pinned by #257's cases.
   SKIPPED_COUNT=0
   SKIPPED_ISSUES=""
+  if ! guarded_read repo_labels gh api --paginate \
+      "repos/$REPO/labels?per_page=100"; then
+    log "could not read the repository taxonomy: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    return 1
+  fi
+  if jq -e '.[] | select(.name == "builder")' <<<"$repo_labels" >/dev/null; then
+    BUILDER_LABEL_AVAILABLE=true
+  else
+    BUILDER_LABEL_AVAILABLE=false
+    log "builder label is absent; owner-class derivation skipped for this pass — an operator installs the row with workflow_dispatch bootstrap=yes"
+  fi
+
+  closed_since="$(date -u -d "@$((NOW - 7 * 24 * 3600))" +%Y-%m-%dT%H:%M:%SZ)"
+  if ! guarded_read closed_json gh api --paginate \
+      "repos/$REPO/issues?state=closed&since=$closed_since&per_page=100"; then
+    log "could not read recently updated closed issues: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    return 1
+  fi
+  closed_numbers="$(jq -r '.[] | select(has("pull_request") | not) | .number' <<<"$closed_json")"
+  while IFS= read -r n; do
+    [ -n "$n" ] && reconcile_issue_pass "$n" closed
+  done <<<"$closed_numbers"
+
   # A command substitution in a for list suppresses errexit. Capture and
   # check the board read before entering the loop, or a 504 (including one
   # after partial pagination) reports a full pass over a truncated board

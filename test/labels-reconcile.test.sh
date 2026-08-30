@@ -342,12 +342,15 @@ expect "a 300-char reason passes through whole" 300 "${#exact_reason}"
 # -- a missing core taxonomy row is visible without mutating labels ----------
 core_rows="$(core_label_rows)"
 core_names="$(cut -d'|' -f1 <<<"$core_rows")"
-expect "post-merge core row is byte-exact" \
-  "post-merge|006B75|Refs-linked PR merged; post-merge criteria remain and triage owns completion" \
-  "$(grep '^post-merge|' <<<"$core_rows")"
+expect "post-merge core row is retired" "" "$(grep '^post-merge|' <<<"$core_rows")"
 expect "operator core row is byte-exact" \
   "operator|A371F7|Operator-owned; the body names its evidence surface, command or observation, and wake condition" \
   "$(grep '^operator|' <<<"$core_rows")"
+expect "builder core row is byte-exact" \
+  'builder|BFDADC|Builder-owned; the complement of `operator` — derived by the sweep, never hand-set' \
+  "$(grep '^builder|' <<<"$core_rows")"
+expect "builder colour is unique in the core registry" 1 \
+  "$(cut -d'|' -f2 <<<"$core_rows" | grep -cxF BFDADC)"
 ready_core="$(grep '^ready|' <<<"$core_rows" | cut -d'|' -f3-)"
 # shellcheck disable=SC2016 # backticks are LABELS.md literals
 ready_doctrine="$(sed -n 's/^| `ready` | `#0E8A16` | \(.*\) | triage |$/\1/p' LABELS.md)"

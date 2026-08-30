@@ -53,11 +53,6 @@ check "one ready queue label is valid" 0 "KEEP" queue_decision <<<"ready"
 check "zero queue labels is derivably needs-triage" 0 "ADD_NEEDS_TRIAGE" queue_decision <<<"enhancement"
 check "multiple queue labels are ambiguous" 0 "FLAG_CONFLICT" queue_decision <<< $'ready\nblocked'
 check "needs-triage plus queue is a conflict" 0 "FLAG_CONFLICT" queue_decision <<< $'needs-triage\nready'
-check "claimed plus post-merge is a conflict" 0 "FLAG_CONFLICT" \
-  queue_decision <<< $'claimed\npost-merge'
-check "post-merge plus needs-ruling is healthy" 0 "KEEP" \
-  queue_decision <<< $'post-merge\nneeds-ruling'
-
 # Invariant 2: claims have an owner and either a PR or recent activity.
 check "claim with open PR stays claimed" 0 "KEEP" claim_decision 1 true 999999
 check "unassigned claim is flagged" 0 "FLAG_UNASSIGNED" claim_decision 0 false 60
@@ -153,55 +148,6 @@ check "the membership test reads field one, not the whole record" 0 "" \
   issue_has_open_pr 5 <<< $'5\tFAILURE'
 check "...and does not match an issue named only by another record's state" 1 "" \
   issue_has_open_pr 4 <<< $'5\tFAILURE\n40\tSUCCESS'
-check "unchecked criteria preserve their source lines verbatim" 0 \
-  $'- [ ] first criterion\n  * [ ] indented criterion\n1. [ ] numbered criterion' \
-  unchecked_criteria <<< $'- [x] done\n- [ ] first criterion\r\n  * [ ] indented criterion\n1. [ ] numbered criterion'
-check "merged Refs with unchecked criteria transitions" 0 "TRANSITION" \
-  post_merge_decision 12 false false <<<"- [ ] verify after merge"
-check "open Refs does not transition" 0 "KEEP" \
-  post_merge_decision 12 true false <<<"- [ ] verify after merge"
-check "a handled merged Refs episode does not transition again" 0 "KEEP" \
-  post_merge_decision 12 false true <<<"- [ ] verify after merge"
-check "merged Refs with all criteria checked does not transition" 0 "KEEP" \
-  post_merge_decision 12 false false </dev/null
-
-# The deliverable is the PR that merged last, not the one numbered highest
-# (#242). The first row is crew#176's measured shape — #184 merged
-# 19:05:16Z, #182 merged 19:05:18Z — so it fails against the old sort -n.
-MERGED_REF_PR_RECORDS=$'176\t184\t2026-07-30T19:05:16Z\n176\t182\t2026-07-30T19:05:18Z'
-check "the later merge wins over the higher PR number" 0 "182" \
-  post_merge_pr_for_issue 176
-MERGED_REF_PR_RECORDS=$'12\t100\t2026-07-30T10:00:00Z\n12\t101\t2026-07-30T11:00:00Z'
-check "number order agreeing with merge order still answers the later merge" 0 "101" \
-  post_merge_pr_for_issue 12
-MERGED_REF_PR_RECORDS=$'176\t184\t2026-07-30T19:05:16Z\n321\t326\t2026-08-03T14:44:46Z\n176\t182\t2026-07-30T19:05:18Z\n321\t322\t2026-08-03T16:00:00Z'
-check "interleaved issues each resolve to their own last merge" 0 "182" \
-  post_merge_pr_for_issue 176
-check "...and a neighbouring issue's later merge never leaks in" 0 "322" \
-  post_merge_pr_for_issue 321
-# Two PRs can share a mergedAt second, so the tie-break is specified rather
-# than left to whichever record the sweep happened to emit first.
-MERGED_REF_PR_RECORDS=$'55\t70\t2026-07-30T19:05:16Z\n55\t71\t2026-07-30T19:05:16Z'
-check "an identical mergedAt breaks to the highest PR number" 0 "71" \
-  post_merge_pr_for_issue 55
-MERGED_REF_PR_RECORDS=$'55\t71\t2026-07-30T19:05:16Z\n55\t70\t2026-07-30T19:05:16Z'
-check "...and swapping the two input lines gives the same answer" 0 "71" \
-  post_merge_pr_for_issue 55
-MERGED_REF_PR_RECORDS=$'176\t184\t2026-07-30T19:05:16Z'
-check "an issue with no merged Refs PR still answers empty" 0 "" \
-  test -z "$(post_merge_pr_for_issue 999)"
-check "...so its post-merge decision is KEEP" 0 "KEEP" \
-  post_merge_decision "$(post_merge_pr_for_issue 999)" false false \
-  <<<"- [ ] verify after merge"
-MERGED_REF_PR_RECORDS=""
-# mergedAt must stay a field on the merged-PR node set already fetched: the
-# record shape gets richer, the request count does not (#242).
-check "the sweep still issues exactly two GraphQL queries" 0 "2" \
-  grep -c 'gh api graphql' "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
-check "...with mergedAt selected on the merged-PR node it already fetched" 0 "" \
-  grep -qF 'nodes { number mergedAt body }' \
-  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
-
 check "one closed offsite PR nudges" 0 "NUDGE" offsite_resolved_decision <<<"CLOSED"
 check "two closed offsite PRs nudge" 0 "NUDGE" offsite_resolved_decision <<< $'CLOSED\nCLOSED'
 check "one open offsite PR keeps quiet" 0 "QUIET" offsite_resolved_decision <<< $'CLOSED\nOPEN'
@@ -548,6 +494,71 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
 tfix() { printf '%s/repos_owner_repo_issues_%s_timeline.json' "$TMP" "$1"; }
 cfix() { printf '%s/repos_owner_repo_issues_%s_comments.json' "$TMP" "$1"; }
 
+# -- the derived owner class (#562) -----------------------------------------
+: >"$TMP/issue-edits"
+printf '[]\n' >"$(cfix 560)"
+BUILDER_LABEL_AVAILABLE=true issue_probe 560 ready 0 >/dev/null
+check "a ready issue without operator gains builder" 0 "1" \
+  grep -cF 'issue edit 560 -R owner/repo --add-label builder' "$TMP/issue-edits"
+
+owner_edits="$(wc -l <"$TMP/issue-edits")"
+BUILDER_LABEL_AVAILABLE=true issue_probe 561 $'ready\nbuilder' 0 >/dev/null
+BUILDER_LABEL_AVAILABLE=true issue_probe 561 $'ready\nbuilder' 0 >/dev/null
+check "a converged builder issue is idempotent across two passes" 0 "$owner_edits" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+
+printf '[]\n' >"$(cfix 562)"
+operator_builder="$(BUILDER_LABEL_AVAILABLE=true issue_probe 562 $'ready\noperator\nbuilder' 0)"
+check "operator plus builder resolves to operator alone" 0 "1" \
+  grep -cF 'issue edit 562 -R owner/repo --remove-label builder' "$TMP/issue-edits"
+check "operator plus builder posts no conflict comment" 1 "" \
+  grep -qF 'conflicting queue labels' <<<"$operator_builder"
+
+owner_edits="$(wc -l <"$TMP/issue-edits")"
+BUILDER_LABEL_AVAILABLE=true issue_probe 563 epic 0 >/dev/null
+BUILDER_LABEL_AVAILABLE=true issue_probe 564 needs-triage 0 >/dev/null
+check "epic and needs-triage gain no owner-class label" 0 "$owner_edits" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+
+# -- closed issues release build bookkeeping (#549) ------------------------
+closed_probe() { # $1 issue, $2 labels, $3 assignee count
+  (
+    local assignees='[]'
+    [ "${3:-0}" -eq 0 ] || assignees='[{"login":"owner-bot"}]'
+    REPO=owner/repo
+    ISSUE_LABELS="$2"
+    ISSUE_JSON="$(jq -n --argjson assignees "$assignees" '{assignees:$assignees}')"
+    run() { "$@"; }
+    gh() { issue_stub_gh "$@"; }
+    reconcile_closed_issue "$1"
+  )
+}
+
+: >"$TMP/issue-edits"
+printf '[]\n' >"$(cfix 570)"
+closed_probe 570 $'claimed\nattention\nbuilder' 1 >/dev/null
+check "a closed claim clears queue, attention, builder, and assignee together" 0 "1" \
+  grep -cF 'issue edit 570 -R owner/repo --remove-assignee owner-bot --remove-label claimed,attention,builder' "$TMP/issue-edits"
+check "the closed release comment names the released assignee" 0 "1" \
+  grep -cF 'released assignee(s): @owner-bot' "$TMP/posted-570"
+closed_edits="$(wc -l <"$TMP/issue-edits")"
+closed_probe 570 $'claimed\nattention\nbuilder' 1 >/dev/null
+closed_probe 570 $'claimed\nattention\nbuilder' 1 >/dev/null
+check "the marker suppresses repeats even when labels are restored" 0 "$closed_edits" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+check "the closed release comment posts exactly once" 0 "1" \
+  grep -cF '<!-- issueflow:closed-claim-release-570 -->' "$TMP/posted-570"
+
+closed_edits="$(wc -l <"$TMP/issue-edits")"
+printf '[]\n' >"$(cfix 571)"
+printf '[]\n' >"$(cfix 572)"
+closed_probe 571 epic 0 >/dev/null
+closed_probe 572 needs-triage 0 >/dev/null
+check "closed epic and needs-triage controls are untouched" 0 "$closed_edits" \
+  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+check "closed controls draw no comment" 0 "" \
+  bash -c 'test ! -f "$1" && test ! -f "$2"' _ "$TMP/posted-571" "$TMP/posted-572"
+
 # -- release epics announce an opened declared gate, comment-only (#253) -----
 printf '{"state":"closed"}\n' >"$TMP/repos_owner_repo_issues_201.json"
 printf '{"state":"closed"}\n' >"$TMP/repos_owner_repo_issues_202.json"
@@ -689,22 +700,6 @@ check "assigned attention under blocked is healthy" 1 "" \
 check "...drawing the #252 parse echo and nothing else" 0 "1" \
   grep -c -- '^----$' "$TMP/posted-66"
 
-attention_episode 67 "$(iso_at $((INOW - 60)))"
-# Recent activity keeps the evidence nudge (#254) off this probe: it is a
-# precedence case, and "exactly one comment" is the assertion doing the work.
-# The nudge's own coexistence with the post-merge diagnostic is pinned in its
-# section below, on a probe that is quiet on purpose.
-jq -n --arg at "$(iso_at $((INOW - 60)))" \
-  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c67","body":"still waiting on the tag"}]' \
-  >"$(cfix 67)"
-post_merge_attention="$(issue_probe 67 $'post-merge\nattention' 0)"
-check "post-merge precedence leaves exactly its existing comment" 0 "1" \
-  grep -c -- '^----$' "$TMP/posted-67"
-check "post-merge's existing diagnostic wins" 0 "1" \
-  grep -cF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-67"
-check "the post-merge suppression remains in the log" 0 "1" \
-  grep -cF 'comment suppressed by post-merge-assigned precedence' <<<"$post_merge_attention"
-
 attention_episode 68 "$(iso_at $((INOW - 120)))"
 issue_probe 68 $'ready\nattention' 0 >/dev/null
 issue_probe 68 $'ready\nattention' 0 >/dev/null
@@ -777,198 +772,12 @@ control="$(issue_probe 22 claimed)"
 check "the flag-free control is reclaimed (the clock still runs elsewhere)" 0 "" \
   grep -q 'stale claim reclaimed -> ready' <<<"$control"
 
-# -- merged Refs work releases the claim before the reclaim clock ------------
-printf '[]\n' >"$(cfix 35)"
-COLLISION_FLAGS=$'35\tissueflow-reconcile=34'
-WINDOW_FLAGS=$'35\t#50'
-transition="$(issue_probe 35 claimed 1 false 350 $'- [x] built\n- [ ] verify dispatch\n  * [ ] confirm warning clears')"
-unset COLLISION_FLAGS WINDOW_FLAGS
-check "merged Refs + unchecked criteria transitions in the sweep body" 0 "" \
-  grep -q 'merged Refs PR -> post-merge; claim released' <<<"$transition"
-check "a pass concluding post-merge draws no precomputed collision flag" 1 "" \
-  grep -q 'collision flag' <<<"$transition"
-check "...and no precomputed window flag" 1 "" \
-  grep -q 'window flag' <<<"$transition"
-# shellcheck disable=SC2016 # positional parameters belong to bash -c
-check "...names every remaining criterion verbatim in the comment" 0 "" \
-  bash -c 'grep -qF -- "- [ ] verify dispatch" "$1" &&
-    grep -qF -- "  * [ ] confirm warning clears" "$1"' _ "$TMP/posted-35"
-check "...states triage owes completion with owner and wake condition" 0 "" \
-  grep -qF 'Triage owes completion in a follow-up comment that names the owner and wake condition.' \
-  "$TMP/posted-35"
-check "...unassigns and swaps claimed to post-merge" 0 "" \
-  grep -qF -- '--remove-assignee owner-bot --remove-label claimed --add-label post-merge' \
-  "$TMP/issue-edits"
-
-printf '[]\n' >"$(cfix 36)"
-post_merge_quiet="$(issue_probe 36 post-merge 0)"
-check "quiet unassigned post-merge work is not reclaimed" 1 "" \
-  grep -q 'reclaimed' <<<"$post_merge_quiet"
-# The quiet itself is now visible (#254) — this probe is 10 days old with no
-# activity, so it draws the evidence nudge and nothing else. It used to
-# assert no comment at all; that assertion described the starvation this
-# issue exists to end, and the edit half of it is what still matters.
-check "...and causes no edit" 1 "" grep -qF -- 'issue edit 36' "$TMP/issue-edits"
-check "...only the evidence nudge speaks" 0 "1" \
-  grep -c -- '^----$' "$TMP/posted-36"
-
-printf '[]\n' >"$(cfix 37)"
-# The live shape of an assigned `post-merge` issue: the assignee in the issue
-# payload AND the `assigned` event that put it there in the timeline. With an
-# empty timeline this fixture could not see the defect it exists to guard —
-# the evidence clock counting that hour-old assignment as activity and
-# silencing the nudge for another 7 days, on the one board state where an
-# assignee is itself the bug being reported.
-jq -n --arg at "$(iso_at $((INOW - 3600)))" \
-  '[{"event":"assigned","created_at":$at}]' >"$(tfix 37)"
-issue_probe 37 post-merge 1 >/dev/null
-check "assigned post-merge is flagged" 0 "" \
-  grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-37"
-check "...and the hand-assignment is not repaired" 1 "" \
-  grep -qF -- 'issue edit 37' "$TMP/issue-edits"
-# The flag and the nudge answer different questions — a board bug and a
-# starved wake condition — so neither suppresses the other (#254).
-check "...and the evidence nudge rides beside it, neither suppressed" 0 "2" \
-  grep -c -- '^----$' "$TMP/posted-37"
-
-# -- the post-merge evidence nudge (#254), the ruling nudge's twin ----------
-# The ruling nudge solved "a wait goes quiet and nobody is told" for
-# `needs-ruling`; `post-merge` had no equivalent, and crew#181's real-host
-# criterion starved four times across two releases for want of one. Same
-# 7-day constant (`ruling_nudge_decision`, reused not mirrored), same
-# deliberate absence of an idempotency marker, and — unlike the ruling
-# nudge — addressed to the triage actor, because `post-merge` is triage's
-# completion queue and the operator owes nothing here (#254 D1).
-nudge_edits_before="$(wc -l <"$TMP/issue-edits")"
-
-quiet_comment() { # $1 issue, $2 seconds of quiet — one ordinary comment, then silence
+quiet_comment() { # $1 issue, $2 seconds of quiet
   jq -n --arg at "$(iso_at $((INOW - $2)))" \
     '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c","body":"evidence pending"}]' \
     >"$(cfix "$1")"
   printf '[]\n' >"$(tfix "$1")"
 }
-
-quiet_comment 80 $((8 * 86400))
-nudged="$(issue_probe 80 post-merge 0)"
-check "8 quiet days on a post-merge item draws the evidence nudge" 0 "" \
-  grep -q 'post-merge evidence nudge' <<<"$nudged"
-# shellcheck disable=SC2016 # expansions belong to the isolated bash -c process
-check "...addressed to the triage actor, never the human reviewer" 0 "" \
-  bash -c 'grep -qF "@triage-one" "$1" && ! grep -qF "@danmt" "$1"' _ "$TMP/posted-80"
-check "...with the issue link as the payload" 0 "" \
-  grep -qF 'https://github.com/owner/repo/issues/80' "$TMP/posted-80"
-check "...carrying the do-not-add-a-marker warning in the comment" 0 "" \
-  grep -qF 'Do not add a marker.' "$TMP/posted-80"
-# Asserted directly, not merely omitted: a marker would turn "once per 7
-# quiet days" into "once per issue, forever" — the exact "fix" lib/ruling.sh's
-# header records as the thing that breaks this rule.
-check "...and no idempotency marker on the path" 1 "" \
-  grep -qF '<!-- issueflow:' "$TMP/posted-80"
-
-# Self-rate-limiting, proven by the property and not by the mechanism: sweep
-# again a day later, against fixtures the first sweep's own comment mutated.
-nudged_again="$(PROBE_NOW=$((INOW + 86400)) issue_probe 80 post-merge 0)"
-check "a sweep one day after the nudge holds its silence" 1 "" \
-  grep -q 'post-merge evidence nudge' <<<"$nudged_again"
-check "...so exactly one nudge exists across both sweeps" 0 "1" \
-  grep -c -- '^----$' "$TMP/posted-80"
-
-quiet_comment 81 $((6 * 86400))
-six_days="$(issue_probe 81 post-merge 0)"
-check "6 quiet days is inside the window and draws nothing" 1 "" \
-  grep -q 'post-merge evidence nudge' <<<"$six_days"
-check "...and posts no comment at all" 1 "" test -f "$TMP/posted-81"
-
-# Label churn is not activity, or the sweep resets its own clock. The rule is
-# `last_issue_activity`'s, shared with the reclaim and ruling clocks rather
-# than restated here — this probe pins that the nudge inherits it.
-jq -n --arg at "$(iso_at $((INOW - 3600)))" \
-  '[{"event":"labeled","label":{"name":"scope:docs"},"created_at":$at},
-    {"event":"unlabeled","label":{"name":"scope:docs"},"created_at":$at}]' >"$(tfix 82)"
-printf '[]\n' >"$(cfix 82)"
-churn="$(issue_probe 82 post-merge 0)"
-check "an hour-old label churn does not reset the 7-day clock" 0 "" \
-  grep -q 'post-merge evidence nudge' <<<"$churn"
-
-quiet_comment 83 3600
-fresh="$(issue_probe 83 post-merge 0)"
-check "an hour-old comment does reset it" 1 "" \
-  grep -q 'post-merge evidence nudge' <<<"$fresh"
-
-# Neither is an assignment. That event is the *claim* clock's activity fact —
-# 48 hours of silence must not include the seconds between a claim and its
-# required draft PR — and `post-merge` has no claim for it to protect: an
-# assignee here is the invalid composition the flag above reports. Counting
-# it would let a broken board buy the item another 7 days of quiet, which is
-# this issue's failure direction taken backwards. No current assignee on this
-# probe, so nothing stands between the clock rule and the nudge.
-quiet_comment 93 $((8 * 86400))
-jq -n --arg at "$(iso_at $((INOW - 3600)))" \
-  '[{"event":"assigned","created_at":$at},{"event":"unassigned","created_at":$at}]' >"$(tfix 93)"
-assigned_clock="$(issue_probe 93 post-merge 0)"
-check "an hour-old assignment does not reset the evidence clock either" 0 "" \
-  grep -q 'post-merge evidence nudge' <<<"$assigned_clock"
-
-# The two clocks over the one computation, asserted directly rather than
-# through a probe: same fixture, one input's difference, and the reclaim
-# clock is pinned unmoved by the split.
-jq -n --arg at "$(iso_at $((INOW - 5 * 86400)))" \
-  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c95","body":"evidence pending"}]' \
-  >"$(cfix 95)"
-jq -n --arg at "$(iso_at $((INOW - 3600)))" \
-  '[{"event":"assigned","created_at":$at}]' >"$(tfix 95)"
-two_clocks="$( (REPO=owner/repo; gh() { issue_stub_gh "$@"; }
-  printf '%s %s\n' \
-    "$(last_issue_activity 95 "$(iso_at $((INOW - 10 * 86400)))")" \
-    "$(last_issue_comment_activity 95 "$(iso_at $((INOW - 10 * 86400)))")") )"
-check "the claim clock counts the assignment, the evidence clock the comment" 0 \
-  "$((INOW - 3600)) $((INOW - 5 * 86400))" printf '%s\n' "$two_clocks"
-# One body, two callers: a second activity computation is the drift the
-# reuse exists to prevent, so the timeline read has exactly one spelling.
-# shellcheck disable=SC2016 # the read is asserted as a literal, unexpanded
-check "the timeline read is not respelled for the evidence clock" 0 "1" \
-  grep -c 'issues/\$n/timeline' \
-  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
-
-# Both waits are quiet, both are owed, and to different parties: suppressing
-# one because the other spoke is a starved criterion, which is the failure
-# this nudge exists to remove.
-jq -n --arg l "$(iso_at $((INOW - 9 * 86400)))" \
-  '[{"event":"labeled","label":{"name":"needs-ruling"},"actor":{"login":"setter"},"created_at":$l}]' \
-  >"$(tfix 84)"
-jq -n --arg at "$(iso_at $((INOW - 9 * 86400 - 60)))" \
-  --arg b $'Options:  A — x   B — y\nRecommend: A, because x.\nBlocked:  z\nDefault:  none — hard block' \
-  --arg r12 "$(iso_at $((INOW - 9 * 86400 + 13 * 3600)))" \
-  --arg r24 "$(iso_at $((INOW - 9 * 86400 + 25 * 3600)))" \
-  '[{"user":{"login":"setter"},"created_at":$at,"html_url":"https://x/esc84","body":$b},
-    {"user":{"login":"sweep-bot"},"created_at":$r12,"html_url":"https://x/r12","body":"<!-- ceremony:needs-ruling-rung12 -->\nrung"},
-    {"user":{"login":"sweep-bot"},"created_at":$r24,"html_url":"https://x/r24","body":"<!-- ceremony:needs-ruling-rung24 -->\nrung"}]' \
-  >"$(cfix 84)"
-both="$(issue_probe 84 $'post-merge\nneeds-ruling' 0)"
-check "a quiet post-merge item under a pending ruling nudges both waits" 0 "" \
-  grep -q 'post-merge evidence nudge' <<<"$both"
-check "...and the ruling nudge is not suppressed by it" 0 "" \
-  grep -q 'ruling nudge' <<<"$both"
-# shellcheck disable=SC2016 # expansions belong to the isolated bash -c process
-check "...each addressing its own party" 0 "" \
-  bash -c 'grep -qF "@triage-one" "$1" && grep -qF "@danmt" "$1"' _ "$TMP/posted-84"
-
-# Every other queue state: the nudge is `post-merge`'s alone. Each is equally
-# quiet, and `claimed` carries an open PR so its own reclaim clock — the one
-# other 10-day rule on this path — stays out of the way.
-non_post_merge=(85:ready:0:false 86:claimed:1:true 87:blocked:0:false 88:epic:0:false 89:needs-triage:0:false)
-for spec in "${non_post_merge[@]}"; do
-  IFS=: read -r n state probe_assignees probe_pr <<<"$spec"
-  printf '[]\n' >"$(cfix "$n")"
-  printf '[]\n' >"$(tfix "$n")"
-  check "a 10-day-quiet $state issue draws no evidence nudge" 1 "" \
-    grep -q 'post-merge evidence nudge' \
-    <<<"$(issue_probe "$n" "$state" "$probe_assignees" "$probe_pr")"
-done
-
-# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
-check "the pre-operator evidence-nudge probes perform no issue edits" 0 "$nudge_edits_before" \
-  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
 # -- the operator-owned work nudge (#491), on the same quiet clock ----------
 operator_edits_before="$(wc -l <"$TMP/issue-edits")"
@@ -1040,8 +849,6 @@ check "operator preserves unparseable blocked behavior" 0 "" \
   additive_effects 503 blocked 0 false 'waiting, with no declaration'
 check "operator preserves epic behavior" 0 "" \
   additive_effects 504 epic 0 false $'## Task list\n- [ ] #999'
-check "operator preserves post-merge behavior past 7 quiet days" 0 "" \
-  additive_effects 505 post-merge 0 false ""
 check "operator preserves needs-triage behavior" 0 "" \
   additive_effects 506 needs-triage 0 false ""
 
@@ -1055,42 +862,7 @@ check "triage marks only an all-operator-owned criterion set" 0 "" \
 check "triage refuses a mixed-owner issue outright" 0 "" \
   grep -qF 'An issue is builder-owned or operator-owned, and never both' "$ROOT/TRIAGE.md"
 
-# The additive corpus deliberately exercises label writes (notably stale
-# claim reclamation). Start a fresh recorder for the remaining post-merge
-# no-write probes; the earlier half was checked immediately above.
-: >"$TMP/issue-edits"
-nudge_edits_before=0
-
-# The machine never judges prose: which criterion starved is not a fact the
-# sweep reads, so a body it could not parse if it tried still nudges.
-quiet_comment 90 $((8 * 86400))
-unparseable_body="$(issue_probe 90 post-merge 0 false "" '¯\_(ツ)_/¯ wake: ask danmt sometime')"
-check "an unparseable body still nudges — the link is the payload" 0 "" \
-  grep -q 'post-merge evidence nudge' <<<"$unparseable_body"
-check "...and the nudge quotes none of it" 1 "" \
-  grep -qF 'ask danmt sometime' "$TMP/posted-90"
-
-# One spelling of the 7-day rule. `lib/ruling.sh` exists because this family
-# already paid for two copies of a constant; a second one here is the drift,
-# and it is cheap to pin at the grep level.
-# Code lines only: the branch's comment names the constant it must not
-# respell, which is the sentence a future reader needs and not a second copy.
-check "the 7-day rule is not respelled in the sweep" 1 "" \
-  grep -nE '^[^#]*(7 \* 24 \* 3600|604800)' \
-  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
-# shellcheck disable=SC2016 # the call site is asserted as a literal
-check "...it is reused from lib/ruling.sh" 0 "" \
-  grep -qF 'ruling_nudge_decision "$NOW" "$evidence_age"' \
-  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
-
-# `post-merge` is the one queue state whose whole meaning is that the machine
-# owes nothing (LABELS.md: the sweep never reclaims it). This issue makes the
-# quiet visible; it must never make it actionable.
-# shellcheck disable=SC2016 # positional parameter belongs to the isolated shell
-check "the evidence-nudge probes perform no issue edits" 0 "$nudge_edits_before" \
-  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
-
-# -- the issue-side ruling clock is comments-only (#284) ---------------------
+# -- the issue-side ruling clock# -- the issue-side ruling clock is comments-only (#284) ---------------------
 # #52 D10's "reuse the activity computation" made the issue-side ruling nudge
 # ride the claim-reclamation clock, `assigned` events included — so claiming
 # a flagged issue dated it, and the escalation the flag exists to keep
@@ -1162,20 +934,6 @@ timeline_add 102 unassigned 3500
 ready_pair="$(issue_probe 102 $'ready\nneeds-ruling' 0)"
 check "a ready issue nudges through an hour-old assignment pair" 0 "" \
   grep -q 'ruling nudge' <<<"$ready_pair"
-
-# post-merge + needs-ruling fires BOTH nudges in one sweep, from one read
-# taken before either write. This probe is also the read-order pin: the
-# evidence nudge posts first and the stub stamps it as fresh activity, so
-# restoring a ruling-clock read below `ensure_comment` turns the second
-# check red — the hazard #274 met and killed inside one round.
-ruling_quiet 103
-timeline_add 103 assigned 3600
-timeline_add 103 unassigned 3500
-both_fresh="$(issue_probe 103 $'post-merge\nneeds-ruling' 0)"
-check "a fresh assignment starves neither post-merge wait" 0 "" \
-  grep -q 'post-merge evidence nudge' <<<"$both_fresh"
-check "...the ruling nudge fires beside it, not behind it" 0 "" \
-  grep -q 'ruling nudge' <<<"$both_fresh"
 
 # blocked composes the same way. The #252 parse echo is pre-seeded old so
 # the probe isolates the clock rule — steady state, where the echo for this
@@ -1419,104 +1177,7 @@ check "...and the ruling clock, on that same thread, floors at the flag" 0 \
 check "the #534 probes perform no issue edits" 0 "$setter_clock_edits_before" \
   bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
-# -- non-triggers stay byte-for-byte outside the transition ------------------
-recent_timeline() {
-  jq -n --arg at "$(iso_at $((INOW - 60)))" \
-    '[{"event":"assigned","created_at":$at}]' >"$(tfix "$1")"
-  printf '[]\n' >"$(cfix "$1")"
-}
-edit_count_before="$(wc -l <"$TMP/issue-edits")"
-recent_timeline 38
-open_refs="$(issue_probe 38 claimed 1 refs 380 '- [ ] verify after merge')"
-check "issue_probe: open Refs PR leaves the issue exactly as found" 0 "" \
-  test -z "$open_refs"
-# shellcheck disable=SC2016 # positional parameters belong to bash -c
-check "...with no edit or comment" 0 "" \
-  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
-  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-38"
-
-recent_timeline 46
-open_closing="$(issue_probe 46 claimed 1 closing 460 '- [ ] verify after merge')"
-check "issue_probe: closing-linked open PR remains the unchanged control" 0 "" \
-  test -z "$open_closing"
-
-recent_timeline 39
-merged_closes="$(issue_probe 39 claimed 1 false "" '- [ ] verify after merge')"
-check "merged Closes PR leaves a recent claim exactly as found" 0 "" \
-  test -z "$merged_closes"
-# shellcheck disable=SC2016 # positional parameters belong to bash -c
-check "...with no edit or comment" 0 "" \
-  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
-  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-39"
-
-recent_timeline 40
-all_checked="$(issue_probe 40 claimed 1 false 400 '- [x] verified after merge')"
-check "merged Refs with zero unchecked boxes leaves the issue exactly as found" 0 "" \
-  test -z "$all_checked"
-# shellcheck disable=SC2016 # positional parameters belong to bash -c
-check "...with no edit or comment" 0 "" \
-  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
-  "$edit_count_before" "$TMP/issue-edits" "$TMP/posted-40"
-
-printf '[]\n' >"$(cfix 41)"
-attention_transition="$(issue_probe 41 $'claimed\nattention' 1 false 410 '- [ ] verify')"
-check "derived post-merge transition clears attention with the released claim" 0 "" \
-  grep -qF -- '--remove-label claimed,attention --add-label post-merge' "$TMP/issue-edits"
-check "...still completes the transition" 0 "" \
-  grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$attention_transition"
-
-recent_timeline 43
-jq -n --arg b '<!-- issueflow:post-merge-transition-pr-430 -->' \
-  --arg at "$(iso_at $((INOW - 60)))" \
-  '[{"body":$b,"created_at":$at}]' >"$(cfix 43)"
-reentry_edit_count="$(wc -l <"$TMP/issue-edits")"
-historical="$(issue_probe 43 claimed 1 false 430 '- [ ] corrective verification')"
-check "a handled historical Refs merge cannot steal a re-entered claim" 0 "" \
-  test -z "$historical"
-# shellcheck disable=SC2016 # positional parameters belong to bash -c
-check "...and re-entry produces no edit or duplicate transition comment" 0 "" \
-  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
-  "$reentry_edit_count" "$TMP/issue-edits" "$TMP/posted-43"
-
-printf '[]\n' >"$(cfix 44)"
-second_transition="$(issue_probe 44 claimed 1 false 441 '- [ ] second verification')"
-check "a later merged Refs PR gets an episode-specific transition comment" 0 "" \
-  grep -qF '<!-- issueflow:post-merge-transition-pr-441 -->' "$TMP/posted-44"
-check "...and the later episode still transitions" 0 "" \
-  grep -qF 'merged Refs PR -> post-merge; claim released' <<<"$second_transition"
-
-# End to end on the crew#321 shape: the later merge is the *lower*-numbered
-# PR, and its marker is already on the issue. Selecting by number would find
-# no marker for #461, fire the transition a second time, and release a claim
-# the board already released (#242).
-recent_timeline 46
-jq -n --arg b '<!-- issueflow:post-merge-transition-pr-460 -->' \
-  --arg at "$(iso_at $((INOW - 60)))" \
-  '[{"body":$b,"created_at":$at}]' >"$(cfix 46)"
-spent_edit_count="$(wc -l <"$TMP/issue-edits")"
-spent="$(issue_probe 46 claimed 1 false \
-  "461@$(iso_at $((INOW - 7200))) 460@$(iso_at $((INOW - 3600)))" \
-  '- [ ] verify after merge')"
-check "the marker of the later-merged lower-numbered PR is the one read" 0 "" \
-  test -z "$spent"
-# shellcheck disable=SC2016 # positional parameters belong to bash -c
-check "...so the spent transition is not fired a second time" 0 "" \
-  bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
-  "$spent_edit_count" "$TMP/issue-edits" "$TMP/posted-46"
-
-printf '[]\n' >"$(cfix 45)"
-issue_probe 45 $'claimed\npost-merge' >/dev/null
-# shellcheck disable=SC2016 # Markdown backticks are literal evidence
-check "queue-conflict evidence lists every category including post-merge" 0 "" \
-  grep -qF 'needs-triage`, `epic`, `ready`, `claimed`, `blocked`, or `post-merge`' \
-  "$TMP/posted-45"
-
-printf '[]\n' >"$(cfix 42)"
-issue_probe 42 $'post-merge\nattention' 0 >/dev/null
-check "hand-created post-merge plus attention is flagged, not rewritten" 0 "" \
-  grep -qF '<!-- issueflow:post-merge-assigned -->' "$TMP/posted-42"
-
-# -- offsite stops only the reclaim clock ------------------------------------
+# -- offsite stops only the reclaim clock# -- offsite stops only the reclaim clock ------------------------------------
 offsite="$(issue_probe 25 $'claimed\noffsite')"
 check "a 10-day-quiet offsite claim is not reclaimed" 1 "" \
   grep -q 'reclaimed' <<<"$offsite"
@@ -1889,29 +1550,7 @@ check "...no unassign, no label swap, and no reclaim comment" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
   "$claim_edits_before" "$TMP/issue-edits" "$TMP/posted-50"
 
-# -- the quiet diagnostic: a 504 on a post-merge activity read (#254) --------
-# The guarded read is unconditional at the top of the branch, so a
-# `post-merge` issue can be skipped where before this change it never could —
-# and the assigned flag, which needed no read at all, goes quiet with it.
-# That is #247 D1's direction (a whole pass or none of it, never a verdict
-# derived from a read that did not answer) and the trade `claimed`, `blocked`
-# and `needs-ruling` already make. It is still a new way for that diagnostic
-# to fall silent, so it is pinned here rather than left to inspection.
-jq -n --arg at "$(iso_at $((INOW - 10 * 86400)))" \
-  '[{"user":{"login":"triage-one"},"created_at":$at,"html_url":"https://x/c94","body":"evidence pending"}]' \
-  >"$(cfix 94)"
-printf '%s\n' "$GH_STUB_ERROR_BODY" >"$(cfix 94).http-error"
-post_merge_skip_edits="$(wc -l <"$TMP/issue-edits")"
-check "a 504 on a post-merge activity read skips the issue" \
-  3 "#94: skipped this pass — could not read its activity history: $GH_STUB_STDERR" \
-  issue_probe 94 post-merge 1
-check "...so neither the nudge nor the assigned flag speaks" 1 "" test -f "$TMP/posted-94"
-# shellcheck disable=SC2016 # positional parameters belong to bash -c
-check "...and the skipped pass edits nothing" 0 "" \
-  bash -c 'test "$1" -eq "$(wc -l <"$2")"' _ \
-  "$post_merge_skip_edits" "$TMP/issue-edits"
-
-# -- the suppressed comment: a 504 on the marker read -----------------------
+# -- the suppressed comment# -- the suppressed comment: a 504 on the marker read -----------------------
 # The marker is on the issue. Read as "no marker", a failed read re-posts the
 # comment the marker exists to suppress — every sweep, forever.
 jq -n --arg b '<!-- issueflow:blocked-unparseable -->' \
@@ -2178,6 +1817,8 @@ triage_out="$(arrival_run 2>&1)"
 triage_rc=$?
 check "a triage-authored arrival exits 0 (#91's four dead mints)" 0 "" \
   test "$triage_rc" -eq 0
+check "a board missing builder emits one bootstrap notice per pass" 0 "1" \
+  grep -cF 'builder label is absent; owner-class derivation skipped for this pass — an operator installs the row with workflow_dispatch bootstrap=yes' <<<"$triage_out"
 check "...and its output reaches the sweep" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$triage_out"
 check "...and mints nothing" 1 "" test -s "$ARRIVAL/fixtures/edits"
@@ -2201,69 +1842,6 @@ check "a PR arrival exits 0" 0 "" test "$pr_rc" -eq 0
 check "...stands down without minting" 1 "" test -s "$ARRIVAL/fixtures/edits"
 check "...and the sweep still runs" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$pr_out"
-
-# Exercise both directions through main(): a merged-Refs transition still
-# fires without a linked open PR, then the open-body gather suppresses it.
-# A sourced decision probe cannot exercise the GraphQL gather and loop
-# (#91's lesson).
-printf '%s\n' \
-  '{"data":{"repository":{"pullRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-  >"$ARRIVAL/fixtures/graphql-open.json"
-printf '%s\n' \
-  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":400,"mergedAt":"2026-07-30T19:05:16Z","body":"Refs #40","closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-  >"$ARRIVAL/fixtures/graphql-merged.json"
-printf '[{"number":40}]\n' \
-  >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
-jq -n --arg at "$(iso_at "$INOW")" \
-  '{number:40,user:{login:"triage-one"},created_at:$at,body:"- [x] built\n- [ ] verify live label",labels:[{name:"claimed"}],assignees:[{login:"builder"}]}' \
-  >"$ARRIVAL/fixtures/repos_owner_repo_issues_40.json"
-printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_40_comments.json"
-: >"$ARRIVAL/fixtures/edits"
-transition_out="$(
-  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
-    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
-    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
-)"
-transition_rc=$?
-check "an executable sweep with no linked open PR exits 0" 0 "" \
-  test "$transition_rc" -eq 0
-check "...reaches the transition through GraphQL and the issue loop" 0 "" \
-  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$transition_out"
-check "...and performs the release edit from the executable path" 0 "" \
-  grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
-  "$ARRIVAL/fixtures/edits"
-
-printf '%s\n' \
-  '{"data":{"repository":{"pullRequests":{"nodes":[{"number":401,"body":"Refs #40","isDraft":false,"closingIssuesReferences":{"nodes":[]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}' \
-  >"$ARRIVAL/fixtures/graphql-open.json"
-: >"$ARRIVAL/fixtures/edits"
-subprocess_out="$(
-  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
-    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
-    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
-)"
-subprocess_rc=$?
-check "an open Refs-bodied PR suppresses the post-merge transition" 0 "" \
-  test "$subprocess_rc" -eq 0
-check "...leaves the live claim assigned" 1 "" \
-  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$subprocess_out"
-check "...performs no release edit" 1 "" \
-  grep -qF -- 'issue edit 40 -R owner/repo --remove-assignee builder --remove-label claimed --add-label post-merge' \
-  "$ARRIVAL/fixtures/edits"
-
-# The query selects every OPEN PR and deliberately does not select isDraft;
-# this fixture-only flip documents that draft identity cannot narrow the set.
-sed 's/"isDraft":false/"isDraft":true/' "$ARRIVAL/fixtures/graphql-open.json" \
-  >"$ARRIVAL/fixtures/graphql-open.json.tmp"
-mv "$ARRIVAL/fixtures/graphql-open.json.tmp" "$ARRIVAL/fixtures/graphql-open.json"
-: >"$ARRIVAL/fixtures/edits"
-draft_transition_out="$(
-  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
-    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" \
-    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
-)"
-check "a draft Refs-bodied PR suppresses post-merge transition identically" 1 "" \
-  grep -qF '#40: merged Refs PR -> post-merge; claim released' <<<"$draft_transition_out"
 
 # The same body linkage protects the reclaim clock even when no Refs-linked
 # PR has merged. This is the derived half of crew#321's destructive shape.
@@ -2785,9 +2363,6 @@ check "a blocked twin does not carry a ready one's edge either" 0 "" \
 check "an epic carrying the key is outside the claimable set (#288 D6)" 0 "" \
   collision_chain \
   <<<$'264\tepic\tTRIAGE.md — one\n266\tready\tTRIAGE.md — two'
-check "a post-merge carrier is outside it too" 0 "" \
-  collision_chain \
-  <<<$'264\tpost-merge\tTRIAGE.md — one\n266\tready\tTRIAGE.md — two'
 # The #284 shape, stated as its own case (test plan): a `claimed` issue whose
 # PR is already in flight is the STRONGEST collision on the board, not a
 # weaker one, and the flag reads the queue label rather than the PR link.
@@ -3265,19 +2840,14 @@ check "a pass concluding ready still permits both board flags" 0 "" \
   board_flags_in_scope ready
 check "a pass concluding claimed still permits both board flags" 0 "" \
   board_flags_in_scope claimed
-check "a pass concluding post-merge silences both board flags" 1 "" \
-  board_flags_in_scope post-merge
-
 # -- the window decision (#292 D1) ------------------------------------------
-window_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n264\tready\tTRIAGE.md — a non-member\n270\tepic\tsome epic — exempt\n271\tpost-merge\tsome item — exempt\n272\tblocked\tsome issue — already placed'
+window_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n264\tready\tTRIAGE.md — a non-member\n270\tepic\tsome epic — exempt\n272\tblocked\tsome issue — already placed'
 check "a ready non-member is flagged during a standing window" 0 "264" \
   window_flags "253" "249" <<<"$window_board"
 check "...and a gate member is not" 1 "" \
   window_flags_issue 264 $'253\n264' 249 <<<"$window_board"
 check "...nor an epic (#292 D1 exempts it by name)" 1 "" \
   window_flags_issue 270 253 249 <<<"$window_board"
-check "...nor a post-merge issue" 1 "" \
-  window_flags_issue 271 253 249 <<<"$window_board"
 check "...nor a blocked issue, which is already placed behind something" 1 "" \
   window_flags_issue 272 253 249 <<<"$window_board"
 # The release issue is the graph's SINK (#292 D2), so it can never be its own
@@ -3292,7 +2862,7 @@ check "two standing windows render as one state" 0 "#249, #250" window_state $'2
 # word as "carrying `ready` or `claimed`" and D3b says D3 uses that gloss and
 # names the domain as the claimable set, so an issue that is `needs-triage` or
 # carries no queue label at all is outside BOTH flags. Excluding only
-# `blocked`/`epic`/`post-merge` admitted them, and the second case is the one
+# `blocked`/`epic` admitted them, and the second case is the one
 # that showed: the same pass adds `needs-triage` to an unlabeled issue and
 # then tells it about a membership call made at mint time.
 scope_board=$'249\tblocked,release\tRelease 0.6.0 — the board empties\n253\tclaimed\tissueflow-reconcile — a member\n400\tneeds-triage\tTRIAGE.md — not through the door yet\n401\t\tTRIAGE.md — no queue label at all\n402\tclaimed\tREVIEWER.md — claimable, and a non-member'
