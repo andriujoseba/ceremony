@@ -559,11 +559,28 @@ extract() { "$1" "$2" >"$3"; }
 scaf manifest-source
 # A consumer-side manifest naming a different file: read from the consumer,
 # the tool would guard OTHER.md and never the template.
+#
+# consumer() builds only .github/, so the directory this decoy lives in has
+# to be made here. It was not, the redirect died on "No such file or
+# directory", and because this file runs without set -e it died silently —
+# leaving the rows below to pass against a tree carrying no consumer
+# manifest at all. A row proving the SOURCE wins is worth nothing unless the
+# consumer is actually offering a competing answer, so the construction is
+# now graded itself rather than assumed as a side effect.
+mkdir -p "$TMP/manifest-source/docs"
 printf 'OTHER.md\n' >"$TMP/manifest-source/docs/SCAFFOLDED.txt"
+check "the decoy consumer-side manifest is really there to be ignored" 0 "" \
+  grep -qxF 'OTHER.md' "$TMP/manifest-source/docs/SCAFFOLDED.txt"
 check "the scaffold set is read from the source, not the consumer" 1 \
   "$TEMPLATE is missing" in_consumer manifest-source --check --source "$SRC_SCAF"
 check_absent "a consumer-side scaffold manifest names nothing the tool obeys" 1 \
   "OTHER.md" in_consumer manifest-source --check --source "$SRC_SCAF"
+# --fix reads the same manifest --check does, so it owes the same proof: the
+# file the source names is written, and the one the consumer names is not.
+check "--fix guards the source's scaffold, not the consumer manifest's" 0 \
+  "created $TEMPLATE" in_consumer manifest-source --fix --source "$SRC_SCAF"
+check "and the file the consumer's own manifest named was never created" 0 "" \
+  test ! -e "$TMP/manifest-source/OTHER.md"
 
 consumer no-scaffold-manifest 0.3.0
 in_consumer no-scaffold-manifest --fix --source "$SRC" >/dev/null 2>&1
