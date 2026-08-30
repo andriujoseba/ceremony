@@ -541,21 +541,38 @@ scaf() {
 # silently produce nothing — which would make a NUL row assert about an
 # empty string instead of about the file. An extractor blind in the same
 # way as the code under test cannot measure it.
+#
+# marker_line prints the ONE line number or fails. A file carrying two
+# marker pairs — exactly what a regression in block_lines produces — makes
+# grep return two numbers, and a multi-line operand is a FATAL bash error in
+# $(( )). Inside the subshell an extractor runs in, that fires this file's
+# own `trap rm -rf "$TMP"` and deletes the whole fixture tree out from under
+# every row below, so one broken extraction cascades into a dozen unrelated
+# failures. An extractor that cannot answer must fail its own row and
+# nothing else.
+marker_line() {
+  local n
+  n="$(grep -a -n -x -F -e "$2" "$1" | cut -d: -f1)"
+  case "$n" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "$n"
+}
 above_block() {
   local f="$1" s
-  s="$(grep -a -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
+  s="$(marker_line "$f" "$MARK_START")" || return 1
   head -n "$((s - 1))" "$f"
 }
 below_block() {
   local f="$1" e
-  e="$(grep -a -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
+  e="$(marker_line "$f" "$MARK_END")" || return 1
   tail -n +"$((e + 1))" "$f"
 }
 # The block's own bytes, marker lines excluded.
 inner_block() {
   local f="$1" s e
-  s="$(grep -a -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
-  e="$(grep -a -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
+  s="$(marker_line "$f" "$MARK_START")" || return 1
+  e="$(marker_line "$f" "$MARK_END")" || return 1
   head -n "$((e - 1))" "$f" | tail -n +"$((s + 1))"
 }
 extract() { "$1" "$2" >"$3"; }
