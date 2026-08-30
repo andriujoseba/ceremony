@@ -535,21 +535,27 @@ scaf() {
 # whole-line rule the tool uses. These are what the byte comparisons below
 # compare — the criterion asks for a byte comparison of the outside regions,
 # not a look at the diff.
+#
+# -a for the reason block_lines carries it: without it a fixture holding a
+# NUL byte is "binary", grep prints no line numbers, and these extractors
+# silently produce nothing — which would make a NUL row assert about an
+# empty string instead of about the file. An extractor blind in the same
+# way as the code under test cannot measure it.
 above_block() {
   local f="$1" s
-  s="$(grep -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
+  s="$(grep -a -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
   head -n "$((s - 1))" "$f"
 }
 below_block() {
   local f="$1" e
-  e="$(grep -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
+  e="$(grep -a -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
   tail -n +"$((e + 1))" "$f"
 }
 # The block's own bytes, marker lines excluded.
 inner_block() {
   local f="$1" s e
-  s="$(grep -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
-  e="$(grep -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
+  s="$(grep -a -n -x -F -e "$MARK_START" "$f" | cut -d: -f1)"
+  e="$(grep -a -n -x -F -e "$MARK_END" "$f" | cut -d: -f1)"
   head -n "$((e - 1))" "$f" | tail -n +"$((s + 1))"
 }
 extract() { "$1" "$2" >"$3"; }
@@ -754,6 +760,145 @@ scaf documented
 } >"$TMP/documented/$TEMPLATE"
 check "markers documented on bare lines are markers: refused as duplicated" 1 \
   "more than one ceremony marker line" in_consumer documented --check --source "$SRC_SCAF"
+
+# --- a NUL byte in the CONSUMER's own bytes -------------------------------------
+# grep calls a file carrying a NUL byte binary and prints no line numbers for
+# it, so without -a block_lines counts zero starts and zero ends and a
+# perfectly correct file classifies `none`. --fix then appends a second
+# ceremony block, and a third, unbounded — the idempotence criterion failing
+# on a file the tool wrote itself, and --check red on a tree that is right.
+# A template once saved as UTF-16 is how a NUL gets into one. The blindness
+# is also unportable: GNU grep 3.11 warns on stderr at exit 0, ugrep 7.5
+# exits 1 saying nothing, so nothing downstream can even detect it.
+
+# The fixtures' own precondition, graded rather than assumed: a "NUL fixture"
+# that lost its NUL on the way in would make every row below green for the
+# wrong reason, which is exactly how the E3 rows failed last round.
+has_nul() {
+  local f="$1"
+  tr -d '\000' <"$f" >"$TMP/nul-stripped"
+  ! cmp -s "$TMP/nul-stripped" "$f"
+}
+# Counted with -a for the same reason: the symptom being asserted is a
+# SECOND start marker, and a counter blind to the file cannot see one.
+start_markers() { grep -a -c -x -F -e "$MARK_START" "$1" || true; }
+
+# 1. A CURRENT block, with a NUL in the consumer's own preamble above it.
+scaf nul-current
+in_consumer nul-current --fix --source "$SRC_SCAF" >/dev/null 2>&1
+{
+  printf 'our preamble, saved as UTF-16 once: \000\n'
+  cat "$TMP/nul-current/$TEMPLATE"
+} >"$TMP/nul-current-before"
+cp "$TMP/nul-current-before" "$TMP/nul-current/$TEMPLATE"
+check "the NUL fixture really carries a NUL byte" 0 "" \
+  has_nul "$TMP/nul-current/$TEMPLATE"
+check "a NUL in the consumer's bytes does not hide a current block" 0 \
+  "1 guarded scaffold(s) carry a current ceremony-owned block" \
+  in_consumer nul-current --check --source "$SRC_SCAF"
+in_consumer nul-current --fix --source "$SRC_SCAF" >/dev/null 2>&1
+in_consumer nul-current --fix --source "$SRC_SCAF" >/dev/null 2>&1
+check "a third --fix still reports nothing to do" 0 "nothing to do" \
+  in_consumer nul-current --fix --source "$SRC_SCAF"
+check "and three --fix runs left the file byte-identical" 0 "" \
+  cmp "$TMP/nul-current-before" "$TMP/nul-current/$TEMPLATE"
+check "exactly one start marker, not one per --fix run" 0 "" \
+  test "$(start_markers "$TMP/nul-current/$TEMPLATE")" -eq 1
+
+# 2. A hand-maintained template carrying a NUL and no block: append once.
+scaf nul-noblock
+{
+  cat "$TMP/above.txt"
+  printf 'a stray NUL from the editor: \000\n'
+} >"$TMP/nul-noblock-before"
+cp "$TMP/nul-noblock-before" "$TMP/nul-noblock/$TEMPLATE"
+check "the no-block NUL fixture really carries a NUL byte" 0 "" \
+  has_nul "$TMP/nul-noblock/$TEMPLATE"
+check "--check names the missing block on a NUL-bearing file" 1 \
+  "carries no ceremony-owned block" \
+  in_consumer nul-noblock --check --source "$SRC_SCAF"
+check "--fix appends one" 0 "appended the ceremony-owned block" \
+  in_consumer nul-noblock --fix --source "$SRC_SCAF"
+extract above_block "$TMP/nul-noblock/$TEMPLATE" "$TMP/nul-noblock-above"
+check "the pre-existing content survives byte-for-byte, NUL included" 0 "" \
+  cmp "$TMP/nul-noblock-above" "$TMP/nul-noblock-before"
+check "--check passes on the appended result" 0 "guarded scaffold(s)" \
+  in_consumer nul-noblock --check --source "$SRC_SCAF"
+check "and a second --fix does not append a second block" 0 "nothing to do" \
+  in_consumer nul-noblock --fix --source "$SRC_SCAF"
+
+# 3. A DRIFTED block with a NUL in BOTH outside regions — the byte comparison
+#    the criterion asks for, on the shape that makes the extractors work for
+#    their living.
+scaf nul-surround
+{
+  printf 'preamble NUL: \000\n'
+  cat "$TMP/above.txt"
+} >"$TMP/nul-above.txt"
+{
+  cat "$TMP/below.txt"
+  printf 'trailing NUL: \000\n'
+} >"$TMP/nul-below.txt"
+{
+  cat "$TMP/nul-above.txt"
+  printf '%s\n' "$MARK_START"
+  printf 'an old block from 0.4.0\n'
+  printf '%s\n' "$MARK_END"
+  cat "$TMP/nul-below.txt"
+} >"$TMP/nul-surround/$TEMPLATE"
+check "the surrounded NUL fixture really carries a NUL byte" 0 "" \
+  has_nul "$TMP/nul-surround/$TEMPLATE"
+check "--check still sees drift through a NUL" 1 "has drifted" \
+  in_consumer nul-surround --check --source "$SRC_SCAF"
+check "--fix updates the drifted block" 0 "updated the ceremony-owned block" \
+  in_consumer nul-surround --fix --source "$SRC_SCAF"
+extract above_block "$TMP/nul-surround/$TEMPLATE" "$TMP/nul-surround-above"
+extract below_block "$TMP/nul-surround/$TEMPLATE" "$TMP/nul-surround-below"
+extract inner_block "$TMP/nul-surround/$TEMPLATE" "$TMP/nul-surround-inner"
+check "every byte ABOVE the markers survives --fix, NUL included" 0 "" \
+  cmp "$TMP/nul-surround-above" "$TMP/nul-above.txt"
+check "every byte BELOW the markers survives --fix, NUL included" 0 "" \
+  cmp "$TMP/nul-surround-below" "$TMP/nul-below.txt"
+check "and the block itself is now the source's bytes" 0 "" \
+  cmp "$TMP/nul-surround-inner" "$SRC_SCAF/$TEMPLATE"
+check "--check passes after the repair" 0 "guarded scaffold(s)" \
+  in_consumer nul-surround --check --source "$SRC_SCAF"
+
+# 4. Seeing the file is not the same as guessing at it: the two broken shapes
+#    are refused beside a NUL exactly as they are without one. -a widens what
+#    the tool can READ, never what it is willing to repair.
+scaf nul-unbalanced
+{
+  printf 'preamble NUL: \000\n'
+  cat "$TMP/above.txt"
+  printf '%s\n' "$MARK_START"
+  printf 'a block that never closes\n'
+  cat "$TMP/below.txt"
+} >"$TMP/nul-unbalanced/$TEMPLATE"
+check "unbalanced markers beside a NUL are still unbalanced" 1 \
+  "unbalanced ceremony markers" \
+  in_consumer nul-unbalanced --check --source "$SRC_SCAF"
+check "--fix refuses rather than deleting below a NUL-bearing marker" 1 \
+  "its ceremony markers are unbalanced" \
+  in_consumer nul-unbalanced --fix --source "$SRC_SCAF"
+check "and the refusal left the consumer's content below the marker intact" 0 "" \
+  grep -qaxF 'Staging first, always.' "$TMP/nul-unbalanced/$TEMPLATE"
+
+scaf nul-duplicated
+{
+  printf 'preamble NUL: \000\n'
+  printf '%s\n' "$MARK_START"
+  printf 'first\n'
+  printf '%s\n' "$MARK_START"
+  printf 'second\n'
+  printf '%s\n' "$MARK_END"
+} >"$TMP/nul-duplicated/$TEMPLATE"
+check "a second start marker beside a NUL is still a second start marker" 1 \
+  "more than one ceremony marker line" \
+  in_consumer nul-duplicated --check --source "$SRC_SCAF"
+check "--fix refuses a duplicated marker beside a NUL too" 1 \
+  "its ceremony markers are duplicated" \
+  in_consumer nul-duplicated --fix --source "$SRC_SCAF"
 
 # --- --fix's summary names where the changes landed -----------------------------
 # A scaffold-only run used to sign off by reporting .ceremony/, a directory

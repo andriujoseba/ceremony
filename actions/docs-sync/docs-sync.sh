@@ -353,10 +353,23 @@ fi
 # classifies as `duplicated` and is refused rather than guessed at. Counting
 # the hits is what makes the unterminated case a refusal instead of a range
 # that runs to end-of-file.
+#
+# -a IS LOAD-BEARING, not defensive. A single NUL byte anywhere in the
+# consumer's file — a template once saved as UTF-16 is how one gets there —
+# makes grep call it binary and print NO line numbers, so both counts come
+# back 0 and the file classifies `none` however correct its block is. --fix
+# would then append a second block, and a third, unbounded. The failure is
+# silent AND unportable: GNU grep 3.11 warns on stderr at exit 0, ugrep 7.5
+# exits 1 saying nothing at all. Downstream is already byte-safe — head,
+# tail, cat and cmp are byte operations — so -a lets this function see the
+# boundaries exactly rather than guess at them. That is why the answer here
+# is -a and not a new refusal class: `duplicated` and `unbalanced` refuse
+# because the boundary is genuinely unknown, and a NUL leaves it perfectly
+# known.
 block_lines() {
   local file="$1" starts ends ns ne
-  starts="$(grep -n -x -F -e "$SCAFFOLD_START" "$file" | cut -d: -f1 || true)"
-  ends="$(grep -n -x -F -e "$SCAFFOLD_END" "$file" | cut -d: -f1 || true)"
+  starts="$(grep -a -n -x -F -e "$SCAFFOLD_START" "$file" | cut -d: -f1 || true)"
+  ends="$(grep -a -n -x -F -e "$SCAFFOLD_END" "$file" | cut -d: -f1 || true)"
   ns="$(printf '%s' "$starts" | grep -c . || true)"
   ne="$(printf '%s' "$ends" | grep -c . || true)"
 
