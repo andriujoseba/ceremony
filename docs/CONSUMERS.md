@@ -434,8 +434,15 @@ precisely so the machinery is safe to work on
 - [ ] Convert the changelog to fragments (requires a pin at the first tag
       carrying fragment mode — not `0.1.0`): move every entry under
       `## Unreleased` to `changelog.d/<issue>.md`, verbatim — the filename
-      is derivable from the entry's own `(#N)`; an entry citing several
-      issues goes to the file for the first cited — delete the
+      is derivable from the entry's own `(#N)`, which is the *filename*
+      rule and not the whole of what `(#N)` has to satisfy: a moved entry
+      also meets the entry rules in
+      [The changelog rule](#the-changelog-rule), the 300-character bound
+      and the single citation group closing the entry. `## Unreleased`
+      prose has not shipped, so an entry that misses either is rewritten
+      here rather than carried in — an entry citing several issues folds
+      them into its one closing group, `(#61, #62).`, and goes to the file
+      for the first cited. Then delete the
       `## Unreleased` heading, and add the `changelog.d/README.md` marker
       ([bootstrap step 2](#bootstrap-a-new-repo)). Published sections stay
       byte-identical; `changelog-monotonic` proves that on the conversion
@@ -1562,7 +1569,25 @@ CONTRIBUTING may sharpen it, but this is the floor the guards assume:
   the mechanism — "`state:needs-human` is set at handoff" beats "the
   labels workflow now also wakes on `labeled`". The why and the how
   belong in the PR body, where anyone chasing the reasoning already goes.
-- **Cite the issue or PR** — `(#141)`.
+- **An entry is at most 300 characters**, and `changelog-armed` refuses a
+  longer one on the PR that wrote it. The count is taken on the *whole*
+  entry — the `- ` bullet and every line continuing it, joined into one
+  string with runs of whitespace collapsed to single spaces and the ends
+  trimmed — so it is not a per-line bound, and wrapping a long entry over
+  three lines does not shorten it. Over the bound, split it into several
+  `- ` entries in the same fragment (#571).
+- **Cite the issue or PR, and let the citation close the entry**: exactly
+  one `(#N)` group ends it, with the final `.` after that group. One group
+  may carry several references separated by a comma and a space, and a
+  reference may name another repository, so `(#N).`, `(#N, #M).` and
+  `(owner/repo#N, #M).` are all admitted — an entry needing two references
+  writes `(#141, #163).`, and one citing a sibling repository writes
+  `(heavy-duty/ceremony#567, #61).` or the bare `(ceremony#567, #61).`.
+  What `changelog-armed` refuses is a **second parenthesised citation group
+  anywhere in the entry**, because with two groups no single group closes
+  the entry and so none is terminal: `(#141) (#163).` fails where
+  `(#141, #163).` passes, and so does anything trailing after the closing
+  `.` (#571).
 - **Mark a breaking change** with a leading `BREAKING:`.
 - A repo not yet on fragment mode — no `changelog.d/` — keeps the legacy
   floor until its conversion: one line under `## Unreleased`, inserted
