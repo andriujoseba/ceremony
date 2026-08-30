@@ -1382,6 +1382,61 @@ asserts only that it exists.
 Bumping the pin re-syncs the mirror in the same PR —
 [the pin-bump procedure](#the-pin-bump-procedure).
 
+### The guarded scaffold — ceremony owns a block, you own the rest
+
+`.github/pull_request_template.md` is a third kind of file, and it is neither
+of the two above. It cannot join the mirror: a pull request template only
+works where GitHub reads it, and `.ceremony/` is not that place. It cannot be
+a stub either — a file scaffolded once and never revisited sits at the
+version it was written from while the machinery that renders into it moves
+on, which is the measured failure this exists to stop.
+
+So ceremony owns a **delimited region** of it and you own every other byte:
+
+```
+<!-- ceremony:pr-template:start -->
+…ceremony's template at your pin, verbatim…
+<!-- ceremony:pr-template:end -->
+```
+
+The markers are HTML comments, so they render as nothing in a pull request.
+They are written by `--fix` and do **not** exist in ceremony's own copy of
+the file, which is what keeps the comparison exact: the block's bytes and the
+source's bytes are one thing to diff, not two.
+
+- **`--fix`** replaces the block and touches nothing outside it. A
+  *"Deployment notes"* section you added below, a house preamble above —
+  both survive every future bump, byte for byte. Where the file exists with
+  no block, `--fix` **appends** one rather than overwriting: a
+  hand-maintained template is content, not garbage. Where the file does not
+  exist, it is created carrying the block alone.
+- **`--check`** fails at the mirror's severity — not a warning — when the
+  file is missing, carries no block, or carries a block that has drifted from
+  your pin.
+- **Broken markers are a refusal, in both modes.** A start with no end, or a
+  second start, means the block's boundaries are unknown, and every repair
+  from there guesses at which of your bytes are ceremony's. Fix the markers
+  by hand and re-run `--fix`; the tool will not delete content below a
+  truncated block to make itself succeed.
+
+The set is read from **the pin's `docs/SCAFFOLDED.txt`**, exactly as the
+mirror's set is read from `docs/VENDORED.txt` and for the same reason: what
+is scaffolded is decided at the pinned ref, so a bump that adds or drops one
+re-shapes it in the same PR with no second list to maintain. It is one path
+per line, relative to ceremony's root, blank lines ignored. A ref that
+carries no such file has no guarded scaffolds and syncs exactly as it always
+did.
+
+The guarded scaffold is available at **unreleased** (#559) and later — the
+marker stands until the release PR that ships this machinery clears it to
+that release's own tag, in the same PR (#221). **The pin bump and the
+`--fix` run are one PR.** A bump onto this ref reds `docs-sync --check`
+until the block exists, the same way a bump that adds a doctrine file reds
+it until the mirror is re-synced — so run `--fix` from the repo root in the
+bump PR itself and commit `.github/pull_request_template.md` alongside
+`.ceremony/`. Splitting them leaves the default branch red in between, and
+the repair is a second PR nobody scheduled.
+
 ## Requesting a doctrine change
 
 The section above is how a document **reaches** you, and it is one-way by

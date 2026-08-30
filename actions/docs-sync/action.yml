@@ -1,13 +1,17 @@
 name: Docs sync
 description: >-
-  Verify (or write) the consumer's `.ceremony/` doctrine mirror —
-  byte-identical to heavy-duty/ceremony at the consumer's pinned ref
-  (issue #19). Machinery is consumed by reference; documents have no
-  runtime, so they are vendored, machine-written and machine-verified.
-  The pin is read from the consumer's `.github/workflows/release.yml` —
-  the same single line that pins the release workflow, so one pin governs
-  machinery and doctrine alike. The caller must have checked out its own
-  repository first: the tool reads the consumer's tree at the workspace.
+  Verify (or write) the consumer's vendored doctrine — byte-identical to
+  heavy-duty/ceremony at the consumer's pinned ref (issue #19). Machinery is
+  consumed by reference; documents have no runtime, so they are vendored,
+  machine-written and machine-verified. Two file classes: the `.ceremony/`
+  mirror, which ceremony owns whole, and the guarded scaffolds named by
+  `docs/SCAFFOLDED.txt` — files in the consumer's own tree, such as
+  `.github/pull_request_template.md`, where ceremony owns a marked block and
+  the consumer owns every byte outside it (issue #559). The pin is read from
+  the consumer's `.github/workflows/release.yml` — the same single line that
+  pins the release workflow, so one pin governs machinery and doctrine
+  alike. The caller must have checked out its own repository first: the tool
+  reads the consumer's tree at the workspace.
 inputs:
   mode:
     description: >-
