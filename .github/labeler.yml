@@ -79,6 +79,13 @@ scope:release-flow:
           - drill/**
           - test/drill-rehearsal.test.sh
           - .github/scripts/record-roundtrip.sh
+          # the consumer pin-mover's suite. A row, not a scope-unmapped
+          # declaration: its subject is bin/ceremony-upgrade alone, which
+          # `bin/**` above already maps here, so the test locates exactly the
+          # one scope its subject does (#302 D3). It drives actions/docs-sync
+          # as a collaborator and asserts nothing about it, so it is not the
+          # mixed case that honestly wears two labels (#561 G10)
+          - test/ceremony-upgrade.test.sh
 scope:guards:
   - changed-files:
       - any-glob-to-any-file:

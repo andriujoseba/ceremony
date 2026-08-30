@@ -1649,7 +1649,9 @@ run `docs-sync --fix` locally, or let the red `--check` on the bump PR
 tell you what is stale. The CI guard is what makes a half-done bump —
 pin without mirror, or mirror without pin — unmergeable (#19). This is
 how a process change rolls out to a governed repo: deliberately, per
-repo, reviewed.
+repo, reviewed. Both halves can be done for you —
+[`ceremony-upgrade`](#ceremony-upgrade--the-bump-run-for-you), below —
+which is also what refuses a bump that crosses a migration.
 
 A bump that adds a core label is not finished at the merge: the bootstrap
 re-dispatch that carries the new row into the repository is a separate
@@ -1658,3 +1660,60 @@ Run it in the verified form —
 [A bootstrap press that reports whether it ran](#a-bootstrap-press-that-reports-whether-it-ran)
 — which is where that block lives and the only place in this file it is
 written out.
+
+### `ceremony-upgrade` — the bump, run for you
+
+`bin/ceremony-upgrade` performs the procedure above against a working
+tree: it moves every ceremony `uses:` reference to one tag, re-syncs the
+mirror by calling `docs-sync --fix`, and **refuses** where the move
+crosses a migration. Run it from the root of your checkout, from a
+ceremony checkout of any recent tag (#561):
+
+```sh
+# what would happen — changes not one byte
+path/to/ceremony/bin/ceremony-upgrade 0.7.7
+
+# do it
+path/to/ceremony/bin/ceremony-upgrade --fix 0.7.7
+```
+
+`--check` is the default, as it is in `docs-sync`, and `--source <dir>`
+substitutes a local ceremony checkout for the network so a move can be
+previewed against an unreleased tree. The command opens no PR and pushes
+nothing: it edits the tree and stops, and committing the refs and the
+mirror **together** is still yours to do, for the reason above — a
+half-done bump is what the CI guard refuses.
+
+**It is not `sed 's/0.7.4/0.7.7/g'`, and that is the whole point.** A
+bare version string is not a pin: a README that mentions the old version,
+or your own `CHANGELOG.md` heading for your own `0.7.6` release, is
+silently corrupted by a tree-wide substitution. The rewrite is anchored
+to the `uses:` shape — the same shape `docs-sync` reads the pin by, so
+the two can never disagree about what this repo is pinned to — and
+touches nothing else.
+
+**And several pin moves are migrations rather than substitutions.** The
+*"available at `X` and later"* notes throughout this guide say what a tag
+changed about the tree a consumer must carry, and crossing one without
+its hand edit does not leave you half-upgraded — it leaves a tree that
+fails loudly. Crossing `0.4.1` without
+[the two-caller split](#labels-automation) leaves the trigger job red on
+every pull request and issue event. So the command refuses rather than
+guesses. **Every check runs before any write, so a refusal leaves the
+tree byte-identical** — there is nothing to undo and nothing to inspect.
+
+The refusals, and what each one means:
+
+| refusal | what it means | what to do |
+| --- | --- | --- |
+| **no ceremony pin** | no `uses: heavy-duty/ceremony/…@<ref>` line under `.github/`, so there is no pin to move *from* | this is bootstrap, not an upgrade, and it is not something this command does: follow [Bootstrap a new repo](#bootstrap-a-new-repo) by hand |
+| **the refs are not all at one ref** | two ceremony refs in one tree, so it has no single pin — usually a bump that moved some lines and not others | put them on one ref by hand, then re-run; the message names the files that differ |
+| **the current pin is not a released tag** | a branch or a commit SHA cannot be placed on the release ladder, so which migrations the move crosses is unknowable | pin to a released tag first |
+| **the target tag does not exist** | the tag was never cut — check it against the [releases page](https://github.com/heavy-duty/ceremony/releases), or pass `--source` to preview an unreleased tree | — |
+| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | do the migrations by hand, in the sections the message names, then re-run — or move in steps, to the tag before the first one |
+| **the move is backwards** | a downgrade; this guide's notes are written forwards and none of them says how to undo a tag | undo the crossed migrations deliberately and move the refs by hand |
+
+Every refusal names the tags it is refusing over and the section of this
+guide that covers each, and says what it *would* have done — the ref
+count and the files — so a refusal about migrations is never mistaken for
+a refusal about the refs.
