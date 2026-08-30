@@ -485,14 +485,16 @@ cfix() { printf '%s/repos_owner_repo_issues_%s_comments.json' "$TMP" "$1"; }
 # shellcheck disable=SC2317 # invoked indirectly by the check harness
 line_count() { wc -l <"$1"; }
 files_absent() { [ ! -f "$1" ] && [ ! -f "$2" ]; }
-date_straddles() { [[ "$1" < "$2" && "$3" > "$2" ]]; }
-
 # -- the derived owner class (#562) -----------------------------------------
 : >"$TMP/issue-edits"
 printf '[]\n' >"$(cfix 560)"
-BUILDER_LABEL_AVAILABLE=true issue_probe 560 ready 0 >/dev/null
+rm -f "$TMP/posted-560"
+neither_owner_out="$(BUILDER_LABEL_AVAILABLE=true issue_probe 560 ready 0)"
 check "a ready issue without operator gains builder" 0 "1" \
   grep -cF 'issue edit 560 -R owner/repo --add-label builder' "$TMP/issue-edits"
+check "an issue carrying neither owner class draws no flag" 1 "" \
+  grep -qF ' graph flag — ' <<<"$neither_owner_out"
+check "...and posts no comment" 1 "" test -f "$TMP/posted-560"
 
 owner_edits="$(wc -l <"$TMP/issue-edits")"
 BUILDER_LABEL_AVAILABLE=true issue_probe 561 $'ready\nbuilder' 0 >/dev/null
@@ -856,7 +858,7 @@ check "triage marks only an all-operator-owned criterion set" 0 "" \
 check "triage refuses a mixed-owner issue outright" 0 "" \
   grep -qF 'An issue is builder-owned or operator-owned, and never both' "$ROOT/TRIAGE.md"
 
-# -- the issue-side ruling clock# -- the issue-side ruling clock is comments-only (#284) ---------------------
+# -- the issue-side ruling clock is comments-only (#284) ---------------------
 # #52 D10's "reuse the activity computation" made the issue-side ruling nudge
 # ride the claim-reclamation clock, `assigned` events included — so claiming
 # a flagged issue dated it, and the escalation the flag exists to keep
@@ -1171,7 +1173,7 @@ check "...and the ruling clock, on that same thread, floors at the flag" 0 \
 check "the #534 probes perform no issue edits" 0 "$setter_clock_edits_before" \
   bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
 
-# -- offsite stops only the reclaim clock# -- offsite stops only the reclaim clock ------------------------------------
+# -- offsite stops only the reclaim clock ------------------------------------
 offsite="$(issue_probe 25 $'claimed\noffsite')"
 check "a 10-day-quiet offsite claim is not reclaimed" 1 "" \
   grep -q 'reclaimed' <<<"$offsite"
@@ -1544,7 +1546,7 @@ check "...no unassign, no label swap, and no reclaim comment" 0 "" \
   bash -c 'test "$1" -eq "$(wc -l <"$2")" && test ! -f "$3"' _ \
   "$claim_edits_before" "$TMP/issue-edits" "$TMP/posted-50"
 
-# -- the suppressed comment# -- the suppressed comment: a 504 on the marker read -----------------------
+# -- the suppressed comment: a 504 on the marker read -----------------------
 # The marker is on the issue. Read as "no marker", a failed read re-posts the
 # comment the marker exists to suppress — every sweep, forever.
 jq -n --arg b '<!-- issueflow:blocked-unparseable -->' \
@@ -1798,6 +1800,17 @@ printf '%s\n' \
   >"$ARRIVAL/fixtures/graphql-open.json"
 cp "$ARRIVAL/fixtures/graphql-open.json" "$ARRIVAL/fixtures/graphql-merged.json"
 arrival_fixture() { printf '%s\n' "$1" >"$ARRIVAL/fixtures/repos_owner_repo_issues_91.json"; }
+# Several eligible issues make the missing-row notice's once-per-pass scope
+# observable: a notice emitted from the issue loop would appear three times
+# instead of once (#562 D9).
+printf '%s\n' \
+  '[{"number":101,"labels":[{"name":"ready"}],"title":"first"},{"number":102,"labels":[{"name":"ready"}],"title":"second"},{"number":103,"labels":[{"name":"ready"}],"title":"third"}]' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
+for n in 101 102 103; do
+  jq -n --argjson n "$n" --arg at "$(iso_at $((INOW - 3600)))" \
+    '{number:$n,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"ready"}],assignees:[]}' \
+    >"$ARRIVAL/fixtures/repos_owner_repo_issues_${n}.json"
+done
 arrival_run() {
   : >"$ARRIVAL/fixtures/edits"
   env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
@@ -1841,15 +1854,28 @@ check "...and the sweep still runs" 0 "" \
 # filters pull-request rows before entering the issue loop (#549 C7/C11).
 closed_since="$(iso_at $((INOW - 7 * 86400)))"
 closed_endpoint="repos_owner_repo_issues_state_closed_since_${closed_since}_per_page_100.json"
-printf '[{"number":570,"updated_at":"%s"},{"number":571,"updated_at":"%s","pull_request":{"url":"x"}}]\n' \
+printf '[{"number":570,"updated_at":"%s"},{"number":571,"updated_at":"%s","pull_request":{"url":"x"}},{"number":573,"updated_at":"%s"}]\n' \
   "$(iso_at $((INOW - 6 * 86400)))" "$(iso_at $((INOW - 6 * 86400)))" \
+  "$(iso_at $((INOW - 6 * 86400)))" \
   >"$ARRIVAL/fixtures/$closed_endpoint"
-printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
+printf '[{"number":574,"labels":[{"name":"needs-triage"}],"title":"open control"}]\n' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
 printf '[{"name":"builder"}]\n' >"$ARRIVAL/fixtures/repos_owner_repo_labels_per_page_100.json"
 jq -n --arg at "$(iso_at $((INOW - 6 * 86400)))" \
   '{number:570,state:"closed",updated_at:$at,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"claimed"},{name:"attention"},{name:"builder"}],assignees:[{login:"builder"}]}' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_570.json"
 printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_570_comments.json"
+jq -n --arg at "$(iso_at $((INOW - 8 * 86400)))" \
+  '{number:572,state:"closed",updated_at:$at,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"claimed"}],assignees:[{login:"builder"}]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_572.json"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_572_comments.json"
+jq -n --arg at "$(iso_at $((INOW - 6 * 86400)))" \
+  '{number:573,state:"closed",updated_at:$at,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"blocked"}],assignees:[]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_573.json"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_573_comments.json"
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '{number:574,state:"open",updated_at:$at,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"needs-triage"}],assignees:[]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_574.json"
 : >"$ARRIVAL/fixtures/edits"
 closed_out="$(
   env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
@@ -1863,12 +1889,21 @@ check "a six-day closed claim is read and cleared" 0 "1" \
   "$ARRIVAL/fixtures/edits"
 check "pull-request rows are filtered from the closed read" 1 "" \
   grep -qF 'issue edit 571 ' "$ARRIVAL/fixtures/edits"
-check "the closed read carries a seven-day since bound" 0 "" \
-  grep -qF "issues?state=closed&since=\$closed_since&per_page=100" \
-  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
-check "the far edge excludes eight days and admits six" 0 "" \
-  date_straddles \
-  "$(iso_at $((INOW - 8 * 86400)))" "$closed_since" "$(iso_at $((INOW - 6 * 86400)))"
+check "an eight-day closed claim is outside the bounded read" 1 "" \
+  grep -qF 'issue edit 572 ' "$ARRIVAL/fixtures/edits"
+# C11's negative fixture is the exact open-board record the subprocess used.
+# Its paired positive control injects the closed row: if the closed payload
+# leaked into BOARD_RECORDS, that row would create an idle-shape verdict.
+open_shape_records=$'574\tneeds-triage\topen control'
+leaked_shape_records="${open_shape_records}"$'\n573\tblocked\tclosed control'
+open_shape_out="$(board_shape_flags 4 "" "" 3 "" <<<"$open_shape_records")"
+leaked_shape_out="$(board_shape_flags 4 "" "" 3 "" <<<"$leaked_shape_records")"
+check "closed rows leave the open-board shape verdict unchanged" 0 "" \
+  test -z "$open_shape_out"
+check "...and the paired leak control would change that verdict" 0 \
+  $'573\tidle\t1:#573:' printf '%s\n' "$leaked_shape_out"
+check "the full sweep likewise emits no shape flag from closed rows" 1 "" \
+  grep -qF ' graph flag — ' <<<"$closed_out"
 check "the closed pass continues through later reconcile steps" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$closed_out"
 

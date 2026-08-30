@@ -1418,7 +1418,7 @@ reconcile_board_flags() { # $1 issue, $2 concluded queue state — board flags (
   # own boundary, and it is the right one here — the flag speaks about a
   # board fact that is true right now, and a board where the fact never
   # changed has nothing new to say.
-  local n="$1" state identity marker rendered count path family message snapshot_state
+  local n="$1" state identity marker rendered count path family message snapshot_state label
   if board_flags_in_scope "$2"; then
     state="$(flag_for_issue "$n" "${COLLISION_FLAGS:-}")"
     if [ -n "$state" ]; then
@@ -1594,7 +1594,7 @@ reconcile_issue() {
   # pass. Comments alone count; label churn and assignments are board facts,
   # not progress on the operator-owned work (#491).
   if has_issue_label operator; then
-    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
     guarded_read operator_age last_issue_comment_activity "$n" "$created" \
       || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
   fi

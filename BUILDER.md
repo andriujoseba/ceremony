@@ -470,12 +470,11 @@ surface**, being surface-agnostic already (#526). The rungs:
   none — hard block` either: the flag waits for the human, and the re-read
   is what is owed.
 
-A re-flag starts a fresh ladder. On every surface the 0–12h and 12h rungs apply
-whatever its own escalation comment says, hard block included. The 24h and
-past-24h rungs do not fire when that fresh episode is issue-borne and reads
-`Default: none — hard block`; otherwise the whole ladder applies. An active
-back-and-forth still climbs it — unlike
-the 7-day nudge, which resets on real activity. The machine observes both
+A re-flag starts a fresh ladder, which applies whatever `Default:` says,
+hard block included, and an active back-and-forth still climbs it — unlike
+the 7-day nudge, which resets on real activity. The 24h and past-24h rungs do
+not fire when that fresh episode is issue-borne and its own escalation comment
+reads `Default: none — hard block`; otherwise the whole ladder applies. The machine observes both
 clocks but never sets, clears, or decides `needs-ruling`. The label stays
 until agreement is *reached*, not until the maintainer replies: the setter
 records the ruling, removes the label, and returns the item to its flow in
