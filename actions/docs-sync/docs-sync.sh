@@ -347,9 +347,12 @@ fi
 # `none`, `unbalanced` or `duplicated`; the two numbers are 0 unless ok.
 #
 # grep -n -x -F: whole-line, fixed-string, line-numbered. Whole-line matching
-# is what makes a marker quoted inside the consumer's own prose harmless, and
-# counting the hits is what makes the unterminated case a refusal instead of
-# a range that runs to end-of-file.
+# is what makes a marker mentioned INLINE in the consumer's own prose
+# harmless — and only that. A marker on a line of its own is a marker
+# wherever it sits, so a consumer who documents the pair on bare lines
+# classifies as `duplicated` and is refused rather than guessed at. Counting
+# the hits is what makes the unterminated case a refusal instead of a range
+# that runs to end-of-file.
 block_lines() {
   local file="$1" starts ends ns ne
   starts="$(grep -n -x -F -e "$SCAFFOLD_START" "$file" | cut -d: -f1 || true)"
@@ -609,10 +612,18 @@ run_check() {
 # --- fix ------------------------------------------------------------------------
 
 run_fix() {
-  local changed=0 f rel dest
+  local changed=0 scaf_changed=0 total f rel dest
   note() {
     printf 'docs-sync: %s\n' "$1"
     changed=$((changed + 1))
+  }
+  # Scaffold work is counted apart from the mirror's because it lands
+  # outside $MIRROR/ entirely, and the closing line below reports where the
+  # changes went — a scaffold-only run used to sign off by naming a
+  # directory it had not touched.
+  note_scaffold() {
+    printf 'docs-sync: %s\n' "$1"
+    scaf_changed=$((scaf_changed + 1))
   }
 
   mkdir -p "$MIRROR"
@@ -657,7 +668,7 @@ run_fix() {
           cat "$srcfile"
           printf '%s\n' "$SCAFFOLD_END"
         } >"$f"
-        note "created $f carrying the ceremony-owned block"
+        note_scaffold "created $f carrying the ceremony-owned block"
         continue
       fi
       read -r status bs be < <(block_lines "$f")
@@ -675,7 +686,7 @@ run_fix() {
             cat "$srcfile"
             printf '%s\n' "$SCAFFOLD_END"
           } >>"$f"
-          note "appended the ceremony-owned block to $f (its existing content is untouched)"
+          note_scaffold "appended the ceremony-owned block to $f (its existing content is untouched)"
           ;;
         duplicated | unbalanced)
           # A refusal, not a repair — the same call guard_plain_tree makes
@@ -704,17 +715,24 @@ run_fix() {
             } >>"$rebuilt"
             tail -n +"$((be + 1))" "$f" >>"$rebuilt"
             cat "$rebuilt" >"$f"
-            note "updated the ceremony-owned block in $f (bytes outside the markers untouched)"
+            note_scaffold "updated the ceremony-owned block in $f (bytes outside the markers untouched)"
           fi
           ;;
       esac
     done
   fi
 
-  if [ "$changed" -eq 0 ]; then
+  # Where the changes landed, not just how many. The middle branch is the
+  # sentence this line has always printed, and every run with no guarded
+  # scaffold work takes it — so no ref before #559, and no consumer whose
+  # pin predates the scaffold class, sees this output move at all.
+  total=$((changed + scaf_changed))
+  if [ "$total" -eq 0 ]; then
     echo "docs-sync: nothing to do — $MIRROR/ already mirrors $origin exactly"
+  elif [ "$scaf_changed" -eq 0 ]; then
+    echo "docs-sync: $total change(s); $MIRROR/ now mirrors $origin exactly"
   else
-    echo "docs-sync: $changed change(s); $MIRROR/ now mirrors $origin exactly"
+    echo "docs-sync: $total change(s) — $changed in $MIRROR/, $scaf_changed guarded scaffold(s); $MIRROR/ now mirrors $origin exactly"
   fi
 }
 

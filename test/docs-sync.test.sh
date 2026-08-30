@@ -722,6 +722,63 @@ check "a second --fix reports nothing to do" 0 "nothing to do" \
 check "and leaves the tree byte-identical to the first run's" 0 "" \
   diff -r "$TMP/idem-first" "$TMP/idem"
 
+# --- the whole-line rule, both halves of it -------------------------------------
+# block_lines' comment claims exactly this much and no more: a marker
+# mentioned INLINE is harmless, and a marker on a line of its own is a
+# marker wherever it sits. Both halves are rows here, so neither half is
+# left standing as prose in a comment.
+
+scaf inline
+printf 'Between %s and %s the bytes are ceremony'"'"'s — do not edit them.\n' \
+  "$MARK_START" "$MARK_END" >"$TMP/inline/$TEMPLATE"
+check "a file whose only markers are inline carries no block" 1 \
+  "carries no ceremony-owned block" in_consumer inline --check --source "$SRC_SCAF"
+check "--fix appends a block below the inline mention" 0 \
+  "appended the ceremony-owned block" in_consumer inline --fix --source "$SRC_SCAF"
+check "and the inline mention never became a boundary: --check passes" 0 \
+  "guarded scaffold(s)" in_consumer inline --check --source "$SRC_SCAF"
+extract inner_block "$TMP/inline/$TEMPLATE" "$TMP/inline-inner"
+check "the block is the source's bytes, not the prose above it" 0 "" \
+  cmp "$TMP/inline-inner" "$SRC_SCAF/$TEMPLATE"
+
+# The other half: on lines of their own those same bytes ARE markers, so a
+# consumer documenting the pair that way is refused rather than guessed at.
+scaf documented
+{
+  printf 'Our template documents the pair on bare lines:\n'
+  printf '%s\n' "$MARK_START"
+  printf '%s\n' "$MARK_END"
+  printf '%s\n' "$MARK_START"
+  printf 'the real block\n'
+  printf '%s\n' "$MARK_END"
+} >"$TMP/documented/$TEMPLATE"
+check "markers documented on bare lines are markers: refused as duplicated" 1 \
+  "more than one ceremony marker line" in_consumer documented --check --source "$SRC_SCAF"
+
+# --- --fix's summary names where the changes landed -----------------------------
+# A scaffold-only run used to sign off by reporting .ceremony/, a directory
+# it had not touched. The sentence for a run with no scaffold work is
+# unchanged, and that is a row too: no pin predating #559 sees this move.
+
+scaf summary-scaf
+check "a scaffold-only --fix reports the scaffold, not the mirror" 0 \
+  "1 change(s) — 0 in .ceremony/, 1 guarded scaffold(s)" \
+  in_consumer summary-scaf --fix --source "$SRC_SCAF"
+scaf summary-scaf2
+check_absent "and never counts that work as a change inside .ceremony/" 0 \
+  "1 change(s); .ceremony/" in_consumer summary-scaf2 --fix --source "$SRC_SCAF"
+
+consumer summary-mirror 0.3.0
+check "a run with no guarded scaffolds closes exactly as it always has" 0 \
+  "change(s); .ceremony/ now mirrors" \
+  in_consumer summary-mirror --fix --source "$SRC"
+check_absent "and says nothing about guarded scaffolds in its summary" 0 \
+  "guarded scaffold(s)" in_consumer summary-mirror --fix --source "$SRC"
+
+consumer summary-mixed 0.3.0
+check "a run that changes both names both" 0 \
+  ", 1 guarded scaffold(s)" in_consumer summary-mixed --fix --source "$SRC_SCAF"
+
 # --- the plain-file refusal reaches the scaffold too -----------------------------
 
 scaf link
