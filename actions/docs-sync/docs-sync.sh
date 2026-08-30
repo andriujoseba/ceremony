@@ -107,7 +107,10 @@ SCAFFOLD_MANIFEST="docs/SCAFFOLDED.txt"
 # One constant pair for every guarded scaffold, not one per path: a block
 # sits alone in its own file, so the file already says which scaffold it is
 # and the marker never has to. The literal is #559's, whose E2 fixes these
-# bytes; a second manifest entry inherits them unchanged.
+# bytes; a second manifest entry inherits them unchanged — including the
+# `pr-template` in the name, which by then reads as the pair's origin rather
+# than as a claim about the file it delimits. Renaming it is a consumer-tree
+# migration, not an edit here, so weigh that before adding the entry.
 SCAFFOLD_START="<!-- ceremony:pr-template:start -->"
 SCAFFOLD_END="<!-- ceremony:pr-template:end -->"
 
