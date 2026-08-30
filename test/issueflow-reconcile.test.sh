@@ -452,10 +452,10 @@ issue_stub_gh() {
   fi
 }
 
-issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 merged PR specs, $6 body
+issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 reserved, $6 body
   (
-    local assignees="${3:-1}" open_pr="${4:-false}" merged_ref_prs="${5:-}"
-    local body="${6:-}" assignee_json='[]' open_pr_records="" spec pr merged_at
+    local assignees="${3:-1}" open_pr="${4:-false}"
+    local body="${6:-}" assignee_json='[]' open_pr_records=""
     [ "$assignees" -eq 0 ] || assignee_json='[{"login":"owner-bot"}]'
     # `PROBE_NOW` moves the sweep's clock without moving the fixtures — the
     # only way to prove a rule that self-rate-limits on its own comment's
@@ -473,19 +473,8 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
       refs|draft-refs) open_pr_records="$(printf 'BODY\tRefs #%s\n' "$1")" ;;
     esac
     OPEN_PR_ISSUES="$(open_pr_issues <<<"$open_pr_records")"
-    # Records are ISSUE<TAB>PR<TAB>MERGED_AT (#242). A spec is `PR` or
-    # `PR@<iso>`; the bare form takes a fixed hour-old merge, which is every
-    # probe that does not care about merge order. An empty list is no record
-    # at all, so the no-merged-PR probes read exactly as they did.
-    MERGED_REF_PR_RECORDS="$(
-      # shellcheck disable=SC2086 # the spec list is deliberately word-split
-      for spec in $merged_ref_prs; do
-        pr="${spec%%@*}"
-        merged_at="${spec#*@}"
-        [ "$merged_at" != "$spec" ] || merged_at="$(iso_at $((INOW - 3600)))"
-        printf '%s\t%s\t%s\n' "$1" "$pr" "$merged_at"
-      done)"
     run() { "$@"; }
+    # shellcheck disable=SC2317 # invoked indirectly by reconcile_issue
     gh() { issue_stub_gh "$@"; }
     reconcile_issue "$1" 2>&1
   )
@@ -493,6 +482,9 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 m
 
 tfix() { printf '%s/repos_owner_repo_issues_%s_timeline.json' "$TMP" "$1"; }
 cfix() { printf '%s/repos_owner_repo_issues_%s_comments.json' "$TMP" "$1"; }
+line_count() { wc -l <"$1"; }
+files_absent() { [ ! -f "$1" ] && [ ! -f "$2" ]; }
+date_straddles() { [[ "$1" < "$2" && "$3" > "$2" ]]; }
 
 # -- the derived owner class (#562) -----------------------------------------
 : >"$TMP/issue-edits"
@@ -505,7 +497,7 @@ owner_edits="$(wc -l <"$TMP/issue-edits")"
 BUILDER_LABEL_AVAILABLE=true issue_probe 561 $'ready\nbuilder' 0 >/dev/null
 BUILDER_LABEL_AVAILABLE=true issue_probe 561 $'ready\nbuilder' 0 >/dev/null
 check "a converged builder issue is idempotent across two passes" 0 "$owner_edits" \
-  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+  line_count "$TMP/issue-edits"
 
 printf '[]\n' >"$(cfix 562)"
 operator_builder="$(BUILDER_LABEL_AVAILABLE=true issue_probe 562 $'ready\noperator\nbuilder' 0)"
@@ -518,7 +510,7 @@ owner_edits="$(wc -l <"$TMP/issue-edits")"
 BUILDER_LABEL_AVAILABLE=true issue_probe 563 epic 0 >/dev/null
 BUILDER_LABEL_AVAILABLE=true issue_probe 564 needs-triage 0 >/dev/null
 check "epic and needs-triage gain no owner-class label" 0 "$owner_edits" \
-  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+  line_count "$TMP/issue-edits"
 
 # -- closed issues release build bookkeeping (#549) ------------------------
 closed_probe() { # $1 issue, $2 labels, $3 assignee count
@@ -545,7 +537,7 @@ closed_edits="$(wc -l <"$TMP/issue-edits")"
 closed_probe 570 $'claimed\nattention\nbuilder' 1 >/dev/null
 closed_probe 570 $'claimed\nattention\nbuilder' 1 >/dev/null
 check "the marker suppresses repeats even when labels are restored" 0 "$closed_edits" \
-  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+  line_count "$TMP/issue-edits"
 check "the closed release comment posts exactly once" 0 "1" \
   grep -cF '<!-- issueflow:closed-claim-release-570 -->' "$TMP/posted-570"
 
@@ -555,9 +547,9 @@ printf '[]\n' >"$(cfix 572)"
 closed_probe 571 epic 0 >/dev/null
 closed_probe 572 needs-triage 0 >/dev/null
 check "closed epic and needs-triage controls are untouched" 0 "$closed_edits" \
-  bash -c 'wc -l <"$1"' _ "$TMP/issue-edits"
+  line_count "$TMP/issue-edits"
 check "closed controls draw no comment" 0 "" \
-  bash -c 'test ! -f "$1" && test ! -f "$2"' _ "$TMP/posted-571" "$TMP/posted-572"
+  files_absent "$TMP/posted-571" "$TMP/posted-572"
 
 # -- release epics announce an opened declared gate, comment-only (#253) -----
 printf '{"state":"closed"}\n' >"$TMP/repos_owner_repo_issues_201.json"
@@ -1870,10 +1862,10 @@ check "a six-day closed claim is read and cleared" 0 "1" \
 check "pull-request rows are filtered from the closed read" 1 "" \
   grep -qF 'issue edit 571 ' "$ARRIVAL/fixtures/edits"
 check "the closed read carries a seven-day since bound" 0 "" \
-  grep -qF 'issues?state=closed&since=$closed_since&per_page=100' \
+  grep -qF "issues?state=closed&since=\$closed_since&per_page=100" \
   "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
 check "the far edge excludes eight days and admits six" 0 "" \
-  bash -c 'test "$1" \< "$2" && test "$3" \> "$2"' _ \
+  date_straddles \
   "$(iso_at $((INOW - 8 * 86400)))" "$closed_since" "$(iso_at $((INOW - 6 * 86400)))"
 check "the closed pass continues through later reconcile steps" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$closed_out"

@@ -346,11 +346,13 @@ expect "post-merge core row is retired" "" "$(grep '^post-merge|' <<<"$core_rows
 expect "operator core row is byte-exact" \
   "operator|A371F7|Operator-owned; the body names its evidence surface, command or observation, and wake condition" \
   "$(grep '^operator|' <<<"$core_rows")"
+# shellcheck disable=SC2016 # backticks are registry literals
 expect "builder core row is byte-exact" \
   'builder|BFDADC|Builder-owned; the complement of `operator` — derived by the sweep, never hand-set' \
   "$(grep '^builder|' <<<"$core_rows")"
 expect "builder colour is unique in the core registry" 1 \
   "$(cut -d'|' -f2 <<<"$core_rows" | grep -cxF BFDADC)"
+# shellcheck disable=SC2016 # backticks are LABELS.md literals
 builder_doctrine="$(sed -n 's/^| `builder` | `#\([0-9A-F]*\)` | \(.*\) |$/builder|\1|\2/p' LABELS.md)"
 expect "builder doctrine and registry rows agree byte-for-byte" \
   "$(grep '^builder|' <<<"$core_rows")" "$builder_doctrine"
