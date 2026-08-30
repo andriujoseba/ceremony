@@ -743,6 +743,16 @@ check "the docs-sync refusal reaches the operator" 1 \
 check "a refused move says the tree was rolled back" 1 \
   "rolled back" \
   in_consumer broken-marker --fix --source "$SRC_SCAF" 0.7.7
+
+# A FRESH FIXTURE FOR THE FINGERPRINT ROW, and it is the difference between a
+# measurement and a coincidence. `unchanged` takes its `before` from whatever
+# the rows above left behind — so against a build that does not roll back, the
+# two rows above have ALREADY moved the pins and written the mirror, and this
+# row would compare a half-upgraded tree with itself and pass. Rebuilding puts
+# the run that must write nothing on a tree that has never been written to.
+consumer broken-marker 0.7.6
+printf 'Our own template.\n\n<!-- ceremony:pr-template:start -->\n\nnever closed\n' \
+  >"$TMP/broken-marker/.github/pull_request_template.md"
 unchanged "a docs-sync refusal mid-fix leaves the WHOLE tree byte-identical" \
   "$TMP/broken-marker" \
   in_consumer broken-marker --fix --source "$SRC_SCAF" 0.7.7
@@ -750,6 +760,17 @@ check "the pins did not move under a rolled-back run" 0 "$PIN_COUNT 0.7.6" \
   refs broken-marker
 check_absent "the rolled-back run left no ref at the target" 0 "0.7.7" \
   refs broken-marker
+# The mirror is the other half of what a partial write leaves: docs-sync had
+# already added .ceremony/ and the root AGENTS.md stub by the time it refused.
+mirror_state() {
+  if [ -e "$TMP/broken-marker/.ceremony" ] || [ -e "$TMP/broken-marker/AGENTS.md" ]; then
+    echo "mirror-partially-written"
+  else
+    echo "no-mirror"
+  fi
+}
+check "the rolled-back run left no half-written mirror either" 0 "no-mirror" \
+  mirror_state
 
 # The fixture is not vacuous: with the marker closed, the SAME move over the
 # SAME source tree succeeds and writes the scaffold. Without this row the one
