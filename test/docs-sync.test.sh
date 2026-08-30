@@ -778,6 +778,15 @@ scaf documented
 check "markers documented on bare lines are markers: refused as duplicated" 1 \
   "more than one ceremony marker line" in_consumer documented --check --source "$SRC_SCAF"
 
+# That same file is the one the extractors above cannot answer about, and
+# the blast radius of not answering is graded rather than left to prose: a
+# helper that fed two line numbers to $(( )) would take $TMP with it and
+# turn one broken extraction into a dozen unrelated failures.
+check "an extractor that cannot answer fails its own row" 1 "" \
+  above_block "$TMP/documented/$TEMPLATE"
+check "and the fixture tree is still standing after it" 0 "" \
+  test -d "$TMP/documented"
+
 # --- a NUL byte in the CONSUMER's own bytes -------------------------------------
 # grep calls a file carrying a NUL byte binary and prints no line numbers for
 # it, so without -a block_lines counts zero starts and zero ends and a
