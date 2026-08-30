@@ -772,6 +772,31 @@ mirror_state() {
 check "the rolled-back run left no half-written mirror either" 0 "no-mirror" \
   mirror_state
 
+# RESTORE, NOT DELETE. The row above only proves the rollback removes what the
+# run created — a rollback that simply `rm -rf`'d the territory would pass it,
+# and would destroy the mirror of every consumer that already had one. This
+# fixture arrives with a STALE .ceremony/ and a root AGENTS.md the repo has
+# since edited, both of which docs-sync would have rewritten before it refused,
+# and both of which must come back byte for byte.
+consumer had-mirror 0.7.6
+printf 'Our own template.\n\n<!-- ceremony:pr-template:start -->\n\nnever closed\n' \
+  >"$TMP/had-mirror/.github/pull_request_template.md"
+mkdir -p "$TMP/had-mirror/.ceremony"
+printf '# router, as of the OLD pin\n' >"$TMP/had-mirror/.ceremony/AGENTS.md"
+printf '# rules, as of the OLD pin\n' >"$TMP/had-mirror/.ceremony/RULES.md"
+printf 'stale, and not in the manifest\n' >"$TMP/had-mirror/.ceremony/GONE.md"
+printf '# our own router stub, edited by us\n' >"$TMP/had-mirror/AGENTS.md"
+
+unchanged "a rollback restores a mirror that was already there" \
+  "$TMP/had-mirror" \
+  in_consumer had-mirror --fix --source "$SRC_SCAF" 0.7.7
+check "the pre-existing mirror came back with its old bytes" 0 \
+  "as of the OLD pin" cat "$TMP/had-mirror/.ceremony/AGENTS.md"
+check "the orphan docs-sync would have deleted came back too" 0 \
+  "not in the manifest" cat "$TMP/had-mirror/.ceremony/GONE.md"
+check "the consumer's own root AGENTS.md came back untouched" 0 \
+  "edited by us" cat "$TMP/had-mirror/AGENTS.md"
+
 # The fixture is not vacuous: with the marker closed, the SAME move over the
 # SAME source tree succeeds and writes the scaffold. Without this row the one
 # above passes for a tree that could never have been upgraded at all.
