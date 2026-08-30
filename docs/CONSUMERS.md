@@ -1687,10 +1687,14 @@ half-done bump is what the CI guard refuses.
 **It is not `sed 's/0.7.4/0.7.7/g'`, and that is the whole point.** A
 bare version string is not a pin: a README that mentions the old version,
 or your own `CHANGELOG.md` heading for your own `0.7.6` release, is
-silently corrupted by a tree-wide substitution. The rewrite is anchored
-to the `uses:` shape — the same shape `docs-sync` reads the pin by, so
-the two can never disagree about what this repo is pinned to — and
-touches nothing else.
+silently corrupted by a tree-wide substitution. The pin shape is the one
+`docs-sync` reads the pin by, so the two can never disagree about what
+this repo is pinned to — and `--fix` rewrites exactly the lines `--check`
+listed, by line number, looking at no other line in the file. It then
+re-reads the tree and checks that against what it told you: the counts it
+announced, every ref at the target, and every file it rewrote unchanged
+outside those lines, down to whether it ended with a newline. A run that
+did something other than its own plan undoes itself and says so.
 
 **And several pin moves are migrations rather than substitutions.** The
 *"available at `X` and later"* notes throughout this guide say what a tag
@@ -1699,8 +1703,19 @@ its hand edit does not leave you half-upgraded — it leaves a tree that
 fails loudly. Crossing `0.4.1` without
 [the two-caller split](#labels-automation) leaves the trigger job red on
 every pull request and issue event. So the command refuses rather than
-guesses. **Every check runs before any write, so a refusal leaves the
-tree byte-identical** — there is nothing to undo and nothing to inspect.
+guesses. **A refusal leaves the tree byte-identical** — there is nothing
+to undo and nothing to inspect.
+
+That holds however deep the refusal comes from, and it takes two things
+to hold. Every check this command makes runs before any write. But it
+does not write alone — it calls `docs-sync`, which has refusals of its
+own that come *after* it has started writing, such as a
+`pull_request_template.md` whose ceremony markers are unbalanced. So
+`--fix` also takes a snapshot of everything the pair can touch
+(`.github/`, `.ceremony/`, and your root's own files) before the first
+byte is written, and restores it if anything goes wrong at any depth —
+including a `docs-sync` refusal, and including a `Ctrl-C` mid-run. You
+never end up pinned forward with a half-written mirror.
 
 The refusals, and what each one means:
 
