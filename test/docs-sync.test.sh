@@ -780,13 +780,16 @@ check "markers documented on bare lines are markers: refused as duplicated" 1 \
 
 # That same file is the one the extractors above cannot answer about, and
 # the blast radius of not answering is graded rather than left to prose.
-# inner_block specifically: its head|tail is a PIPELINE, so a fatal $(( ))
-# error there kills a subshell — which runs this file's EXIT trap and
-# rm -rf's $TMP — where the same error in above_block's simple command only
-# skips that one command. The second row is the one that matters, and it
-# only means anything below the first.
-check "an extractor that cannot answer fails its own row" 1 "" \
-  inner_block "$TMP/documented/$TEMPLATE"
+# Two things have to line up for the measurement to mean anything, and both
+# were got wrong once: it must be inner_block, whose head|tail is a
+# PIPELINE, because a fatal $(( )) error there kills a subshell — which runs
+# this file's EXIT trap and rm -rf's $TMP — where the same error in
+# above_block's simple command merely skips that command; and it must be
+# called the way the rows below call it, through `extract` at this level,
+# because inside check's own $( ) the dying subshell takes no trap with it.
+extract inner_block "$TMP/documented/$TEMPLATE" "$TMP/documented-inner"
+check "an extraction that cannot answer produces nothing" 0 "" \
+  test ! -s "$TMP/documented-inner"
 check "and the fixture tree is still standing after it" 0 "" \
   test -d "$TMP/documented"
 
