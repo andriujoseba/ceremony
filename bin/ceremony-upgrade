@@ -83,6 +83,21 @@ CHANGELOG_NAME="CHANGELOG.md"
 # half-open interval opening at a released tag, so it is inert by
 # construction rather than by anyone's judgement.
 #
+# TWO "and later" SENTENCES IN docs/CONSUMERS.md ARE DELIBERATELY NOT ROWS,
+# named here so that finding one and finding no row reads as a decision
+# rather than as an omission:
+#
+#   * `0.7.7` (#501) — "At `0.7.7` and later the sweep says so as a comment on
+#     the pull request". Not an availability note: it describes where an
+#     existing notice is PRINTED, and asks nothing of a consumer tree. #561's
+#     happy-path criterion moves a consumer 0.7.6 -> 0.7.7 and requires it to
+#     succeed, which settles the reading independently.
+#   * the guarded scaffold (#559) is "available at **unreleased** and later" —
+#     no tag exists to key a row on yet. It becomes one when the release PR
+#     that ships it clears the marker to that release's own tag (#221). Its
+#     migration is also the one --fix performs on its own, the block being
+#     written by the docs-sync call below.
+#
 # test/ceremony-upgrade.test.sh re-derives this tag set from docs/CONSUMERS.md
 # and fails when a note names a tag no row carries — a ratchet against the
 # note that ships without its row, not a proof that the prose scan is
@@ -95,7 +110,6 @@ MIGRATIONS=(
   "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written."
   "0.6.0|Doctrine mirror|RELEASES.md joins the vendored set and .ceremony/ is short a file until the mirror is re-synced; refs-not-closing becomes available; and the manifest at a tag is guaranteed the complete set only from here."
   "0.7.0|The artifact hook|Native release-candidate cuts and deterministic rc re-arming arrive; earlier pins do not carry the rc release path."
-  "0.7.7|Release workflow|The version-transition notice becomes a comment on the pull request, once per episode, beside the ::warning:: annotation it has always emitted."
 )
 
 die() {
@@ -433,7 +447,9 @@ fi
 crossed=()
 for ((i = current_i + 1; i <= target_i; i++)); do
   for row in "${MIGRATIONS[@]}"; do
-    [ "${row%%|*}" = "${ladder[$i]}" ] && crossed+=("$row")
+    if [ "${row%%|*}" = "${ladder[$i]}" ]; then
+      crossed+=("$row")
+    fi
   done
 done
 
@@ -465,8 +481,12 @@ if [ "${#crossed[@]}" -gt 0 ]; then
     echo "    then re-sync the doctrine mirror (docs-sync --fix)."
     echo
     echo "  Do the migrations by hand, in the sections named, then re-run — or"
-    echo "  move in steps, to the tag before the first migration. THE TREE IS"
-    echo "  UNCHANGED: nothing was written."
+    echo "  move in steps, to the tag before the first migration."
+    echo
+    # On its own line, unwrapped: this is the sentence a reader greps for
+    # after a refusal, and a phrase broken across two lines is a phrase that
+    # cannot be found by the search anyone would actually run.
+    echo "  THE TREE IS UNCHANGED: nothing was written."
   } >&2
   exit 1
 fi
@@ -493,8 +513,11 @@ rewritten=0
 for f in "${pin_files[@]}"; do
   # A file with two pins appears twice in pin_files; rewriting it once is
   # enough, and awk has already moved both.
-  [ -f "$scratch/done-$(printf '%s' "$f" | tr '/' '_')" ] && continue
-  : >"$scratch/done-$(printf '%s' "$f" | tr '/' '_')"
+  stamp="$scratch/done-$(printf '%s' "$f" | tr '/' '_')"
+  if [ -f "$stamp" ]; then
+    continue
+  fi
+  : >"$stamp"
   awk -v new="$target" '
     $0 ~ /^[ \t]*(-[ \t]*)?uses:[ \t]*heavy-duty\/ceremony([^@ \t]*)?@/ {
       sub(/@[^ \t#]+/, "@" new)
