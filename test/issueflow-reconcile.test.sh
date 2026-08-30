@@ -482,6 +482,7 @@ issue_probe() { # $1 issue, $2 labels, $3 assignees, $4 false|closing|refs, $5 r
 
 tfix() { printf '%s/repos_owner_repo_issues_%s_timeline.json' "$TMP" "$1"; }
 cfix() { printf '%s/repos_owner_repo_issues_%s_comments.json' "$TMP" "$1"; }
+# shellcheck disable=SC2317 # invoked indirectly by the check harness
 line_count() { wc -l <"$1"; }
 files_absent() { [ ! -f "$1" ] && [ ! -f "$2" ]; }
 date_straddles() { [[ "$1" < "$2" && "$3" > "$2" ]]; }
@@ -521,6 +522,7 @@ closed_probe() { # $1 issue, $2 labels, $3 assignee count
     ISSUE_LABELS="$2"
     ISSUE_JSON="$(jq -n --argjson assignees "$assignees" '{assignees:$assignees}')"
     run() { "$@"; }
+    # shellcheck disable=SC2317 # invoked indirectly by reconcile_closed_issue
     gh() { issue_stub_gh "$@"; }
     reconcile_closed_issue "$1"
   )
