@@ -1,0 +1,518 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ceremony-upgrade [--check|--fix] [--source <dir>] <target-tag> — move a
+# consumer checkout from its current ceremony pin to ONE target tag, re-sync
+# the doctrine mirror, and REFUSE where the move crosses a migration. Run
+# from the root of a consumer checkout, like docs-sync (#561).
+#
+# It opens no PR, pushes nothing, and calls no GitHub write API: it edits a
+# working tree and stops. Bootstrapping a repo that has no pin at all, and
+# rewriting a consumer's configuration to satisfy a crossed migration, are
+# both later children of #560 and are deliberately absent here.
+#
+# WHY THIS IS NOT `sed 's/0.7.4/0.7.7/g'`, which is the whole reason the
+# command exists (#561). Two independent reasons, and either one alone is
+# fatal:
+#
+#   1. A bare version string is not a pin. A consumer whose README mentions
+#      the old version, or whose CHANGELOG.md carries a `## 0.7.6` heading,
+#      is silently corrupted by a tree-wide substitution. So the rewrite is
+#      anchored to the `uses:` shape and touches nothing else, and --check
+#      leaves the tree byte-identical.
+#   2. Several pin moves are MIGRATIONS, not substitutions. `docs/CONSUMERS.md`
+#      records them as "available at `X` and later" notes, and crossing one
+#      without the accompanying hand edit is destructive rather than
+#      incomplete: crossing `0.4.1` without the two-caller split leaves the
+#      trigger job red on every PR and issue event, and crossing `0.5.0`
+#      backwards leaves a `panel[<login>]=` row on a ref whose parser refuses
+#      it — "the whole label board goes down". So the refusal ships BEFORE any
+#      migration does, and it is this command's deliverable.
+#
+# EVERY CHECK RUNS BEFORE ANY WRITE. A refusal leaves the tree byte-identical,
+# which is asserted by the suite over the whole tree and not over the files
+# this tool would have touched. The alternative shape — rewrite the refs, then
+# discover the migration, then refuse — leaves a consumer pinned forward with
+# none of the hand edits that pin requires, which is strictly worse than never
+# having run the command.
+#
+# ALL THE REFS MOVE TOGETHER OR NONE DOES. A tree carrying two different
+# ceremony refs has no single pin; docs-sync already refuses such a tree at
+# the release caller, and this command refuses it across the whole of
+# `.github/`. The pin shape it matches is deliberately the same anchored
+# `uses:` shape docs-sync matches, comment lines excluded — where the two
+# disagree about what a pin is, the mirror check and the bump disagree about
+# what this repo is pinned to.
+#
+# THE MIRROR IS RE-SYNCED BY CALLING docs-sync --fix, NEVER BY COPYING. Two
+# pins are two things to bump and two things to disagree (#19), and the same
+# argument applies to two things that know how the mirror is written. The
+# call comes AFTER the refs are rewritten, because the pin in
+# `.github/workflows/release.yml` is the input docs-sync reads.
+#
+# A file of its own so test/ceremony-upgrade.test.sh can drive both modes
+# against constructed consumer trees. --source <dir> substitutes a local
+# ceremony checkout for the network, exactly as it does in docs-sync, and is
+# passed through to it: offline tests, and previewing a ceremony PR against a
+# consumer before anything is released.
+
+SELF="$(basename "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+DOCS_SYNC="$HERE/../actions/docs-sync/docs-sync.sh"
+GITHUB_DIR=".github"
+CHANGELOG_NAME="CHANGELOG.md"
+
+# --- the migration table --------------------------------------------------
+#
+# One row per tag at which docs/CONSUMERS.md records an "available at `X` and
+# later" note: `tag|CONSUMERS.md section|what the consumer must do by hand`.
+# The interval is half-open, `(current, target]`, so a row fires when the move
+# ARRIVES at that tag or passes over it, and never when the consumer is
+# already standing on it.
+#
+# IT IS A LIST OF TAGS, NOT A LIST OF DESTRUCTIVE TAGS. Some of these notes
+# announce a capability a consumer may ignore; others take a board down. The
+# table does not sort them, because the sorting is a judgement made once, by
+# hand, about a set that grows every release — and the one that gets misfiled
+# is the one that costs a board. A refusal is cheap: it is one message and a
+# `docs/CONSUMERS.md` section. Applying a migration nobody made is not.
+#
+# `0.1.0` is here for the same reason: it carries a note (the manifest), and
+# leaving it out because it "obviously cannot fire" is the hand-curation this
+# table exists to avoid. Being the first release, it can never fall inside a
+# half-open interval opening at a released tag, so it is inert by
+# construction rather than by anyone's judgement.
+#
+# test/ceremony-upgrade.test.sh re-derives this tag set from docs/CONSUMERS.md
+# and fails when a note names a tag no row carries — a ratchet against the
+# note that ships without its row, not a proof that the prose scan is
+# complete.
+MIGRATIONS=(
+  "0.1.0|Read the manifest, never a copy of it|docs/VENDORED.txt is the manifest actions/docs-sync mirrors; it ships with docs-sync itself and every later pin carries it."
+  "0.2.0|Bootstrap a new repo|triage-actors= becomes MANDATORY in .github/labels.conf — its absence is a parse failure, not an ignored setting. Fragment mode, changelog-assembled, runner-isolated and the labeler's issues: trigger arrive with it."
+  "0.3.0|Labels automation|.github/labeler.yml's accepted shape NARROWS to additive scope rows — any other key now fails the run loudly rather than being ignored."
+  "0.4.1|Labels automation|THE TWO-CALLER SPLIT (#209), and it is the destructive one. Add .github/workflows/labels-sweep.yml; MOVE the hourly cron out of labels.yml into it — move, never copy, because a copied cron gives DOUBLE SWEEPS; and grant actions: write. Without the split the trigger job goes RED ON EVERY PR AND ISSUE EVENT and event-woken sweeps stop."
+  "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written."
+  "0.6.0|Doctrine mirror|RELEASES.md joins the vendored set and .ceremony/ is short a file until the mirror is re-synced; refs-not-closing becomes available; and the manifest at a tag is guaranteed the complete set only from here."
+  "0.7.0|The artifact hook|Native release-candidate cuts and deterministic rc re-arming arrive; earlier pins do not carry the rc release path."
+  "0.7.7|Release workflow|The version-transition notice becomes a comment on the pull request, once per episode, beside the ::warning:: annotation it has always emitted."
+)
+
+die() {
+  printf '%s\n' "$@" >&2
+  exit 1
+}
+
+# --- arguments ------------------------------------------------------------
+#
+# Flags win over the env vars, and `check` is the default — docs-sync's
+# interface exactly, because a consumer already knows that one.
+mode="${MODE:-check}"
+source_dir="${SOURCE:-}"
+target=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) mode=check ;;
+    --fix) mode=fix ;;
+    --source)
+      [ $# -ge 2 ] || die "$SELF: --source needs a directory"
+      source_dir="$2"
+      shift
+      ;;
+    -*) die "$SELF: unknown argument: $1 (usage: $SELF [--check|--fix] [--source <dir>] <target-tag>)" ;;
+    *)
+      [ -z "$target" ] || die \
+        "$SELF: two target tags given ('$target' and '$1') — a consumer has" \
+        "  one pin and this command moves it to one tag."
+      target="$1"
+      ;;
+  esac
+  shift
+done
+case "$mode" in
+  check | fix) ;;
+  *) die "$SELF: unknown mode: '$mode' (check or fix)" ;;
+esac
+[ -n "$target" ] || die \
+  "$SELF: no target tag (usage: $SELF [--check|--fix] [--source <dir>] <target-tag>)"
+
+# The rewrite puts this string into a workflow file, so it is bounded to what
+# a git ref can be made of before it is written anywhere. This is not a
+# release-tag test — that one needs the ladder, below, and has its own
+# message — it is the character bound that keeps a shell or awk metacharacter
+# out of the substitution.
+case "$target" in
+  *[!A-Za-z0-9._-]* | "" | -*)
+    die "$SELF: refusing target '$target' — a ceremony ref is made of" \
+      "  letters, digits, dot, underscore and hyphen, and does not start" \
+      "  with a hyphen. Nothing was read and nothing was written."
+    ;;
+esac
+
+[ -f "$DOCS_SYNC" ] || die \
+  "$SELF: cannot find actions/docs-sync/docs-sync.sh at $DOCS_SYNC —" \
+  "  this command re-syncs the mirror by CALLING docs-sync, never by copying" \
+  "  what it writes, so it must be run from a complete ceremony checkout."
+
+# --- the consumer's refs --------------------------------------------------
+#
+# THE PIN SHAPE IS docs-sync's, on purpose. A real `uses:` key only: a
+# leading '#' makes it a comment and it does not count, because ceremony's own
+# release.yml carries the pin shape inside a header essay and any consumer
+# that pasted a documentation snippet would otherwise appear to carry a
+# second pin. A quoted ref is invisible to this pattern exactly as it is
+# invisible to docs-sync's — where the two disagree about what a pin is, the
+# mirror check and the bump disagree about what this tree is pinned to, which
+# is the drift both tools exist to make unrepresentable.
+PIN_RE='^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*heavy-duty/ceremony(/[^@[:space:]]*)?@[^[:space:]]'
+
+[ -d "$GITHUB_DIR" ] || die \
+  "$SELF: no $GITHUB_DIR/ here — run this from the root of a consumer" \
+  "  checkout, the same place docs-sync runs from."
+
+# find, not a glob: workflow callers live at .github/workflows/ but composite
+# actions and reusable fragments nest deeper, and every ceremony ref in the
+# tree moves together. Symlinks are enumerated (-o -type l) so that one is
+# REFUSED below rather than skipped — a link silently missed by `-type f`
+# leaves a ref behind and turns "all or none" into a lie.
+mapfile -t yaml_files < <(
+  find "$GITHUB_DIR" \( -type f -o -type l \) \
+    \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort
+)
+
+pin_files=()
+pin_refs=()
+for f in "${yaml_files[@]}"; do
+  if [ -L "$f" ]; then
+    grep -qE "$PIN_RE" "$f" 2>/dev/null || continue
+    die "$SELF: $f is a symlink and carries a ceremony pin — rewriting it" \
+      "  would write through the link, anywhere this process can reach." \
+      "  Refusing both modes: replace the symlink with a regular file."
+  fi
+  while IFS= read -r line; do
+    # The comment is stripped BEFORE the ref is taken, so a trailing note
+    # containing '@' cannot capture the greedy match; the path itself cannot
+    # contain '@' because the pattern above excludes it.
+    ref="$(printf '%s\n' "$line" | sed -E 's/[[:space:]]*#.*$//; s/^.*@//; s/[[:space:]]*$//')"
+    [ -n "$ref" ] || die \
+      "$SELF: a ceremony pin line in $f carries an empty ref after '@'."
+    pin_files+=("$f")
+    pin_refs+=("$ref")
+  done < <(grep -E "$PIN_RE" "$f" || true)
+done
+
+# ref_report — every pin, one per line, for the plan and for the refusals.
+# A refusal SAYS WHAT IT WOULD HAVE DONE, so the reader knows the refusal is
+# about the migrations and not about the refs (#561 G5).
+ref_report() {
+  local i
+  for i in "${!pin_files[@]}"; do
+    printf '    %s  @%s\n' "${pin_files[$i]}" "${pin_refs[$i]}"
+  done
+}
+
+# --- fault 1: no pin ------------------------------------------------------
+if [ "${#pin_files[@]}" -eq 0 ]; then
+  die "$SELF: FAULT — no ceremony pin in $GITHUB_DIR/." \
+    "" \
+    "  This tree carries no 'uses: heavy-duty/ceremony/...@<ref>' line, so" \
+    "  there is no current pin to move FROM and nothing to place on the" \
+    "  release ladder. That is BOOTSTRAP — writing a consumer's first caller" \
+    "  set — and it is a later child of #560, not a thing this command does" \
+    "  and not a sign that this command is broken." \
+    "" \
+    "  Until it ships, docs/CONSUMERS.md's 'Bootstrap a new repo' section is" \
+    "  the hand procedure. Nothing was written."
+fi
+
+# --- fault 2: the refs are not all at one ref -----------------------------
+current="${pin_refs[0]}"
+differing=()
+for i in "${!pin_refs[@]}"; do
+  [ "${pin_refs[$i]}" = "$current" ] || differing+=("${pin_files[$i]}  @${pin_refs[$i]}")
+done
+if [ "${#differing[@]}" -gt 0 ]; then
+  {
+    echo "$SELF: FAULT — this tree's ceremony refs are not all at one ref, so it has no single pin to move."
+    echo
+    echo "  Every ceremony ref found (${#pin_files[@]} in ${#yaml_files[@]} file(s) under $GITHUB_DIR/):"
+    ref_report
+    echo
+    echo "  '${pin_files[0]}' is at @$current; these differ from it:"
+    printf '    %s\n' "${differing[@]}"
+    echo
+    echo "  All the refs move together or none does: a tree carrying two"
+    echo "  ceremony refs has no single pin, doctrine and machinery can be at"
+    echo "  two different versions of the rules, and docs-sync already refuses"
+    echo "  such a tree at the release caller. Put them on one ref by hand,"
+    echo "  then re-run. Nothing was written."
+  } >&2
+  exit 1
+fi
+
+# --- the release ladder ---------------------------------------------------
+#
+# WHAT ORDERS THE TAGS IS THE CHANGELOG, NOT A COMPARATOR. The ladder is the
+# release headings of ceremony's own CHANGELOG.md at the target ref, in file
+# order — every version that had shipped when that tag was cut. Two
+# consequences, and both are why it is done this way:
+#
+#   * "is a released tag" needs no definition of its own. A released version
+#     has a section; a branch, a SHA and a tag that was never cut do not.
+#   * the half-open interval `(current, target]` is a SLICE of that list,
+#     found by position. No version comparison happens anywhere in this
+#     command, so there is no second ordering in this repository to disagree
+#     with an existing one in some edge case (#561 G7). Nothing here needs to
+#     know that 0.10.0 follows 0.9.0: the changelog already said so.
+#
+# The heading shape is changelog-monotonic's — '## ' then a version-shaped
+# field 2 — so the two cannot disagree about what a release section is.
+scratch="$(mktemp -d)"
+cleanup() { rm -rf "$scratch"; }
+trap cleanup EXIT
+
+if [ -n "$source_dir" ]; then
+  [ -d "$source_dir" ] || die "$SELF: --source: no such directory: $source_dir"
+  changelog_file="$source_dir/$CHANGELOG_NAME"
+  ladder_origin="$source_dir (--source override, standing in for heavy-duty/ceremony@$target)"
+  [ -f "$changelog_file" ] || die \
+    "$SELF: --source: no $CHANGELOG_NAME in $source_dir — the release ladder" \
+    "  is read from ceremony's own changelog, so a source tree without one" \
+    "  cannot say which tags exist or what order they came in."
+else
+  # ONE FILE, NOT THE TREE. docs-sync fetches the whole archive because it
+  # mirrors it; this command needs the ladder and nothing else, and it hands
+  # the tree fetch to docs-sync (which does it once, afterwards, with its own
+  # retry policy and its own fault classes). Two steps, never a pipe (#393):
+  # nothing is being extracted here, but the status is still captured rather
+  # than inferred, %{http_code} being 000 when no HTTP response arrived.
+  changelog_file="$scratch/CHANGELOG.md"
+  ladder_origin="heavy-duty/ceremony@$target"
+  url="https://raw.githubusercontent.com/heavy-duty/ceremony/$target/$CHANGELOG_NAME"
+  fetch_rc=0
+  http_code="$(curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+    -o "$changelog_file" -w '%{http_code}' "$url")" || fetch_rc=$?
+  if [ "$fetch_rc" -ne 0 ]; then
+    case "$http_code" in
+      404)
+        die "$SELF: FAULT — the target tag '$target' does not exist upstream." \
+          "" \
+          "  HTTP 404 for $url: heavy-duty/ceremony has no ref by that name," \
+          "  so there is nothing to move this consumer to. Check the tag" \
+          "  against the release list, or pass --source <dir> to preview an" \
+          "  unreleased ceremony tree. Nothing was written."
+        ;;
+      5??)
+        die "$SELF: GitHub returned HTTP $http_code for $url after 4 attempts." \
+          "  The target tag is not in doubt — it was never read. This is" \
+          "  transient: re-run. Nothing was written."
+        ;;
+      *)
+        die "$SELF: could not fetch $url — curl exit $fetch_rc, HTTP status" \
+          "  $http_code. A network failure reaching GitHub, not a statement" \
+          "  about the tag. Nothing was written."
+        ;;
+    esac
+  fi
+fi
+
+# Field 2 of a '## ' line, version-shaped, in FILE order. The whole field is
+# the member, so 0.7.0 and 0.7.0-rc1 are distinct and neither stands in for
+# the other. 'Unreleased' fails the shape and is excluded by construction.
+mapfile -t ladder_desc < <(
+  awk '/^## / && $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+/ { print $2 }' "$changelog_file"
+)
+[ "${#ladder_desc[@]}" -gt 0 ] || die \
+  "$SELF: no release headings in $CHANGELOG_NAME at $ladder_origin — the" \
+  "  release ladder is empty, so no move can be graded. Nothing was written."
+
+# Oldest first: the changelog is newest first, and every index comparison
+# below reads more plainly forwards.
+ladder=()
+for ((i = ${#ladder_desc[@]} - 1; i >= 0; i--)); do
+  ladder+=("${ladder_desc[$i]}")
+done
+
+ladder_index() {
+  local want="$1" i
+  for i in "${!ladder[@]}"; do
+    if [ "${ladder[$i]}" = "$want" ]; then
+      printf '%s\n' "$i"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# --- fault 3: the target tag is not a released tag ------------------------
+target_i=""
+target_i="$(ladder_index "$target")" || die \
+  "$SELF: FAULT — the target tag '$target' does not exist upstream." \
+  "" \
+  "  It has no release section in $CHANGELOG_NAME at $ladder_origin, so it" \
+  "  was never cut as a release. A branch or a commit SHA is not a target" \
+  "  either: the ladder is what says which migrations a move crosses, and a" \
+  "  ref that is not on it cannot be placed. Nothing was written."
+
+# --- fault 4: the current ref is not a released tag -----------------------
+current_i=""
+current_i="$(ladder_index "$current")" || die \
+  "$SELF: FAULT — the current pin '$current' is not a released tag." \
+  "" \
+  "  Found in ${pin_files[0]} (and ${#pin_files[@]} ceremony ref(s) in all)." \
+  "  It has no release section in $CHANGELOG_NAME at $ladder_origin, so it is" \
+  "  a branch, a commit SHA, or a tag that was never cut — and a ref that is" \
+  "  not on the ladder cannot be placed on it. Which migrations the move" \
+  "  would cross is therefore unknowable, and this command refuses to guess" \
+  "  rather than move a pin it cannot grade." \
+  "" \
+  "  Pin this tree to a released tag by hand first, then re-run. Nothing was" \
+  "  written."
+
+# --- already there --------------------------------------------------------
+#
+# Not a fault. --fix still calls docs-sync, because the mirror can be stale at
+# a correct pin — a bump PR that moved the refs and never re-synced is exactly
+# that tree — and because this is what makes a second --fix run report nothing
+# to do rather than skip the check that says so.
+if [ "$current_i" -eq "$target_i" ]; then
+  echo "$SELF: already at $target — ${#pin_files[@]} ceremony ref(s), all at @$target:"
+  ref_report
+  if [ "$mode" = "check" ]; then
+    echo "$SELF: nothing to do."
+    exit 0
+  fi
+  echo "$SELF: re-syncing the doctrine mirror (docs-sync --fix)."
+  if [ -n "$source_dir" ]; then
+    bash "$DOCS_SYNC" --fix --source "$source_dir"
+  else
+    bash "$DOCS_SYNC" --fix
+  fi
+  echo "$SELF: nothing to do — the pin was already at $target."
+  exit 0
+fi
+
+# --- fault 5: the move is backwards ---------------------------------------
+#
+# BEYOND #561's FOUR FAULTS, AND DISCLOSED AS SUCH. G5 refuses on the contents
+# of `(current, target]`, and that interval is EMPTY for every backwards move
+# — so the spec as written applies a downgrade silently. A downgrade is the
+# strictly more dangerous direction: crossing 0.5.0 downwards leaves a
+# `panel[<login>]=` row on a ref whose parser refuses it, and 0.4.1 downwards
+# leaves a labels-sweep.yml caller pinned to a ref that has no such reusable.
+# Neither has a hand procedure in docs/CONSUMERS.md, whose notes are all
+# written forwards. Refusing is the only answer this command can give that is
+# not a guess.
+if [ "$current_i" -gt "$target_i" ]; then
+  {
+    echo "$SELF: FAULT — that is a DOWNGRADE: $current is newer than $target."
+    echo
+    echo "  Every ceremony ref found (${#pin_files[@]}), all at @$current:"
+    ref_report
+    echo
+    echo "  docs/CONSUMERS.md's migration notes are written forwards — they say"
+    echo "  what a tag ADDED, never how to undo it — so a backwards move has no"
+    echo "  hand procedure to name and this command will not invent one. The"
+    echo "  dangerous cases are real: below 0.5.0 a panel[<login>]= row is a"
+    echo "  parse failure that takes the whole label board down, and below"
+    echo "  0.4.1 a labels-sweep.yml caller points at a reusable that does not"
+    echo "  exist at that ref."
+    echo
+    echo "  If the downgrade is genuinely what you want, move the refs by hand"
+    echo "  and undo the crossed migrations deliberately. Nothing was written."
+  } >&2
+  exit 1
+fi
+
+# --- fault 6: the interval crosses a migration ----------------------------
+#
+# The half-open interval (current, target]: every ladder position strictly
+# after the current one and up to and including the target. Positional, so a
+# tag that is in the table but not on this ladder — a version that had not
+# shipped when the target was cut — simply is not in the slice.
+crossed=()
+for ((i = current_i + 1; i <= target_i; i++)); do
+  for row in "${MIGRATIONS[@]}"; do
+    [ "${row%%|*}" = "${ladder[$i]}" ] && crossed+=("$row")
+  done
+done
+
+if [ "${#crossed[@]}" -gt 0 ]; then
+  {
+    echo "$SELF: FAULT — moving $current -> $target crosses ${#crossed[@]} migration(s), so this command refuses to move the pin."
+    echo
+    echo "  A migration is not a substitution. Each tag below changed what a"
+    echo "  consumer tree must CONTAIN, and rewriting the ref without the"
+    echo "  accompanying hand edit does not leave you half-upgraded — it leaves"
+    echo "  a tree that fails loudly, or a board that stops working."
+    echo
+    for row in "${crossed[@]}"; do
+      tag="${row%%|*}"
+      rest="${row#*|}"
+      section="${rest%%|*}"
+      what="${rest#*|}"
+      echo "  $tag — docs/CONSUMERS.md § \"$section\""
+      # fold, not a fixed wrap in the table: the table's cells stay one
+      # editable line each and the terminal decides where they break.
+      printf '%s\n' "$what" | fold -s -w 68 | sed 's/^/      /'
+      echo
+    done
+    echo "  WHAT THIS COMMAND WOULD HAVE DONE, so that the refusal is legible as"
+    echo "  being about the migrations above and not about the refs:"
+    echo
+    echo "    rewrite ${#pin_files[@]} ceremony ref(s) from @$current to @$target:"
+    ref_report
+    echo "    then re-sync the doctrine mirror (docs-sync --fix)."
+    echo
+    echo "  Do the migrations by hand, in the sections named, then re-run — or"
+    echo "  move in steps, to the tag before the first migration. THE TREE IS"
+    echo "  UNCHANGED: nothing was written."
+  } >&2
+  exit 1
+fi
+
+# --- the plan, and (only in --fix) the writes ------------------------------
+
+echo "$SELF: $current -> $target, ${#pin_files[@]} ceremony ref(s) in ${#yaml_files[@]} file(s) under $GITHUB_DIR/:"
+ref_report
+echo "$SELF: no migration between $current and $target (checked ${#MIGRATIONS[@]} table entries against the ${#ladder[@]}-tag ladder at $ladder_origin)."
+
+if [ "$mode" = "check" ]; then
+  echo "$SELF: --check changes nothing. Re-run with --fix to rewrite the ref(s) and re-sync the mirror (docs-sync --fix)."
+  exit 0
+fi
+
+# The substitution is anchored to the pin shape and replaces the FIRST '@'
+# token on a matching line — which is the ref, the path having been forbidden
+# to contain '@'. A whole file is rewritten through a temporary and copied
+# back with `cat >`, so the file keeps its mode and its inode: the alternative
+# is `sed -i`, whose in-place semantics differ between GNU and BSD and whose
+# expression, applied to a whole workflow file, is the tool this command
+# exists to replace.
+rewritten=0
+for f in "${pin_files[@]}"; do
+  # A file with two pins appears twice in pin_files; rewriting it once is
+  # enough, and awk has already moved both.
+  [ -f "$scratch/done-$(printf '%s' "$f" | tr '/' '_')" ] && continue
+  : >"$scratch/done-$(printf '%s' "$f" | tr '/' '_')"
+  awk -v new="$target" '
+    $0 ~ /^[ \t]*(-[ \t]*)?uses:[ \t]*heavy-duty\/ceremony([^@ \t]*)?@/ {
+      sub(/@[^ \t#]+/, "@" new)
+    }
+    { print }
+  ' "$f" >"$scratch/rewritten"
+  cat "$scratch/rewritten" >"$f"
+  rewritten=$((rewritten + 1))
+done
+echo "$SELF: rewrote the ceremony ref in $rewritten file(s) to @$target."
+
+# The pin this reads is the one just written, which is why the call is here
+# and not before the rewrite.
+echo "$SELF: re-syncing the doctrine mirror (docs-sync --fix)."
+if [ -n "$source_dir" ]; then
+  bash "$DOCS_SYNC" --fix --source "$source_dir"
+else
+  bash "$DOCS_SYNC" --fix
+fi
+
+echo "$SELF: $current -> $target done. Commit the ref(s) and the mirror together: the pin and the doctrine it governs are one change."
