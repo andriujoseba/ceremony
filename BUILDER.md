@@ -78,14 +78,17 @@ not to guess.
      head whose next move is a **right you do not hold** parks, so a
      deterministic red, and a red whose rerun you could have started, are
      ordinary fix rounds and hold the claim (#423).
-  Not parked: waiting on yourself, on CI (a red head is yours unless shape 6
-  takes it; a pending one resolves without you), or for a good moment. An
+  Not parked: holding another unparked claim anywhere, waiting on yourself, on
+  CI (a red head is yours unless shape 6 takes it; a pending one resolves
+  without you), or waiting for a good moment. An
   issue you stopped working on is abandoned — unassign and restore `ready`.
   Parked claims are held beside the one active build (#15, #16, #73).
 
 ## Claiming
 
-- Assign yourself, swap `ready` → `claimed`, and comment that you are
+- **The slot assertion is a precondition**: where you cannot truthfully say
+  that you hold no unparked claim in any repository, do not take the claim.
+  Assign yourself, swap `ready` → `claimed`, and comment that you are
   starting. **That comment asserts the slot**: you hold no unparked claim in
   **any** repository, and it names the parked claims you do hold, each with
   its shape and where it lives. One clause, not a form — and it is the whole
@@ -93,6 +96,15 @@ not to guess.
   promises a draft PR soon: a claim with no PR and no activity is what the
   staleness sweep reclaims, unless `offsite` records that its PR lives in
   another repo.
+- A claim taken while that assertion was false is out of contract. With no
+  deliverable pushed, use the existing abandon route below. With a deliverable
+  already pushed and its head green, close it out to the nearest legitimate
+  resting point — get its round live or land it — without discarding the work.
+  Neither branch makes the claim retroactively admissible. Disclosure never
+  costs the claim: a silent taker is in the same breach and has hidden it.
+  Triage may direct this remedy only on the board it serves, using `attention`
+  on the assigned issue; the 48-hour reclaim remains the backstop. This creates
+  no label or cross-repository counter.
 - **A park is declared, never inferred.** Comment naming what the claim
   waits on and who owns the next move — no new label; the comment is the
   activity the reclaim clock reads, as for `needs-ruling` (#52) and
@@ -458,8 +470,11 @@ surface**, being surface-agnostic already (#526). The rungs:
   none — hard block` either: the flag waits for the human, and the re-read
   is what is owed.
 
-A re-flag starts a fresh ladder, which applies whatever `Default:` says,
-hard block included, and an active back-and-forth still climbs it — unlike
+A re-flag starts a fresh ladder. On every surface the 0–12h and 12h rungs apply
+whatever its own escalation comment says, hard block included. The 24h and
+past-24h rungs do not fire when that fresh episode is issue-borne and reads
+`Default: none — hard block`; otherwise the whole ladder applies. An active
+back-and-forth still climbs it — unlike
 the 7-day nudge, which resets on real activity. The machine observes both
 clocks but never sets, clears, or decides `needs-ruling`. The label stays
 until agreement is *reached*, not until the maintainer replies: the setter
