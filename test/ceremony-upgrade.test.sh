@@ -621,4 +621,181 @@ check "the prose scan finds the tags #561's own table names" 0 "0.2.0 0.3.0 0.4.
 check "the prose scan finds every tag the migration table carries" 0 "0.1.0 0.2.0 0.3.0 0.4.1 0.5.0 0.6.0 0.7.0" \
   tags_line
 
+# ============================================================================
+# Round 1 — the writes are the plan
+#
+# Every row below is a defect the panel reproduced at cf3d80b, and none of
+# the 88 rows above it would have caught any of them. They share one shape:
+# --check announced a plan and --fix did something else, at exit 0.
+# ============================================================================
+
+# --- a sibling repository is not this repository (claude-bot §1) -------------
+#
+# The rewrite used to match `heavy-duty/ceremony([^@ \t]*)?@`, a SUPERSET of
+# PIN_RE with the anchoring '/' missing, so any repo whose name merely STARTS
+# with `ceremony` was rewritten — never enumerated, never reported, never part
+# of the all-or-none comparison. The org has no such sibling today; its own
+# naming precedent (rig/rig-templates, bulldozer/bulldozer-examples) is that
+# it produces them.
+#
+# This is the sed build at one line's width: a third-party action pinned to a
+# tag that has nothing to do with ceremony, moved to a ceremony tag, in a file
+# the operator was told carried one pin.
+consumer sibling 0.7.6
+cat >>"$TMP/sibling/.github/workflows/ci.yml" <<'YAML'
+      - uses: heavy-duty/ceremony-templates/actions/foo@v1
+      - uses: heavy-duty/ceremonyzilla@v2
+YAML
+
+check "a sibling-named repo is not counted as a pin" 0 \
+  "0.7.6 -> 0.7.7, $PIN_COUNT ceremony ref(s) in 4 file(s)" \
+  in_consumer sibling --check --source "$SRC" 0.7.7
+check "--fix moves the real pins in the sibling fixture" 0 \
+  "rewrote $PIN_COUNT ceremony ref(s)" \
+  in_consumer sibling --fix --source "$SRC" 0.7.7
+sibling_refs() { grep -oE 'heavy-duty/ceremony[A-Za-z-]*[^ ]*@[A-Za-z0-9._-]+' "$TMP/sibling/.github/workflows/ci.yml"; }
+check "the sibling repo keeps its own ref through --fix" 0 \
+  "heavy-duty/ceremony-templates/actions/foo@v1" sibling_refs
+check "a sibling repo with no path keeps its ref too" 0 \
+  "heavy-duty/ceremonyzilla@v2" sibling_refs
+check_absent "no sibling ref was moved to the ceremony tag" 0 \
+  "ceremony-templates/actions/foo@0.7.7" sibling_refs
+check "the real pin in that same file did move" 0 \
+  "heavy-duty/ceremony/actions/docs-sync@0.7.7" sibling_refs
+
+# --- the dedup key that collided (claude-bot §2) -----------------------------
+#
+# `tr '/' '_'` is not injective: 'a/b.yml' and 'a_b.yml' keyed to the same
+# stamp, so the second file was skipped, the run wrote one of the two files it
+# had just announced, and said `done` at exit 0. That is all-or-none broken in
+# the direction that is not a refusal — a half-applied move the operator is
+# told is complete, and one the NEXT run then refuses as a mixed tree.
+consumer collide 0.7.6
+mkdir -p "$TMP/collide/.github/workflows/a"
+printf 'jobs:\n  x:\n    uses: heavy-duty/ceremony/.github/workflows/one.yml@0.7.6\n' \
+  >"$TMP/collide/.github/workflows/a/b.yml"
+printf 'jobs:\n  y:\n    uses: heavy-duty/ceremony/.github/workflows/two.yml@0.7.6\n' \
+  >"$TMP/collide/.github/workflows/a_b.yml"
+
+check "--check counts both halves of the colliding path pair" 0 \
+  "0.7.6 -> 0.7.7, $((PIN_COUNT + 2)) ceremony ref(s) in 6 file(s)" \
+  in_consumer collide --check --source "$SRC" 0.7.7
+check "--fix moves both halves of the colliding path pair" 0 \
+  "rewrote $((PIN_COUNT + 2)) ceremony ref(s) in 6 file(s) to @0.7.7" \
+  in_consumer collide --fix --source "$SRC" 0.7.7
+check_absent "no ref is left behind under a colliding key" 0 "0.7.6" refs collide
+check "every ref in the colliding fixture is at the target" 0 \
+  "$((PIN_COUNT + 2)) 0.7.7" refs collide
+
+# --- the byte outside the pin line (claude-bot §4) ---------------------------
+#
+# awk's `print` terminates every record, so a workflow file that ended without
+# a newline came back one byte longer. #561 G8 says this command touches
+# nothing outside the `uses:` line, and that byte is outside it.
+consumer nonewline 0.7.6
+printf 'jobs:\n  z:\n    uses: heavy-duty/ceremony/.github/workflows/three.yml@0.7.6' \
+  >"$TMP/nonewline/.github/workflows/tail.yml"
+final_byte_is_newline() {
+  if [ "$(tail -c 1 "$TMP/nonewline/.github/workflows/tail.yml" | wc -l)" -eq 0 ]; then
+    echo "no-final-newline"
+  else
+    echo "final-newline"
+  fi
+}
+check "the fixture really does lack a final newline before the run" 0 \
+  "no-final-newline" final_byte_is_newline
+check "--fix moves the pin in the file that has no final newline" 0 \
+  "rewrote $((PIN_COUNT + 1)) ceremony ref(s)" \
+  in_consumer nonewline --fix --source "$SRC" 0.7.7
+check "the missing final newline is still missing after --fix" 0 \
+  "no-final-newline" final_byte_is_newline
+check "the pin in that file moved all the same" 0 \
+  "three.yml@0.7.7" \
+  cat "$TMP/nonewline/.github/workflows/tail.yml"
+
+# --- the transaction across the docs-sync call (codex-bot, blocking) ---------
+#
+# `every check runs before any write` was true of this command and false of
+# the pair. docs-sync's scaffold refusal — `markers are duplicated|unbalanced`
+# — fires INSIDE its fix loop, after the mirror and the root AGENTS.md stub
+# are written. Sequence a pin rewrite in front of it and an otherwise-valid
+# adjacent move leaves the consumer pinned forward at the target with a
+# half-written mirror and none of the hand edits a pin implies: exactly the
+# half-upgraded tree this command exists to make unrepresentable.
+#
+# A source tree of its own, because naming a guarded scaffold changes what
+# docs-sync demands of EVERY consumer above.
+SRC_SCAF="$TMP/src-scaffold"
+cp -pPR "$SRC" "$SRC_SCAF"
+mkdir -p "$SRC_SCAF/.github"
+printf '.github/pull_request_template.md\n' >"$SRC_SCAF/docs/SCAFFOLDED.txt"
+printf '## Checklist\n\n- [ ] a thing\n' >"$SRC_SCAF/.github/pull_request_template.md"
+
+# One start marker and no end: `unbalanced`, which docs-sync refuses rather
+# than guessing where the consumer's own bytes resume.
+consumer broken-marker 0.7.6
+printf 'Our own template.\n\n<!-- ceremony:pr-template:start -->\n\nnever closed\n' \
+  >"$TMP/broken-marker/.github/pull_request_template.md"
+
+check "the docs-sync refusal reaches the operator" 1 \
+  "cannot fix .github/pull_request_template.md" \
+  in_consumer broken-marker --fix --source "$SRC_SCAF" 0.7.7
+check "a refused move says the tree was rolled back" 1 \
+  "rolled back" \
+  in_consumer broken-marker --fix --source "$SRC_SCAF" 0.7.7
+unchanged "a docs-sync refusal mid-fix leaves the WHOLE tree byte-identical" \
+  "$TMP/broken-marker" \
+  in_consumer broken-marker --fix --source "$SRC_SCAF" 0.7.7
+check "the pins did not move under a rolled-back run" 0 "$PIN_COUNT 0.7.6" \
+  refs broken-marker
+check_absent "the rolled-back run left no ref at the target" 0 "0.7.7" \
+  refs broken-marker
+
+# The fixture is not vacuous: with the marker closed, the SAME move over the
+# SAME source tree succeeds and writes the scaffold. Without this row the one
+# above passes for a tree that could never have been upgraded at all.
+consumer good-marker 0.7.6
+printf 'Our own template.\n\n<!-- ceremony:pr-template:start -->\nold\n<!-- ceremony:pr-template:end -->\n' \
+  >"$TMP/good-marker/.github/pull_request_template.md"
+check "the same move over the same source succeeds with the marker closed" 0 \
+  "0.7.6 -> 0.7.7 done" \
+  in_consumer good-marker --fix --source "$SRC_SCAF" 0.7.7
+check "the guarded scaffold really was written on the successful run" 0 \
+  "a thing" cat "$TMP/good-marker/.github/pull_request_template.md"
+check "a successful run does not claim a rollback" 0 "$PIN_COUNT 0.7.7" \
+  refs good-marker
+
+# --- the write territory is a declaration, so it gets a ratchet --------------
+#
+# bin/ceremony-upgrade snapshots .github/, .ceremony/ and the root's regular
+# files, and restores exactly those on a failure. That set is DECLARED rather
+# than derived from docs/VENDORED.txt and docs/SCAFFOLDED.txt, because a
+# second reader of docs-sync's manifests is the two-readers-disagree bug this
+# round is about. So the declaration is ratcheted here instead: the day a
+# scaffold path lands outside those roots, ceremony's own CI says so, before
+# any consumer runs a --fix whose rollback would silently miss it.
+#
+# The mirror needs no row — docs-sync writes every manifest path under
+# .ceremony/ by construction — but the root AGENTS.md stub and every
+# SCAFFOLDED.txt path are real paths in a consumer tree.
+outside_territory() {
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      .github/* | .ceremony/*) ;;
+      */*) printf 'OUTSIDE %s\n' "$f" ;;
+      *) ;; # a bare name is a regular file at the root, which is snapshotted
+    esac
+  done <"$ROOT/docs/SCAFFOLDED.txt"
+  echo "scanned"
+}
+check_absent "every guarded scaffold path is inside the snapshotted territory" 0 \
+  "OUTSIDE" outside_territory
+check "the territory scan ran rather than exiting early" 0 "scanned" outside_territory
+# Not vacuous: the manifest is non-empty, so the loop above had something to
+# grade. A SCAFFOLDED.txt that emptied out would satisfy the row forever.
+check "docs/SCAFFOLDED.txt names at least one path to grade" 0 \
+  ".github/pull_request_template.md" cat "$ROOT/docs/SCAFFOLDED.txt"
+
 summary
