@@ -1489,10 +1489,15 @@ marker carries the window itself, so an unchanged one never re-posts.*" >/dev/nu
   # snapshot derived its flag. The same five-label set is concluded by
   # reconcile_issue; omitting epic or needs-triage would silence stable heads,
   # while an initially unlabeled issue correctly waits for the next pass.
-  snapshot_state="$(awk -F '\t' -v n="$n" '$1 == n {
+  local snapshot_labels
+  snapshot_labels="$(awk -F '\t' -v n="$n" '$1 == n {
     split($2, labels, ",")
-    for (i in labels) if (labels[i] ~ /^(needs-triage|epic|ready|claimed|blocked)$/) print labels[i]
+    for (i in labels) print labels[i]
   }' <<<"${BOARD_RECORDS:-}")"
+  snapshot_state=""
+  for label in needs-triage epic "${QUEUE_LABELS[@]}"; do
+    grep -qxF "$label" <<<"$snapshot_labels" && snapshot_state="$label"
+  done
   [ "$snapshot_state" = "$2" ] || return 0
   for family in idle deep cycle stalled; do
     state="$(shape_flag_for_issue "$n" "$family" "${SHAPE_FLAGS:-}")"

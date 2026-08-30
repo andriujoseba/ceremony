@@ -106,7 +106,7 @@ complement as `builder`. It adds `builder` to queue-labelled issues without
 | `offsite` | `#CFD3D7` | issue deliverable is a PR in another repository; set by the builder with the draft link and cleared by the builder at handoff |
 | `needs-ruling` | `#D4C5F9` | a human-owned decision is required; use BUILDER.md's ruling template and ladder. Set by triage or the builder; a state, not a signal — it clears on agreement, not on a reply |
 | `operator` | `#A371F7` | issue-only: an operator owns the work; the body names its evidence surface, command or observation, and wake condition |
-| `builder` | `#BFDADC` | issue-only: builder-owned; the complement of `operator` — derived by the sweep, never hand-set |
+| `builder` | `#BFDADC` | Builder-owned; the complement of `operator` — derived by the sweep, never hand-set |
 | `rerun-owed` | `#D4C5F9` | PR-only: the head is red on a rerun no agent may start, so the builder owes nothing until it is made. Set by the builder with its evidence; cleared by `ci-rerun` when it starts the attempt, and by the reconciler when the head recovers or moves (#424) |
 | `attention` | `#D93F0B` | issue-only demand parked for the assignee; hand-set, and never written by the machine |
 | `release` | `#0E8A16` | release flow, versioning, packaging work — and the ceremony PR itself |
@@ -322,7 +322,7 @@ unanswered `attention` is exactly the silence the 48-hour reclaim should
 take. It is hand-set: the machine never sets `attention`, never assigns
 anyone to receive one, and never decides that one has been answered — the
 assignee's removal is the only ack. It writes the label in exactly one
-  place, the closed-issue claim-release repair, and nowhere else; where it
+place, the closed-issue claim-release repair, and nowhere else; where it
 reads the flag it reads it to diagnose. The PR sweep comments
 when `attention` is put on a pull request, and the issue sweep comments when
 it is put on an issue with no assignee. Both diagnoses leave the label and

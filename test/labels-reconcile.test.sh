@@ -351,6 +351,9 @@ expect "builder core row is byte-exact" \
   "$(grep '^builder|' <<<"$core_rows")"
 expect "builder colour is unique in the core registry" 1 \
   "$(cut -d'|' -f2 <<<"$core_rows" | grep -cxF BFDADC)"
+builder_doctrine="$(sed -n 's/^| `builder` | `#\([0-9A-F]*\)` | \(.*\) |$/builder|\1|\2/p' LABELS.md)"
+expect "builder doctrine and registry rows agree byte-for-byte" \
+  "$(grep '^builder|' <<<"$core_rows")" "$builder_doctrine"
 ready_core="$(grep '^ready|' <<<"$core_rows" | cut -d'|' -f3-)"
 # shellcheck disable=SC2016 # backticks are LABELS.md literals
 ready_doctrine="$(sed -n 's/^| `ready` | `#0E8A16` | \(.*\) | triage |$/\1/p' LABELS.md)"

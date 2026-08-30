@@ -1843,6 +1843,41 @@ check "...stands down without minting" 1 "" test -s "$ARRIVAL/fixtures/edits"
 check "...and the sweep still runs" 0 "" \
   grep -qF 'issueflow: reconciled.' <<<"$pr_out"
 
+# The closed read is additional, bounded by updated_at through `since`, and
+# filters pull-request rows before entering the issue loop (#549 C7/C11).
+closed_since="$(iso_at $((INOW - 7 * 86400)))"
+closed_endpoint="repos_owner_repo_issues_state_closed_since_${closed_since}_per_page_100.json"
+printf '[{"number":570,"updated_at":"%s"},{"number":571,"updated_at":"%s","pull_request":{"url":"x"}}]\n' \
+  "$(iso_at $((INOW - 6 * 86400)))" "$(iso_at $((INOW - 6 * 86400)))" \
+  >"$ARRIVAL/fixtures/$closed_endpoint"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
+printf '[{"name":"builder"}]\n' >"$ARRIVAL/fixtures/repos_owner_repo_labels_per_page_100.json"
+jq -n --arg at "$(iso_at $((INOW - 6 * 86400)))" \
+  '{number:570,state:"closed",updated_at:$at,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"claimed"},{name:"attention"},{name:"builder"}],assignees:[{login:"builder"}]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_570.json"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_570_comments.json"
+: >"$ARRIVAL/fixtures/edits"
+closed_out="$(
+  env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
+    REPO=owner/repo LABELS_CONF="$ARRIVAL/labels.conf" ISSUEFLOW_NOW="$INOW" \
+    bash "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh" 2>&1
+)"
+closed_rc=$?
+check "the bounded closed-issue pass exits green" 0 "" test "$closed_rc" -eq 0
+check "a six-day closed claim is read and cleared" 0 "1" \
+  grep -cF 'issue edit 570 -R owner/repo --remove-assignee builder --remove-label claimed,attention,builder' \
+  "$ARRIVAL/fixtures/edits"
+check "pull-request rows are filtered from the closed read" 1 "" \
+  grep -qF 'issue edit 571 ' "$ARRIVAL/fixtures/edits"
+check "the closed read carries a seven-day since bound" 0 "" \
+  grep -qF 'issues?state=closed&since=$closed_since&per_page=100' \
+  "$ROOT/actions/issueflow-reconcile/issueflow-reconcile.sh"
+check "the far edge excludes eight days and admits six" 0 "" \
+  bash -c 'test "$1" \< "$2" && test "$3" \> "$2"' _ \
+  "$(iso_at $((INOW - 8 * 86400)))" "$closed_since" "$(iso_at $((INOW - 6 * 86400)))"
+check "the closed pass continues through later reconcile steps" 0 "" \
+  grep -qF 'issueflow: reconciled.' <<<"$closed_out"
+
 # The same body linkage protects the reclaim clock even when no Refs-linked
 # PR has merged. This is the derived half of crew#321's destructive shape.
 printf '%s\n' \
