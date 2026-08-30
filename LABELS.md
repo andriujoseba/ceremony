@@ -181,8 +181,9 @@ every surface**, being surface-agnostic already (#526). The rungs:
 A re-flag starts a new ladder. On every surface the 0–12h and 12h rungs apply
 whatever its own escalation comment says, hard block included. The 24h and
 past-24h rungs do not fire when that fresh episode is issue-borne and reads
-`Default: none — hard block`; otherwise the whole ladder applies. Active discussion still climbs the ladder; by
-contrast, the separate 7-day nudge resets on real activity. The machine
+`Default: none — hard block`; otherwise the whole ladder applies. Active
+discussion still climbs the ladder; by contrast, the separate 7-day nudge
+resets on real activity. The machine
 observes the rungs but never sets, clears, or decides `needs-ruling`.
 
 The flag stays up until agreement is *reached* — a human reply alone does not

@@ -1594,7 +1594,7 @@ reconcile_issue() {
   # pass. Comments alone count; label churn and assignments are board facts,
   # not progress on the operator-owned work (#491).
   if has_issue_label operator; then
-      created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
+    created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
     guarded_read operator_age last_issue_comment_activity "$n" "$created" \
       || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
   fi
@@ -1628,49 +1628,49 @@ reconcile_issue() {
     # the ruling waits on a human, and an assignment says nothing about
     # whether the decider answered.
     created="$(jq -r '.created_at' <<<"$ISSUE_JSON")"
-      guarded_read age last_issue_activity "$n" "$created" \
-        || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
-      if [ "$(claim_clock_exempt <<<"$ISSUE_LABELS")" = EXEMPT ]; then
-        # Legitimately quiet work does not run the reclaim clock. Only the
-        # clock stops: an unassigned claim is still a repair the decision must
-        # see, so it runs on a zero age rather than being skipped.
-        decision="$(claim_decision "$assignees" "$open_pr" 0)"
-      else
-        decision="$(claim_decision_at "$assignees" "$open_pr" "$age")"
-      fi
-      case "$decision" in
-        FLAG_UNASSIGNED)
-          ensure_comment "$n" claimed-unassigned \
-            'This issue is `claimed` but has no assignee. The sweep cannot infer an owner; triage must repair the claim.' ;;
-        RECLAIM)
-          # The last-activity epoch identifies a claim episode. A fixed marker
-          # hid the required comment when the same issue was later claimed and
-          # reclaimed again.
-          ensure_comment "$n" "$(claim_reclaim_marker "$age")" \
-            'This claim has no linked open PR and no activity for 48 hours. The sweep is reclaiming it for the ready queue.'
-          owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
-          if [ -n "$owners" ]; then
-            run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
-              --remove-label claimed --add-label ready >/dev/null
-          else
-            run gh issue edit "$n" -R "$REPO" --remove-label claimed --add-label ready >/dev/null
-          fi
-          concluded_queue_state=ready
-          log "#$n: stale claim reclaimed -> ready" ;;
-      esac
-      [ "$decision" != FLAG_UNASSIGNED ] || attention_suppression=claimed-unassigned
-      if has_issue_label offsite; then
-        local timeline
-        if timeline="$(offsite_timeline "$n")"; then
-          refs="$(offsite_cross_referenced_prs <<<"$timeline")"
-          states="$(offsite_pr_states <<<"$refs")"
-          if [ "$(offsite_resolved_decision <<<"$states")" = NUDGE ]; then
-            ensure_comment "$n" offsite-resolved \
-              "$(tr '\n' ' ' <<<"$refs" | sed 's/[[:space:]]*$//') is closed; this issue's \`offsite\` flag is still up. Clear it and close the issue, or say what is still outstanding. @$(jq -r '.assignees[0].login' <<<"$ISSUE_JSON")"
-            log "#$n: resolved offsite PRs nudged"
-          fi
+    guarded_read age last_issue_activity "$n" "$created" \
+      || skip_issue "$n" "could not read its activity history: $(read_failure_reason "$READ_FAILURE_STDERR")"
+    if [ "$(claim_clock_exempt <<<"$ISSUE_LABELS")" = EXEMPT ]; then
+      # Legitimately quiet work does not run the reclaim clock. Only the
+      # clock stops: an unassigned claim is still a repair the decision must
+      # see, so it runs on a zero age rather than being skipped.
+      decision="$(claim_decision "$assignees" "$open_pr" 0)"
+    else
+      decision="$(claim_decision_at "$assignees" "$open_pr" "$age")"
+    fi
+    case "$decision" in
+      FLAG_UNASSIGNED)
+        ensure_comment "$n" claimed-unassigned \
+          'This issue is `claimed` but has no assignee. The sweep cannot infer an owner; triage must repair the claim.' ;;
+      RECLAIM)
+        # The last-activity epoch identifies a claim episode. A fixed marker
+        # hid the required comment when the same issue was later claimed and
+        # reclaimed again.
+        ensure_comment "$n" "$(claim_reclaim_marker "$age")" \
+          'This claim has no linked open PR and no activity for 48 hours. The sweep is reclaiming it for the ready queue.'
+        owners="$(jq -r '[.assignees[].login] | join(",")' <<<"$ISSUE_JSON")"
+        if [ -n "$owners" ]; then
+          run gh issue edit "$n" -R "$REPO" --remove-assignee "$owners" \
+            --remove-label claimed --add-label ready >/dev/null
+        else
+          run gh issue edit "$n" -R "$REPO" --remove-label claimed --add-label ready >/dev/null
+        fi
+        concluded_queue_state=ready
+        log "#$n: stale claim reclaimed -> ready" ;;
+    esac
+    [ "$decision" != FLAG_UNASSIGNED ] || attention_suppression=claimed-unassigned
+    if has_issue_label offsite; then
+      local timeline
+      if timeline="$(offsite_timeline "$n")"; then
+        refs="$(offsite_cross_referenced_prs <<<"$timeline")"
+        states="$(offsite_pr_states <<<"$refs")"
+        if [ "$(offsite_resolved_decision <<<"$states")" = NUDGE ]; then
+          ensure_comment "$n" offsite-resolved \
+            "$(tr '\n' ' ' <<<"$refs" | sed 's/[[:space:]]*$//') is closed; this issue's \`offsite\` flag is still up. Clear it and close the issue, or say what is still outstanding. @$(jq -r '.assignees[0].login' <<<"$ISSUE_JSON")"
+          log "#$n: resolved offsite PRs nudged"
         fi
       fi
+    fi
   elif has_issue_label blocked; then
     refs="$(blocked_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"
     cross_refs="$(blocked_cross_references <<<"$(jq -r '.body // ""' <<<"$ISSUE_JSON")")"

@@ -535,6 +535,10 @@ printf '[]\n' >"$(cfix 570)"
 closed_probe 570 $'claimed\nattention\nbuilder' 1 >/dev/null
 check "a closed claim clears queue, attention, builder, and assignee together" 0 "1" \
   grep -cF 'issue edit 570 -R owner/repo --remove-assignee owner-bot --remove-label claimed,attention,builder' "$TMP/issue-edits"
+# `attention` cannot survive the released assignee, and a closed issue cannot
+# acquire the derived owner class on the way out (#175 D4, #562 D7).
+check "a closed issue never gains the derived builder owner class" 1 "" \
+  grep -qF -- '--add-label builder' "$TMP/issue-edits"
 check "the closed release comment names the released assignee" 0 "1" \
   grep -cF 'released assignee(s): @owner-bot' "$TMP/posted-570"
 closed_edits="$(wc -l <"$TMP/issue-edits")"
@@ -1854,7 +1858,7 @@ check "...and the sweep still runs" 0 "" \
 # filters pull-request rows before entering the issue loop (#549 C7/C11).
 closed_since="$(iso_at $((INOW - 7 * 86400)))"
 closed_endpoint="repos_owner_repo_issues_state_closed_since_${closed_since}_per_page_100.json"
-printf '[{"number":570,"updated_at":"%s"},{"number":571,"updated_at":"%s","pull_request":{"url":"x"}},{"number":573,"updated_at":"%s"}]\n' \
+printf '[{"number":570,"updated_at":"%s"},{"number":571,"updated_at":"%s","pull_request":{"url":"x"}},{"number":573,"updated_at":"%s","labels":[{"name":"blocked"}],"title":"closed control"}]\n' \
   "$(iso_at $((INOW - 6 * 86400)))" "$(iso_at $((INOW - 6 * 86400)))" \
   "$(iso_at $((INOW - 6 * 86400)))" \
   >"$ARRIVAL/fixtures/$closed_endpoint"
