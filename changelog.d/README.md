@@ -18,8 +18,8 @@ are cheapest to obey here rather than to discover on a red merge door
 that continues it, joined into one string, runs of whitespace collapsed to
 single spaces, the ends trimmed. The `- ` marker is not part of it.
 
-- **An entry is at most 300 characters** — counted on that joined, collapsed
-  string, so it is a bound on the whole entry and not on any one line of it.
+- **An entry is at most 300 characters** — counted on that joined,
+  collapsed string, so it bounds the whole entry and never one line of it.
   Wrapping a long entry across three lines does not shorten it. Over the
   bound, split it into several `- ` entries in this same fragment.
 - **Exactly one `(#N)` citation group ends the entry, with the final `.`
