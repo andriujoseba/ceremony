@@ -132,6 +132,16 @@ Every issue you mint carries, in this order:
   session's boundary and not its convenience: slowness, inconvenience, and a
   fixture nobody has written yet are work rather than distance, and evidence
   the board's own automation produces is reachable by anyone who can read it.
+  **That boundary is not the same in every builder session**, so a
+  builder-owned criterion may require a **named session capability** — a
+  vendor CLI, an authenticated session, a profile — and where it does, the
+  criterion states three things in its own text, not in a comment and not in
+  a covering sentence: that it is **builder-owned and not operator-owned**,
+  **the capability it requires**, and **what a builder lacking it does** —
+  release the claim, never substitute documentation for the evidence. A named
+  capability is a property of the criterion and not a class of criterion: it
+  adds no third value to the two above, a session lacking it having a shorter
+  reach rather than a different one (#575).
 
   **An operator-owned criterion carries three things in its own text**, not
   in a comment and not in a covering sentence: that it is operator-owned,
