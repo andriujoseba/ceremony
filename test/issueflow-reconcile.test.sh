@@ -536,7 +536,7 @@ closed_probe 570 $'claimed\nattention\nbuilder' 1 >/dev/null
 check "a closed claim clears queue, attention, builder, and assignee together" 0 "1" \
   grep -cF 'issue edit 570 -R owner/repo --remove-assignee owner-bot --remove-label claimed,attention,builder' "$TMP/issue-edits"
 # `attention` cannot survive the released assignee, and a closed issue cannot
-# acquire the derived owner class on the way out (#175 D4, #562 D7).
+# acquire the derived owner class on the way out (#175 D4, #562 D2).
 check "a closed issue never gains the derived builder owner class" 1 "" \
   grep -qF -- '--add-label builder' "$TMP/issue-edits"
 check "the closed release comment names the released assignee" 0 "1" \
@@ -1858,11 +1858,11 @@ check "...and the sweep still runs" 0 "" \
 # filters pull-request rows before entering the issue loop (#549 C7/C11).
 closed_since="$(iso_at $((INOW - 7 * 86400)))"
 closed_endpoint="repos_owner_repo_issues_state_closed_since_${closed_since}_per_page_100.json"
-printf '[{"number":570,"updated_at":"%s"},{"number":571,"updated_at":"%s","pull_request":{"url":"x"}},{"number":573,"updated_at":"%s","labels":[{"name":"blocked"}],"title":"closed control"}]\n' \
+printf '[{"number":570,"updated_at":"%s"},{"number":571,"updated_at":"%s","pull_request":{"url":"x"}},{"number":573,"updated_at":"%s","labels":[{"name":"blocked"}],"title":"closed control"},{"number":575,"updated_at":"%s"}]\n' \
   "$(iso_at $((INOW - 6 * 86400)))" "$(iso_at $((INOW - 6 * 86400)))" \
-  "$(iso_at $((INOW - 6 * 86400)))" \
+  "$(iso_at $((INOW - 6 * 86400)))" "$(iso_at $((INOW - 3600)))" \
   >"$ARRIVAL/fixtures/$closed_endpoint"
-printf '[{"number":574,"labels":[{"name":"needs-triage"}],"title":"open control"}]\n' \
+printf '[{"number":574,"labels":[{"name":"needs-triage"}],"title":"open control"},{"number":575,"labels":[{"name":"claimed"},{"name":"attention"},{"name":"builder"}],"title":"reopened live claim"}]\n' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_state_open_per_page_100.json"
 printf '[{"name":"builder"}]\n' >"$ARRIVAL/fixtures/repos_owner_repo_labels_per_page_100.json"
 jq -n --arg at "$(iso_at $((INOW - 6 * 86400)))" \
@@ -1880,6 +1880,13 @@ printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_573_comments.json"
 jq -n --arg at "$(iso_at $((INOW - 3600)))" \
   '{number:574,state:"open",updated_at:$at,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"needs-triage"}],assignees:[]}' \
   >"$ARRIVAL/fixtures/repos_owner_repo_issues_574.json"
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '{number:575,state:"open",updated_at:$at,user:{login:"triage-one"},created_at:$at,body:"",labels:[{name:"claimed"},{name:"attention"},{name:"builder"}],assignees:[{login:"live-builder"}]}' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_575.json"
+printf '[]\n' >"$ARRIVAL/fixtures/repos_owner_repo_issues_575_comments.json"
+jq -n --arg at "$(iso_at $((INOW - 3600)))" \
+  '[{event:"assigned",created_at:$at,actor:{login:"live-builder"},assignee:{login:"live-builder"}}]' \
+  >"$ARRIVAL/fixtures/repos_owner_repo_issues_575_timeline.json"
 : >"$ARRIVAL/fixtures/edits"
 closed_out="$(
   env PATH="$ARRIVAL/stub:$PATH" GH_FIXTURES="$ARRIVAL/fixtures" \
@@ -1895,6 +1902,12 @@ check "pull-request rows are filtered from the closed read" 1 "" \
   grep -qF 'issue edit 571 ' "$ARRIVAL/fixtures/edits"
 check "an eight-day closed claim is outside the bounded read" 1 "" \
   grep -qF 'issue edit 572 ' "$ARRIVAL/fixtures/edits"
+check "a closed-list candidate reopened before refetch keeps its live claim" 1 "" \
+  grep -qF 'issue edit 575 ' "$ARRIVAL/fixtures/edits"
+check "...keeps its assignee and queue labels" 1 "" \
+  grep -qE 'issue edit 575 .*--remove-(assignee|label)' "$ARRIVAL/fixtures/edits"
+check "...and consumes no closed-release marker" 1 "" \
+  grep -qF 'closed-claim-release-575' <<<"$closed_out"
 # C11's negative fixture is the exact open-board record the subprocess used.
 # Its paired positive control injects the closed row: if the closed payload
 # leaked into BOARD_RECORDS, that row would create an idle-shape verdict.

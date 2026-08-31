@@ -1900,6 +1900,9 @@ reconcile_issue_pass() { # $1 = issue, $2 = open|closed (default open)
     jq -e 'has("pull_request") | not' <<<"$ISSUE_JSON" >/dev/null || exit 0
     ISSUE_LABELS="$(jq -r '.labels[].name' <<<"$ISSUE_JSON")"
     if [ "$mode" = closed ]; then
+      # The bounded list only nominates a candidate. Its current issue read
+      # decides: a reopen between those reads must not release a live claim.
+      jq -e '.state == "closed"' <<<"$ISSUE_JSON" >/dev/null || exit 0
       reconcile_closed_issue "$n" || exit $?
     else
       reconcile_issue "$n" || exit $?
