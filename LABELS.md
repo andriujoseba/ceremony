@@ -118,6 +118,11 @@ a decision, `operator` says an operator owes the work, and
 issue queue label, and the one-of-four queue invariant ignores it. An
 operator-owned issue normally reads `ready` + `operator`: the work is
 triaged, spec-complete and unblocked, while the second label names its owner.
+An issue waiting on an external condition only the operator can resolve is
+operator-owned: it keeps `ready` and adds `operator`, and its quiet is
+legitimate under the same seven-day clock. This admits conditions the operator
+has the power to change, such as rerunning a red fork-PR head; it does not admit
+a third party's unscheduled reply, which the operator cannot resolve.
 The body's evidence surface, command or observation, and wake condition keep
 that availability actionable (#491).
 
