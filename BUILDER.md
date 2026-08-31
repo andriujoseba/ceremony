@@ -212,6 +212,9 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    being what the state machine reads; where it names no roster, ask triage
    on the authorizing issue rather than guess. An off-panel reviewer may be
    requested, said to be advisory and not required.
+   Where an engine mediates the request, declaring the round answered and
+   marking ready-for-review is the whole of the builder's act; the engine
+   requests the panel.
 
    **A review request requires a green check at the head**, whether or not
    an engine enforces it: a red check is the author's own signal, so fix it
@@ -264,8 +267,8 @@ such as the panel roster live in that repo's own CONTRIBUTING.)
    head, and its mechanism is crew's to describe (#94). **The re-request
    carries the same green-check-at-head precondition**, argued exception
    included: a fix push whose check comes up red is your next fix, not the
-   panel's. **Where an engine mediates the request, that precondition binds
-   the engine's act and not yours**: declaring a round answered is not
+   panel's. **In the engine-mediated case stated in step 1, that precondition
+   binds the engine's act and not yours**: declaring a round answered is not
    requesting the panel, so declare it as soon as the round's fixes are
    pushed and stop. The engine holds the request while the head is pending
    or red, so an early declaration cannot produce an early request while a
