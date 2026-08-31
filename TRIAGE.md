@@ -360,14 +360,11 @@ Repositories that adopt version epics follow [RELEASES.md](RELEASES.md).
   lands, and flags a blocked issue whose dependency declaration is unreadable.
 - The sweep reclaims abandoned claims after 48 hours: `claimed` + no open PR
   + no activity → comment, unassign, restore `ready`.
-- `post-merge` is triage's completion queue, not a parked claim. Tick verified
-  criteria and close under the criterion's existing contract. If corrective
-  build work becomes necessary, move it to `ready` or mint a fresh `ready`
-  issue: any builder claims from current `main`, the original builder has no
-  special standing, and re-entry does not set `attention`. **The queue is
-  closed to new entrants** — the split above happens at the mint, so no mint
-  produces one and the queue only drains — and it is retired when it empties.
-  Until then it governs every issue already in it (#538).
+- In the close-out tick, clear any remaining queue label and assignee when the
+  sweep has not already done so; the claim ends with the issue (#547).
+- At mint, express the owner class by setting `operator` or leaving it absent.
+  The sweep derives the complementary `builder` row; triage never hand-writes
+  it.
 - Automation never guesses intent. Resolve the conflict comments it leaves on
   malformed queue states, and close or extend completed epics when nudged.
 - **Close obsolete issues** with the reason and a link to what obsoleted
