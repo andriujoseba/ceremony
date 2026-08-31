@@ -1488,10 +1488,8 @@ per line, relative to ceremony's root, blank lines ignored. A ref that
 carries no such file has no guarded scaffolds and syncs exactly as it always
 did.
 
-The guarded scaffold is available at **unreleased** (#559) and later — the
-marker stands until the release PR that ships this machinery clears it to
-that release's own tag, in the same PR (#221). **The pin bump and the
-`--fix` run are one PR.** A bump onto this ref reds `docs-sync --check`
+The guarded scaffold is available at `0.7.8` and later (#559). **The pin bump
+and the `--fix` run are one PR.** A bump onto this ref reds `docs-sync --check`
 until the block exists, the same way a bump that adds a doctrine file reds
 it until the mirror is re-synced — so run `--fix` from the repo root in the
 bump PR itself and commit `.github/pull_request_template.md` alongside

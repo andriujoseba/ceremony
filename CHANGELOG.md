@@ -12,6 +12,120 @@ Entries arrive as fragments — one `changelog.d/<issue>.md` per PR, never
 an edit to this file — and the release PR assembles them into the next
 section here (`bin/changelog-assemble`, #112).
 
+## 0.7.8 — 2026-08-31
+
+### Added
+
+- Adoption now ends by recording the board in the operator's catalog:
+  `docs/CONSUMERS.md`'s bootstrap and conversion checklists both carry the
+  step, and neither names a repository or a filename as the destination
+  (#576).
+- The cost of skipping it is stated where the step is: a board absent from
+  the catalog is not enumerated by the censuses that a taxonomy change, a
+  pin bump or a label retirement each run first (#576).
+- Added a sweep-derived `builder` owner-class label as the complement of hand-set `operator`. (#562).
+- `bin/ceremony-upgrade` moves a consumer's every ceremony `uses:` reference to
+  one tag and re-syncs the doctrine mirror by calling `docs-sync --fix`.
+  `--check` is the default and changes not one byte; `--source <dir>` previews
+  a move against an unreleased ceremony tree (#561).
+- The pin move refuses where it would cross a migration — a tag whose
+  `docs/CONSUMERS.md` note asks something of the consumer's tree — naming every
+  crossed tag in order with its section, and refuses a tree with no pin, an
+  ungradeable pin, a target that was never cut, and a downgrade (#561).
+- A refused move leaves the tree byte-identical, however deep the refusal
+  comes from: `--fix` snapshots everything it and `docs-sync` can touch before
+  the first byte, verifies the rewrite against the plan it announced, and
+  restores the snapshot on any failure — a `docs-sync` refusal included (#561).
+- `docs-sync` gains a third file class, the guarded scaffold: ceremony owns a
+  marked block in the consumer's `.github/pull_request_template.md` and the
+  consumer owns every byte outside it, so a repo-specific template stops
+  drifting from the engine that renders into it (#559).
+- The scaffolded set is read from the pin's `docs/SCAFFOLDED.txt`, so a bump
+  that adds or drops one re-shapes it with no second list; the bump and the
+  `docs-sync --fix` run are one PR (#559).
+- `docs-sync --fix` now says where its changes landed when a guarded scaffold
+  is among them, instead of reporting `.ceremony/` for work outside it; a run
+  with no scaffold work prints the sentence it always has (#559).
+- A fleet-worked repository with no ceremony pin reads doctrine at the latest published, non-draft, non-prerelease ceremony release tag rather than `main`, and `docs/CONSUMERS.md` names the command that resolves it (#558).
+
+### Changed
+
+- `TRIAGE.md`'s builder-owned paragraph no longer assumes every builder
+  session has the same boundary: such a criterion may require a named session
+  capability, and where it does it says so in its own text (#575).
+- That statement carries three things — builder-owned and not operator-owned,
+  the capability required, and that a builder lacking it releases the claim
+  rather than substituting documentation for the evidence (#575).
+- The reach axis stays two-valued: a named capability is a property of the
+  criterion and not a third owner class, so an issue whose criteria name one
+  is builder-owned like any other (#575).
+- Clarify that `operator` covers external conditions only the operator can resolve, while excluding third-party waits (#573).
+- Made the fleet-wide claim-slot assertion an explicit precondition and documented recovery from a false assertion. (#565).
+- Document that doctrine-mirrored repositories carry a release caller even without artifact publication, and make `docs-sync` say so when it is missing (#553).
+- Retired creation of the `post-merge` queue row while leaving existing consumer label objects in place, and clarified re-flag ladder carve-outs. (#540, #544).
+- Triage now splits after-close work at the mint: a criterion whose evidence cannot exist before the PR merges is not carried by the issue at all, but minted as its own issue declaring the first as its blocker (#151, #536).
+- The successor issue carries the outstanding criteria verbatim, has one owner class, and names its evidence surface, its command or observation, and its wake condition (#536).
+- A same-repo PR always carries `Closes #N`. A criterion a builder cannot check before the merge is a defect in the issue, reported to triage, never a reason to write `Refs #N` (#151, #536).
+- `Refs #N` on an acceptance-criteria PR is no longer blessed by the reviewer authority list; the shape is now the round-cap cut predecessor's alone (#536).
+- The `post-merge` completion queue is retired; merge-door splitting now keeps after-close work out of the closing issue entirely (#538, #540).
+- `TRIAGE.md`'s reach axis names no repealed mechanism: reach is the one axis classified at mint. The three-part evidence rule, #491's issue-level reversal and the verbatim relocation are unchanged (#536).
+- Let triage batch relocated operator-owned criteria when one invocation on the same evidence surface proves them, while keeping batching optional and forbidding cross-surface batches (#532).
+- Require shared operator issues to enumerate criteria per origin and let each gated issue declare the shared operator node alone (#532).
+- A `needs-ruling` flag borne by an issue whose escalation reads `Default: none — hard block` no longer fires the ladder's 24h and past-24h rungs. The flag waits for the human and no timer replaces them (#490, #526).
+- The setter now owes a published re-read of the default at each of those two rungs — the 12h rung's act extended, so the carve-out adds a duty rather than removing one (#490, #526).
+- Record why the late rungs are carved out: their safety is the merge gate, and on an issue there is no second look, so the pick is terminal (#490, #526).
+- State the carve-out's three exclusions. A PR-borne flag runs the full ladder; an issue-borne timed reversible default still expires at 0–12h; the 0–12h and 12h rungs are unchanged on every surface (#526).
+- Say in one sentence that a discussion carries no `labeled` event and therefore no ladder, which the anchor rule already implied (#490, #526).
+- `TRIAGE.md` outcome 3's past-24h duty to pick now reads as conditional rather than unconditional, matching the ladder's two other copies (#526).
+- Relocate operator-owned acceptance criteria into their own issue instead of holding the original open: the remainder is left wholly PR-checkable and its PR merges with `Closes #N` (#488, #525).
+- Require the relocation to happen before the merge, and to enumerate the moved criteria one at a time on both the new issue and the original (#488, #525).
+- An issue is now builder-owned or operator-owned and never both, replacing the rule that a lone operator-owned criterion left the issue unmarked (#491, #488).
+- Read issue ownership off its criteria's class. The two axes stay independent per criterion; only the issue level collapses (#491, #488).
+- Give a relocated issue `ready` + `operator` at its own mint, carrying the evidence surface, the command or observation, and the wake condition (#488, #525).
+- Add the `builder-owned issue -> operator-owned issue -> gated issue` graph to Dependencies. The gated issue declares the operator-owned one alone (#488, #525).
+- Rewrite builder park shape 3 as the transient wait for triage's relocation, keeping its number. An operator-owned remainder no longer parks a finished claim (#488, #336).
+- Make a governed board's label-taxonomy repair operator-owned and exempt it from issue minting when required queue labels are missing (#524).
+
+### Fixed
+
+- Put the engine-mediated panel-request exception beside the review-round instruction it qualifies, so builders signal and mark ready while the engine requests reviewers (#574).
+- `changelog.d/README.md` and `docs/CONSUMERS.md` now state the entry bound
+  `changelog-armed` has always enforced: at most 300 characters, counted after
+  continuation lines are joined and whitespace collapsed, so it bounds the
+  whole entry and never one line of it (#571).
+- The citation rule is stated as its admitted shape rather than as a
+  prohibition: exactly one issue-citation group ends an entry, with the final
+  `.` after it, and that group may carry several comma-separated references,
+  cross-repo ones included. A second group anywhere is what fails (#571).
+- The conversion checklist no longer reads as though deriving a filename were
+  all an entry's own `#N` has to satisfy: a moved `## Unreleased` entry meets
+  both entry rules too, and one citing several issues folds them into its
+  single closing group (#571).
+- Release closed issues' queue labels, assignees and attention in the sweep; pin bumps deliver the repair while triage covers older boards. (#549).
+- The 24-hour ruling comment now asks the setter to re-read an issue-borne hard block instead of instructing withdrawn builder and triage picks; pull requests and timed issue defaults retain the full ladder (#537).
+- The 7-day ruling nudge no longer counts the flag-setter's own comments as
+  activity, so the party owing a published re-read can no longer silence the
+  reminder addressed to the party owing the decision (#526, #534).
+- The ruling clock now runs from the current `needs-ruling` `labeled` event
+  instead of falling back to the item's creation date, so a long-open item
+  flagged an hour ago is no longer reported as quiet for months (#534).
+- The `operator` label description restores `or observation`, the string #508
+  decided and the build dropped, so the row a consumer's board renders is no
+  longer narrower than the `LABELS.md` and `TRIAGE.md` doctrine it summarizes
+  (#508, #530).
+- The five-round cap now lets a passing fifth round hand off and cuts only if a later push would open round six on that pull request (#523).
+- The issue-flow reconciler no longer reports `reconciled.` over a board write
+  it lost: each staged write's status is tested, the failing act is named
+  without its comment body, and the pass summary counts the issues affected
+  (#519).
+- A lost board write still leaves the remaining staged effects applied and the
+  hourly sweep green, so nothing is rolled back and one skipped issue still
+  never reddens a run (#95, #101, #519).
+- Require every top-level test and GitHub script to carry a scope mapping or an explicit unmapped declaration. (#518).
+- The doors-unchanged instructions now list all seven release paths in script
+  order, and the contract suite keeps that copy non-empty and byte-faithful to
+  the script before a record author can rely on it (#514).
+
 ## 0.7.7 — 2026-08-27
 
 ### Fixed

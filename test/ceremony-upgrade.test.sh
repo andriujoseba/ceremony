@@ -569,10 +569,14 @@ check "without --source the command really does reach for the network" 1 "" \
 # `0.7.0`'s and `0.1.0`'s are both exactly that (which is why #561's own body
 # counts ten notes where an unwrapped scan finds more).
 #
-# Two notes are deliberately not rows, and bin/ceremony-upgrade's table
-# comment names both: #501's 0.7.7 (excluded by this window, and by #561's
-# happy path moving 0.7.6 -> 0.7.7 and requiring it to succeed), and #559's
-# "available at **unreleased** and later", which has no tag to key a row on.
+# One note is deliberately not a row, and bin/ceremony-upgrade's table
+# comment names it: #501's 0.7.7, excluded by this window, and by #561's
+# happy path moving 0.7.6 -> 0.7.7 and requiring it to succeed.
+#
+# #559's was the other, and the 0.7.8 cut ended that: its "available at
+# **unreleased** and later" had no tag to key a row on, the release cleared
+# the marker to `0.7.8`, and this scan found the tag before any row carried
+# it — which is the ratchet firing as designed, not a regression.
 availability_tags() {
   awk '
     /^[[:space:]]*$/ { if (p != "") { print p; p = "" }; next }
