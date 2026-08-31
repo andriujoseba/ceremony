@@ -93,8 +93,8 @@ CHANGELOG_NAME="CHANGELOG.md"
 # half-open interval opening at a released tag, so it is inert by
 # construction rather than by anyone's judgement.
 #
-# TWO "and later" SENTENCES IN docs/CONSUMERS.md ARE DELIBERATELY NOT ROWS,
-# named here so that finding one and finding no row reads as a decision
+# ONE "and later" SENTENCE IN docs/CONSUMERS.md IS DELIBERATELY NOT A ROW,
+# named here so that finding it and finding no row reads as a decision
 # rather than as an omission:
 #
 #   * `0.7.7` (#501) — "At `0.7.7` and later the sweep says so as a comment on
@@ -102,11 +102,17 @@ CHANGELOG_NAME="CHANGELOG.md"
 #     existing notice is PRINTED, and asks nothing of a consumer tree. #561's
 #     happy-path criterion moves a consumer 0.7.6 -> 0.7.7 and requires it to
 #     succeed, which settles the reading independently.
-#   * the guarded scaffold (#559) is "available at **unreleased** and later" —
-#     no tag exists to key a row on yet. It becomes one when the release PR
-#     that ships it clears the marker to that release's own tag (#221). Its
-#     migration is also the one --fix performs on its own, the block being
-#     written by the docs-sync call below.
+#
+# The guarded scaffold (#559) was the second such sentence and is no longer:
+# it read "available at **unreleased** and later", with no tag to key a row
+# on, and the 0.7.8 cut cleared that marker to its own tag (#221) exactly as
+# this comment said it would. It is the `0.7.8` row below. Note what changed
+# with it: while it was markered, `--fix` would have written the block itself
+# on the way past, through the docs-sync call below; as a row it is a
+# REFUSAL, and no crossing of it is automatic. That is the table's rule
+# doing its job rather than an oversight — a tag whose note asks a consumer
+# tree for a byte it does not have is a row, and whether this command could
+# have supplied that byte is not the question the table asks.
 #
 # test/ceremony-upgrade.test.sh re-derives this tag set from docs/CONSUMERS.md
 # and fails when a note names a tag no row carries — a ratchet against the
@@ -120,6 +126,7 @@ MIGRATIONS=(
   "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written."
   "0.6.0|Doctrine mirror|RELEASES.md joins the vendored set and .ceremony/ is short a file until the mirror is re-synced; refs-not-closing becomes available; and the manifest at a tag is guaranteed the complete set only from here."
   "0.7.0|The artifact hook|Native release-candidate cuts and deterministic rc re-arming arrive; earlier pins do not carry the rc release path."
+  "0.7.8|The guarded scaffold — ceremony owns a block, you own the rest|.github/pull_request_template.md gains a ceremony-owned block, read from the pin's docs/SCAFFOLDED.txt, and docs-sync --check goes RED until it is there. Run docs-sync --fix from the repo root and commit that file alongside .ceremony/ in the SAME PR that moves the ref — split them and the default branch is red in between. Where the template already exists, --fix appends the block and leaves your own content alone."
 )
 
 die() {
