@@ -23,8 +23,16 @@ check "an unassigned issue target is commented without precedence" 0 "POST" \
   attention_comment_decision MALFORMED_UNASSIGNED ""
 check "claimed-unassigned precedence suppresses the second comment" 0 "SUPPRESS" \
   attention_comment_decision MALFORMED_UNASSIGNED claimed-unassigned
-check "post-merge-assigned precedence suppresses the second comment" 0 "SUPPRESS" \
-  attention_comment_decision MALFORMED_UNASSIGNED post-merge-assigned
+# Not a duplicate of the case above, and the literal is synthetic on purpose.
+# The helper under test asks PRESENCE — `lib/attention.sh:29` is
+# `[ -n "$2" ]`, not a comparison — so this is the only case pinning that the
+# verdict does not key on which precedence it was handed. Weaken that line to
+# `[ "$2" = claimed-unassigned ]` and this case is the sole red; its neighbour
+# stays green. A real board state here would name the thing the rule must not
+# look at, which is how this case last read as redundant and acquired a
+# retired state's name (#586).
+check "a second, different precedence suppresses just the same" 0 "SUPPRESS" \
+  attention_comment_decision MALFORMED_UNASSIGNED any-other-precedence
 check "a healthy target stays silent" 0 "KEEP" \
   attention_comment_decision KEEP ""
 
