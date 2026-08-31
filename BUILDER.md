@@ -186,6 +186,13 @@ not to guess.
   entry (#167) and an uncited one (#262). Never edit `CHANGELOG.md`: the
   release PR assembles the section from fragments (#112), and the monotonic
   guard refuses anything deleting a shipped heading.
+  **The sole exception is the release PR: it writes no fragment, whether
+  consumed or left in place.** A fragment born on the release branch is
+  absent from `changelog-assembled`'s merge-base replay if consumed, while
+  one left behind is refused by `changelog-armed` on a bare-version tree
+  (#131). A change that must ship inside the release PR therefore ships
+  without an entry; if it can wait and wants an entry, land it as an ordinary
+  PR before the release PR, then rebase and re-assemble the release.
 - Follow the repo's conventions file and match the code you touch. Tests are
   not optional: the issue's test plan is the floor, not the ceiling.
 - **A write-capable job gets a repo-owned script, not a third-party
