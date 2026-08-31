@@ -399,6 +399,31 @@ the machinery at all:
 8. **The artifact hook** (optional): `.github/actions/release-artifact/`
    per [The artifact hook](#the-artifact-hook). No hook → the source
    tarball is the package.
+9. **Record this board in your operator's catalog.** Adopting the ceremony
+   makes this repository one of the boards your operator governs, and
+   nothing outside it records that it did. A roster re-derived on demand —
+   scanning an organisation for the labels caller — is only ever as
+   complete as the token running the scan: on `2026-08-30` three fleet
+   identities enumerated 82, 41 and 36 of the same 82 repositories, so a
+   gate written against that scan was clearable by credential rather than
+   by work (#567). The answer is a checked-in list, and a list is only
+   worth reading if joining it is part of joining.
+
+   Add this repository to whatever tracked list your operator already
+   keeps of the boards it governs. Where the operator keeps none, this is
+   the step that creates one: a tracked file naming every governed board,
+   in whatever format that repository already reads. No repository and no
+   filename is required of you — where the list lives is the operator's
+   call, not ceremony's. heavy-duty's own is
+   [`catalog.yaml`](https://github.com/heavy-duty/infra/blob/main/catalog.yaml),
+   cited here as a worked example of the shape and not as a destination
+   for your board.
+
+   Skipping this step fails no check; it removes the board from every
+   later count. A board absent from the catalog is not enumerated by the
+   censuses that a taxonomy change, a pin bump or a label retirement each
+   run first — so those land without it, and the omission surfaces only
+   when somebody scans by credential again (#576).
 
 From there the flow is the doctrine: ordinary PRs write their fragment,
 the ceremony PR makes
@@ -476,6 +501,20 @@ precisely so the machinery is safe to work on
       the drill meaning (`drills/README.md`), artifact notes, the
       changelog house style if it differs from
       [the portable rule](#the-changelog-rule).
+- [ ] Record this board in your operator's catalog — the step
+      [bootstrap step 9](#bootstrap-a-new-repo) names, owed here for the
+      same reason: a converted repository is a governed board by exactly
+      the same test as a bootstrapped one. Add it to whatever tracked list
+      your operator already keeps of the boards it governs; where the
+      operator keeps none, this is the step that creates one — a tracked
+      file naming every governed board, in whatever format that repository
+      already reads. No repository and no filename is required of you.
+      heavy-duty's own is
+      [`catalog.yaml`](https://github.com/heavy-duty/infra/blob/main/catalog.yaml),
+      a worked example of the shape and not a destination for your board.
+      A board absent from the catalog is not enumerated by the censuses
+      that a taxonomy change, a pin bump or a label retirement each run
+      first, so those land without it (#576).
 - [ ] What stays, per repo, forever: `VERSION` (or the `package.json`
       version), `CHANGELOG.md`, `changelog.d/`, `drills/`, `.github/labeler.yml`,
       `.github/labels.conf`, the optional
