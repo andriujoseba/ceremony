@@ -416,8 +416,18 @@ the machinery at all:
    filename is required of you — where the list lives is the operator's
    call, not ceremony's. heavy-duty's own is
    [`catalog.yaml`](https://github.com/heavy-duty/infra/blob/main/catalog.yaml),
-   cited here as a worked example of the shape and not as a destination
-   for your board.
+   named here as an example and not as a destination for your board; it
+   sits in that operator's own state repository, so treat the link as a
+   citation rather than as a page to open — nothing this step asks of you
+   depends on reading it.
+
+   This is not the fleet's `repos.txt` a second time. That registry
+   answers which repositories the fleet *works*, and
+   [On-board a fleet-worked repo](#on-board-a-fleet-worked-repo) gates
+   entry to it on a verified taxonomy; the catalog answers which boards
+   the operator *governs*. A governed board need not be fleet-worked, so
+   ticking this step by pointing at `repos.txt` loses exactly the boards
+   the census exists to count.
 
    Skipping this step fails no check; it removes the board from every
    later count. A board absent from the catalog is not enumerated by the
@@ -511,10 +521,15 @@ precisely so the machinery is safe to work on
       already reads. No repository and no filename is required of you.
       heavy-duty's own is
       [`catalog.yaml`](https://github.com/heavy-duty/infra/blob/main/catalog.yaml),
-      a worked example of the shape and not a destination for your board.
-      A board absent from the catalog is not enumerated by the censuses
-      that a taxonomy change, a pin bump or a label retirement each run
-      first, so those land without it (#576).
+      named as an example and not as a destination for your board; it sits
+      in that operator's own state repository, so the link is a citation
+      and not a page you need to open. This is not the fleet's `repos.txt`
+      a second time: that registry answers which repositories the fleet
+      *works*, the catalog which boards the operator *governs*, and a
+      governed board need not be fleet-worked. A board absent from the
+      catalog is not enumerated by the censuses that a taxonomy change, a
+      pin bump or a label retirement each run first, so those land without
+      it (#576).
 - [ ] What stays, per repo, forever: `VERSION` (or the `package.json`
       version), `CHANGELOG.md`, `changelog.d/`, `drills/`, `.github/labeler.yml`,
       `.github/labels.conf`, the optional
