@@ -171,8 +171,8 @@ not to guess.
   code span creates no entry in it (#200, #218). A **commit message** is the
   second closing carrier and produces no entry in that graph at all, so a
   clean graph is evidence about the body and never about the question
-  (#591). Put the number first (`#N is closed by hand`) or omit it, in a
-  commit message as in the body.
+  (#591). In either carrier the safe forms are the same.
+  Put the number first (`#N is closed by hand`) or omit it.
 - **The issue's acceptance criteria are your definition of done**: reproduce
   them as a checklist in the PR body and check them honestly. One that turns
   out wrong or unreachable goes back to triage to be amended, never silently

@@ -45,9 +45,9 @@ In order of authority:
    inside a code span there is not a defect or grounds for request-changes.
    The graph never sees the commit carrier, so a clean one is no evidence
    that the issue will not close; read the commit list yourself and treat an
-   adjacent keyword there exactly as you would one in the body (#591). The
-   safe forms put the number first (`#N is closed by hand`) or omit it
-   (`triage closes the issue by hand`). Check every
+   adjacent keyword there exactly as you would one in the body (#591).
+   The safe forms put the number first (`#N is
+   closed by hand`) or omit it (`triage closes the issue by hand`). Check every
    criterion; a PR that ships less than the issue says is a request-changes
    even if the code is beautiful.
 2. **The repo's load-bearing constraints** — the rules bought with
