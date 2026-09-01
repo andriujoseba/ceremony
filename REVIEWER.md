@@ -34,15 +34,20 @@ In order of authority:
    request-changes on the "missing" keyword asks for a close the successor
    owns. The shape once served a post-merge criterion too — `Closes #137`
    closed its issue with such a criterion unmet, which is what bought the rule
-   (#151) — and that path is retired, no mint producing one (#536). For a
-   `Refs #N` body, also verify that no closing keyword immediately precedes
-   `#N` anywhere in the body, even in prose explaining the hand close: GitHub
-   used that shape to close #209 and #212 (#200, #218). The
-   `refs-not-closing` guard and GitHub's closing-issue graph settle the
-   check: a `Refs #N` head with a clean graph closes nothing, and a
-   closing keyword quoted inside a code span at such a head is not a defect or
-   grounds for request-changes. The safe forms put the number first (`#N is
-   closed by hand`) or omit it (`triage closes the issue by hand`). Check every
+   (#151) — and that path is retired, no mint producing one (#536). At a
+   `Refs #N` head, verify that no closing keyword immediately precedes `#N`
+   in **either** carrier: anywhere in the body, even in prose explaining the
+   hand close, and anywhere in the PR's **commit messages**, whose list you
+   read as part of this check. GitHub used that shape to close #209 and #212
+   (#200, #218). The `refs-not-closing` guard and GitHub's closing-issue
+   graph settle the **body** half and no more: a clean graph at such a head
+   means the body carries no closing reference, and a closing keyword quoted
+   inside a code span there is not a defect or grounds for request-changes.
+   The graph never sees the commit carrier, so a clean one is no evidence
+   that the issue will not close; read the commit list yourself and treat an
+   adjacent keyword there exactly as you would one in the body (#591). The
+   safe forms put the number first (`#N is closed by hand`) or omit it
+   (`triage closes the issue by hand`). Check every
    criterion; a PR that ships less than the issue says is a request-changes
    even if the code is beautiful.
 2. **The repo's load-bearing constraints** — the rules bought with
