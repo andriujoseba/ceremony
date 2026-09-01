@@ -45,7 +45,7 @@ printf 'AGENTS.md\nRULES.md\n' >"$SRC/docs/VENDORED.txt"
 printf '# router v1\n' >"$SRC/AGENTS.md"
 printf '# rules v1\n' >"$SRC/RULES.md"
 
-LADDER_TAGS="0.7.7 0.7.6 0.7.5 0.7.4 0.7.3 0.7.2 0.7.1 0.7.0 0.6.0 0.5.0 0.4.1 0.4.0 0.3.0 0.2.0 0.1.0"
+LADDER_TAGS="0.7.8 0.7.7 0.7.6 0.7.5 0.7.4 0.7.3 0.7.2 0.7.1 0.7.0 0.6.3 0.6.2 0.6.1 0.6.0 0.5.0 0.4.1 0.4.0 0.3.0 0.2.0 0.1.0"
 {
   printf '# Changelog\n\n## Unreleased\n\n- nothing yet\n\n'
   for t in $LADDER_TAGS; do
