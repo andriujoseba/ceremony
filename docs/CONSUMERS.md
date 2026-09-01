@@ -1802,7 +1802,7 @@ The refusals, and what each one means:
 | **the refs are not all at one ref** | two ceremony refs in one tree, so it has no single pin — usually a bump that moved some lines and not others | put them on one ref by hand, then re-run; the message names the files that differ |
 | **the current pin is not a released tag** | a branch or a commit SHA cannot be placed on the release ladder, so which migrations the move crosses is unknowable | pin to a released tag first |
 | **the target tag does not exist** | the tag was never cut — check it against the [releases page](https://github.com/heavy-duty/ceremony/releases), or pass `--source` to preview an unreleased tree | — |
-| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | do the migrations by hand, in the sections the message names, then re-run — or move in steps, to the tag before the first one |
+| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | the crossing is hand-only: perform the first crossed tag's edits and move the ceremony refs to that tag in the same commit, because tree edits alone do not change the pinned interval. When a released tag exists between the current pin and that first crossing, the message emits that shorter runnable move; otherwise it says no shorter move exists |
 | **the move is backwards** | a downgrade; this guide's notes are written forwards and none of them says how to undo a tag | undo the crossed migrations deliberately and move the refs by hand |
 
 Every refusal names the tags it is refusing over and the section of this
