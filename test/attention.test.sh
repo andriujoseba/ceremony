@@ -24,9 +24,10 @@ check "an unassigned issue target is commented without precedence" 0 "POST" \
 check "claimed-unassigned precedence suppresses the second comment" 0 "SUPPRESS" \
   attention_comment_decision MALFORMED_UNASSIGNED claimed-unassigned
 # Not a duplicate of the case above, and the literal is synthetic on purpose.
-# The helper under test asks PRESENCE — `lib/attention.sh:29` is
-# `[ -n "$2" ]`, not a comparison — so this is the only case pinning that the
-# verdict does not key on which precedence it was handed. Weaken that line to
+# The helper under test asks PRESENCE — the `MALFORMED_UNASSIGNED` branch of
+# `attention_comment_decision` in `lib/attention.sh` is `[ -n "$2" ]`, not a
+# comparison — so this is the only case pinning that the verdict does not key
+# on which precedence it was handed. Weaken that predicate to
 # `[ "$2" = claimed-unassigned ]` and this case is the sole red; its neighbour
 # stays green. A real board state here would name the thing the rule must not
 # look at, which is how this case last read as redundant and acquired a
