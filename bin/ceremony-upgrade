@@ -630,6 +630,11 @@ done
 if [ "${#crossed[@]}" -gt 0 ]; then
   first_crossed="${ladder[$first_crossed_i]}"
   step_i=$((first_crossed_i - 1))
+  printf -v runnable_self '%q' "$0"
+  if [ -n "$source_dir" ]; then
+    printf -v quoted_source_dir '%q' "$source_dir"
+    runnable_self+=" --source $quoted_source_dir"
+  fi
   {
     echo "$SELF: FAULT — moving $current -> $target crosses ${#crossed[@]} migration(s), so this command refuses to move the pin."
     echo
@@ -670,7 +675,7 @@ if [ "${#crossed[@]}" -gt 0 ]; then
     echo "  command resumes from the new pin."
     echo
     if [ "$step_i" -gt "$current_i" ]; then
-      echo "  SHORTER MOVE: $SELF ${ladder[$step_i]}"
+      echo "  SHORTER MOVE: $runnable_self ${ladder[$step_i]}"
     else
       echo "  NO SHORTER MOVE: the first crossed tag $first_crossed is the next tag on the ladder after $current."
     fi

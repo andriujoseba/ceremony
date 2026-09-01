@@ -28,6 +28,8 @@ DOCS_SYNC="$ROOT/actions/docs-sync/docs-sync.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+ln -s "$ROOT" "$TMP/ceremony tool"
+SCRIPT_WITH_SPACE="$TMP/ceremony tool/bin/ceremony-upgrade"
 
 # --- the source tree ----------------------------------------------------------
 #
@@ -155,6 +157,12 @@ in_consumer() {
   local dir="$1"
   shift
   (cd "$TMP/$dir" && bash "$SCRIPT" "$@")
+}
+
+in_consumer_with_script() {
+  local dir="$1" script="$2"
+  shift 2
+  (cd "$TMP/$dir" && bash "$script" "$@")
 }
 
 in_consumer_docs_sync() {
@@ -313,8 +321,9 @@ runnable_step_lines() {
     sed -n '/^  SHORTER MOVE:/p'
 }
 in_consumer_with_override() {
+  local name="$1"
   (
-    cd "$TMP/atwall" || return
+    cd "$TMP/$name" || return
     CEREMONY_UPGRADE_MIGRATIONS_DONE=1 \
       bash "$SCRIPT" --check --source "$SRC" 0.7.8
   )
@@ -381,14 +390,17 @@ check_absent "a no-shorter-move refusal carries no runnable step line" 0 "SHORTE
 # command's own line is performable (#588).
 consumer stepable 0.6.1
 suggested_step() {
-  in_consumer stepable --check --source "$SRC" 0.7.8 2>&1 |
-    sed -nE 's/^  SHORTER MOVE: ceremony-upgrade ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p'
+  suggested_step_line | sed -nE 's/.* ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p'
+}
+suggested_step_line() {
+  in_consumer_with_script stepable "$SCRIPT_WITH_SPACE" \
+    --check --source "$SRC" 0.7.8 2>&1 | sed -n 's/^  SHORTER MOVE: //p'
 }
 run_suggested_step() {
-  local suggested
-  suggested="$(suggested_step)"
-  [ -n "$suggested" ] || return 97
-  in_consumer stepable --check --source "$SRC" "$suggested"
+  local suggested_line
+  suggested_line="$(suggested_step_line)"
+  [ -n "$suggested_line" ] || return 97
+  (cd "$TMP/stepable" && bash -c "$suggested_line")
 }
 check "the first crossed tag is named on a stepable move" 1 "FIRST CROSSED TAG: 0.7.0" \
   in_consumer stepable --check --source "$SRC" 0.7.8
@@ -554,7 +566,7 @@ check "--force is not an accepted override" 1 "unknown argument" \
 check_absent "the usage text advertises no override" 1 "--force" \
   in_consumer happy --check --source "$SRC"
 check "an override-shaped environment variable cannot bypass fault 6" 1 \
-  "THE CROSSING IS HAND-ONLY" in_consumer_with_override
+  "THE CROSSING IS HAND-ONLY" in_consumer_with_override atwall
 check "--source with no directory is refused" 1 "--source needs a directory" \
   in_consumer happy --check --source
 check "a missing --source directory is refused" 1 "no such directory" \
