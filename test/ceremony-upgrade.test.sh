@@ -28,6 +28,8 @@ DOCS_SYNC="$ROOT/actions/docs-sync/docs-sync.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+ln -s "$ROOT" "$TMP/ceremony tool"
+SCRIPT_WITH_SPACE="$TMP/ceremony tool/bin/ceremony-upgrade"
 
 # --- the source tree ----------------------------------------------------------
 #
@@ -45,7 +47,7 @@ printf 'AGENTS.md\nRULES.md\n' >"$SRC/docs/VENDORED.txt"
 printf '# router v1\n' >"$SRC/AGENTS.md"
 printf '# rules v1\n' >"$SRC/RULES.md"
 
-LADDER_TAGS="0.7.7 0.7.6 0.7.5 0.7.4 0.7.3 0.7.2 0.7.1 0.7.0 0.6.0 0.5.0 0.4.1 0.4.0 0.3.0 0.2.0 0.1.0"
+LADDER_TAGS="0.7.8 0.7.7 0.7.6 0.7.5 0.7.4 0.7.3 0.7.2 0.7.1 0.7.0 0.6.3 0.6.2 0.6.1 0.6.0 0.5.0 0.4.1 0.4.0 0.3.0 0.2.0 0.1.0"
 {
   printf '# Changelog\n\n## Unreleased\n\n- nothing yet\n\n'
   for t in $LADDER_TAGS; do
@@ -155,6 +157,12 @@ in_consumer() {
   local dir="$1"
   shift
   (cd "$TMP/$dir" && bash "$SCRIPT" "$@")
+}
+
+in_consumer_with_script() {
+  local dir="$1" script="$2"
+  shift 2
+  (cd "$TMP/$dir" && bash "$script" "$@")
 }
 
 in_consumer_docs_sync() {
@@ -307,8 +315,28 @@ unchanged "the mixed-ref refusal leaves the tree byte-identical (--fix)" "$TMP/m
 # ============================================================================
 
 consumer ancient 0.1.0
+runnable_step_lines() {
+  local name="$1" target="$2"
+  in_consumer "$name" --check --source "$SRC" "$target" 2>&1 |
+    sed -n '/^  SHORTER MOVE:/p'
+}
+in_consumer_with_override() {
+  local name="$1"
+  (
+    cd "$TMP/$name" || return
+    CEREMONY_UPGRADE_MIGRATIONS_DONE=1 \
+      bash "$SCRIPT" --check --source "$SRC" 0.7.8
+  )
+}
 
 check "a move crossing migrations is refused" 1 "crosses 6 migration(s)" \
+  in_consumer ancient --check --source "$SRC" 0.7.7
+check "every migration refusal names the hand-only boundary" 1 "THE CROSSING IS HAND-ONLY" \
+  in_consumer ancient --check --source "$SRC" 0.7.7
+check "the hand-only boundary says the pin, not the tree, defines the crossed set" 1 \
+  "read from the pin on the ladder, never from the tree" \
+  in_consumer ancient --check --source "$SRC" 0.7.7
+check_absent "the dead then-re-run remedy is absent from migration refusals" 1 "then re-run" \
   in_consumer ancient --check --source "$SRC" 0.7.7
 unchanged "the migration refusal leaves the WHOLE tree byte-identical (--check)" "$TMP/ancient" \
   in_consumer ancient --check --source "$SRC" 0.7.7
@@ -350,6 +378,62 @@ check "the refusal lists the files it would have rewritten" 1 ".github/workflows
   in_consumer ancient --check --source "$SRC" 0.7.7
 check "the refusal says the tree is unchanged" 1 "THE TREE IS UNCHANGED" \
   in_consumer ancient --check --source "$SRC" 0.7.7
+check "the oldest pin has no shorter move before its first crossed tag" 1 \
+  "NO SHORTER MOVE: the first crossed tag 0.2.0 is the next tag on the ladder" \
+  in_consumer ancient --check --source "$SRC" 0.7.7
+check_absent "a no-shorter-move refusal carries no runnable step line" 0 "SHORTER MOVE:" \
+  runnable_step_lines ancient 0.7.7
+
+# A real shorter move exists only BELOW the first crossed tag. Extract the
+# suggestion from the refusal and execute that exact tag: hard-coding the
+# second invocation would test our expectation twice while never proving the
+# command's own line is performable (#588).
+consumer stepable 0.6.1
+suggested_step() {
+  suggested_step_line | sed -nE 's/.* ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p'
+}
+suggested_step_line() {
+  in_consumer_with_script stepable "$SCRIPT_WITH_SPACE" \
+    --check --source "$SRC" 0.7.8 2>&1 | sed -n 's/^  SHORTER MOVE: //p'
+}
+run_suggested_step() {
+  local suggested_line
+  suggested_line="$(suggested_step_line)"
+  [ -n "$suggested_line" ] || return 97
+  (cd "$TMP/stepable" && bash -c "$suggested_line")
+}
+check "the first crossed tag is named on a stepable move" 1 "FIRST CROSSED TAG: 0.7.0" \
+  in_consumer stepable --check --source "$SRC" 0.7.8
+check "the shorter move line names the rung below the first crossing" 0 "0.6.3" \
+  suggested_step
+check "the extracted shorter move is accepted by the command" 0 \
+  "no migration between 0.6.1 and 0.6.3" run_suggested_step
+check_absent "a stepable refusal does not claim there is no shorter move" 1 "NO SHORTER MOVE:" \
+  in_consumer stepable --check --source "$SRC" 0.7.8
+check_absent "the stepable refusal contains no dead then-re-run remedy" 1 "then re-run" \
+  in_consumer stepable --check --source "$SRC" 0.7.8
+unchanged "the stepable refusal leaves the WHOLE tree byte-identical (--check)" "$TMP/stepable" \
+  in_consumer stepable --check --source "$SRC" 0.7.8
+unchanged "the stepable refusal leaves the WHOLE tree byte-identical (--fix)" "$TMP/stepable" \
+  in_consumer stepable --fix --source "$SRC" 0.7.8
+
+# The first crossed tag is the next rung. Falling back to the current tag
+# would emit a command that exits zero while doing nothing, so this branch
+# must carry only the explicit wall and never a runnable step line (#588).
+consumer atwall 0.7.7
+check "the at-wall refusal names its first crossed tag" 1 "FIRST CROSSED TAG: 0.7.8" \
+  in_consumer atwall --check --source "$SRC" 0.7.8
+check "the at-wall refusal says no shorter move exists" 1 \
+  "NO SHORTER MOVE: the first crossed tag 0.7.8 is the next tag on the ladder" \
+  in_consumer atwall --check --source "$SRC" 0.7.8
+check_absent "the at-wall refusal carries no runnable step line" 0 "SHORTER MOVE:" \
+  runnable_step_lines atwall 0.7.8
+check_absent "the at-wall refusal contains no dead then-re-run remedy" 1 "then re-run" \
+  in_consumer atwall --check --source "$SRC" 0.7.8
+unchanged "the at-wall refusal leaves the WHOLE tree byte-identical (--check)" "$TMP/atwall" \
+  in_consumer atwall --check --source "$SRC" 0.7.8
+unchanged "the at-wall refusal leaves the WHOLE tree byte-identical (--fix)" "$TMP/atwall" \
+  in_consumer atwall --fix --source "$SRC" 0.7.8
 
 # --- 0.4.1 in particular ------------------------------------------------------
 #
@@ -383,6 +467,11 @@ check_absent "0.4.1 is not re-listed when the consumer already stands on it" 1 "
 consumer arrive 0.4.0
 check "arriving at a migration tag fires it" 1 "TWO-CALLER SPLIT" \
   in_consumer arrive --check --source "$SRC" 0.4.1
+check "arriving at the next migration rung has no shorter move" 1 \
+  "NO SHORTER MOVE: the first crossed tag 0.4.1 is the next tag on the ladder" \
+  in_consumer arrive --check --source "$SRC" 0.4.1
+check_absent "the next-rung migration refusal carries no step line" 0 "SHORTER MOVE:" \
+  runnable_step_lines arrive 0.4.1
 
 # A move that crosses nothing is not refused, and this is the row that keeps
 # the table from being "refuse everything".
@@ -472,6 +561,12 @@ check "two target tags are refused" 1 "two target tags given" \
   in_consumer happy --check --source "$SRC" 0.7.6 0.7.7
 check "an unknown flag is refused" 1 "unknown argument" \
   in_consumer happy --check --source "$SRC" --wat 0.7.7
+check "--force is not an accepted override" 1 "unknown argument" \
+  in_consumer happy --check --source "$SRC" --force 0.7.7
+check_absent "the usage text advertises no override" 1 "--force" \
+  in_consumer happy --check --source "$SRC"
+check "an override-shaped environment variable cannot bypass fault 6" 1 \
+  "THE CROSSING IS HAND-ONLY" in_consumer_with_override atwall
 check "--source with no directory is refused" 1 "--source needs a directory" \
   in_consumer happy --check --source
 check "a missing --source directory is refused" 1 "no such directory" \
@@ -526,6 +621,8 @@ check "a 404 is the target-missing fault, named as such" 1 "does not exist upstr
   run_fetch happyfetch 404 --check 0.9.9
 check "a 5xx is transient and says the tag is not in doubt" 1 "transient" \
   run_fetch happyfetch 503 --check 0.7.7
+check "the transient 5xx remedy still says re-run" 1 "re-run" \
+  run_fetch happyfetch 503 --check 0.7.7
 check_absent "a 5xx does not accuse the tag" 1 "does not exist upstream" \
   run_fetch happyfetch 503 --check 0.7.7
 unchanged "a failed fetch writes nothing" "$TMP/happyfetch" \
@@ -535,6 +632,21 @@ unchanged "a failed fetch writes nothing" "$TMP/happyfetch" \
 # away and the network is genuinely what the command reaches for.
 check "without --source the command really does reach for the network" 1 "" \
   run_fetch happyfetch none --check 0.7.7
+
+# The guide and executable are one consumer-facing contract. Keep this on
+# the single refusal-table row so an unrelated legitimate "then re-run"
+# elsewhere in the guide cannot satisfy or fail the repair (#588).
+migration_refusal_guide_row() {
+  grep -F '| **the move crosses a migration**' "$ROOT/docs/CONSUMERS.md"
+}
+check "the guide says a migration crossing is hand-only" 0 "crossing is hand-only" \
+  migration_refusal_guide_row
+check "the guide includes the ref move in the hand crossing" 0 \
+  "move the ceremony refs to that tag in the same commit" migration_refusal_guide_row
+check "the guide bounds a shorter move below the first crossing" 0 \
+  "between the current pin and that first crossing" migration_refusal_guide_row
+check_absent "the guide's migration refusal row drops the dead remedy" 0 "then re-run" \
+  migration_refusal_guide_row
 
 # ============================================================================
 # The migration table tracks docs/CONSUMERS.md

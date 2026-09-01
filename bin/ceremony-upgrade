@@ -617,15 +617,24 @@ fi
 # tag that is in the table but not on this ladder — a version that had not
 # shipped when the target was cut — simply is not in the slice.
 crossed=()
+first_crossed_i=-1
 for ((i = current_i + 1; i <= target_i; i++)); do
   for row in "${MIGRATIONS[@]}"; do
     if [ "${row%%|*}" = "${ladder[$i]}" ]; then
       crossed+=("$row")
+      [ "$first_crossed_i" -ge 0 ] || first_crossed_i="$i"
     fi
   done
 done
 
 if [ "${#crossed[@]}" -gt 0 ]; then
+  first_crossed="${ladder[$first_crossed_i]}"
+  step_i=$((first_crossed_i - 1))
+  printf -v runnable_self '%q' "$0"
+  if [ -n "$source_dir" ]; then
+    printf -v quoted_source_dir '%q' "$source_dir"
+    runnable_self+=" --source $quoted_source_dir"
+  fi
   {
     echo "$SELF: FAULT — moving $current -> $target crosses ${#crossed[@]} migration(s), so this command refuses to move the pin."
     echo
@@ -633,6 +642,8 @@ if [ "${#crossed[@]}" -gt 0 ]; then
     echo "  consumer tree must CONTAIN, and rewriting the ref without the"
     echo "  accompanying hand edit does not leave you half-upgraded — it leaves"
     echo "  a tree that fails loudly, or a board that stops working."
+    echo
+    echo "  FIRST CROSSED TAG: $first_crossed"
     echo
     for row in "${crossed[@]}"; do
       tag="${row%%|*}"
@@ -652,8 +663,22 @@ if [ "${#crossed[@]}" -gt 0 ]; then
     ref_report
     echo "    then re-sync the doctrine mirror (docs-sync --fix)."
     echo
-    echo "  Do the migrations by hand, in the sections named, then re-run — or"
-    echo "  move in steps, to the tag before the first migration."
+    # The pin, not evidence of a hand edit in the tree, defines the interval.
+    # So the only truthful crossing moves the edits and refs together, while
+    # the only automatic alternative must end below the first crossed tag
+    # and be proven by running the emitted target through this command (#588).
+    echo "  THE CROSSING IS HAND-ONLY"
+    echo "  The crossed set is read from the pin on the ladder, never from the tree."
+    echo "  To cross $first_crossed by hand, perform its named edits and move every"
+    echo "  ceremony ref to @$first_crossed in the same commit. Edits alone do not"
+    echo "  move the pin and cannot change this refusal. After that commit, this"
+    echo "  command resumes from the new pin."
+    echo
+    if [ "$step_i" -gt "$current_i" ]; then
+      echo "  SHORTER MOVE: $runnable_self ${ladder[$step_i]}"
+    else
+      echo "  NO SHORTER MOVE: the first crossed tag $first_crossed is the next tag on the ladder after $current."
+    fi
     echo
     # On its own line, unwrapped: this is the sentence a reader greps for
     # after a refusal, and a phrase broken across two lines is a phrase that
