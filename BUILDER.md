@@ -163,12 +163,16 @@ not to guess.
   Never write `Refs #N` to route around it (#151, #536).
 - On a `Refs #N` PR, never put a closing keyword (`close`, `closes`,
   `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`)
-  immediately before `#N` anywhere in the body, including the sentence
-  explaining why the PR does not close it: GitHub reads the body by
-  adjacency, not intent. GitHub's closing-issue graph at the head is the
-  authority: `refs-not-closing` reads it, and a closing keyword quoted inside
-  a code span creates no entry in it (#200, #218). Put the number first (`#N
-  is closed by hand`) or omit it.
+  immediately before `#N` **in the body or in any commit message on the
+  branch**, including the sentence explaining why the PR does not close it:
+  GitHub reads both carriers by adjacency, not intent. Over the body carrier
+  the closing-issue graph at the head settles it, and only there:
+  `refs-not-closing` reads that graph, and a closing keyword quoted inside a
+  code span creates no entry in it (#200, #218). A **commit message** is the
+  second closing carrier and produces no entry in that graph at all, so a
+  clean graph is evidence about the body and never about the question
+  (#591). In either carrier the safe forms are the same.
+  Put the number first (`#N is closed by hand`) or omit it.
 - **The issue's acceptance criteria are your definition of done**: reproduce
   them as a checklist in the PR body and check them honestly. One that turns
   out wrong or unreachable goes back to triage to be amended, never silently
