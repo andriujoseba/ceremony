@@ -312,6 +312,13 @@ runnable_step_lines() {
   in_consumer "$name" --check --source "$SRC" "$target" 2>&1 |
     sed -n '/^  SHORTER MOVE:/p'
 }
+in_consumer_with_override() {
+  (
+    cd "$TMP/atwall" || return
+    CEREMONY_UPGRADE_MIGRATIONS_DONE=1 \
+      bash "$SCRIPT" --check --source "$SRC" 0.7.8
+  )
+}
 
 check "a move crossing migrations is refused" 1 "crosses 6 migration(s)" \
   in_consumer ancient --check --source "$SRC" 0.7.7
@@ -547,9 +554,7 @@ check "--force is not an accepted override" 1 "unknown argument" \
 check_absent "the usage text advertises no override" 1 "--force" \
   in_consumer happy --check --source "$SRC"
 check "an override-shaped environment variable cannot bypass fault 6" 1 \
-  "THE CROSSING IS HAND-ONLY" env CEREMONY_UPGRADE_MIGRATIONS_DONE=1 \
-  bash -c 'cd "$1" && bash "$2" --check --source "$3" 0.7.8' _ \
-  "$TMP/atwall" "$SCRIPT" "$SRC"
+  "THE CROSSING IS HAND-ONLY" in_consumer_with_override
 check "--source with no directory is refused" 1 "--source needs a directory" \
   in_consumer happy --check --source
 check "a missing --source directory is refused" 1 "no such directory" \
