@@ -1048,6 +1048,12 @@ step_0_4_1_two_caller_split() {
         [[:space:]]*[!\ ]*) ;;
         *) continue ;;
       esac
+      # A comment is not a key and does not close the block: a note written at
+      # the block's own indent between `workflow_dispatch:` and its `inputs:`
+      # would otherwise end this scan one line short of the thing it looks for.
+      case "$(printf '%s\n' "$text" | sed 's/^[[:space:]]*//')" in
+        \#*) continue ;;
+      esac
       indent="${text%%[! ]*}"
       if [ "${#indent}" -le "${#on_indent}" ]; then break; fi
       step_refuse \
@@ -1114,6 +1120,12 @@ step_0_4_1_two_caller_split() {
   # `with:` on the labels caller's job: the routing the new caller inherits.
   # Read at the pin line's own indent, so a `with:` belonging to some other
   # job in the same file is not read as this one's.
+  #
+  # EVERY key of that job is looked at, not just the one after the pin: a
+  # caller writing `secrets: inherit` between its `uses:` and its `with:` is
+  # ordinary, and a reader that stopped at the first sibling would carry no
+  # routing while reporting none to carry — silently, which is the one way
+  # this step is not allowed to be wrong.
   indent="$(sed -n "${caller_pin_line}p" "$caller")"
   indent="${indent%%[! ]*}"
   while IFS=$'\t' read -r lineno text; do
@@ -1128,7 +1140,6 @@ step_0_4_1_two_caller_split() {
       with_line="$lineno"
       with_pairs="$(printf '%s\n' "$text" | yaml_uncomment | sed "s/^[[:space:]]*with:[[:space:]]*//")"
     fi
-    break
   done < <(awk -v start="$caller_pin_line" -v ind="${#indent}" '
     NR <= start { next }
     { line = $0; sub(/[ \t]*$/, "", line) }

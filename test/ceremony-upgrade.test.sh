@@ -1313,6 +1313,63 @@ check "the actions key appears exactly once after an insert" 0 "1" \
 check "the keys the block already had are still there" 0 "  pull-requests: write" \
   caller_of noactions
 
+# The routing read looks at the whole job, not the line after the pin. A
+# caller writing `secrets: inherit` between its `uses:` and its `with:` is
+# ordinary, and the failure a reader that stopped early produces is the silent
+# one: no routing carried, and nothing said about it.
+secrets_caller() {
+  cat <<EOF
+name: board
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+    secrets: inherit
+    with: { runner: '"ubuntu-22.04"' }
+EOF
+}
+split_consumer secretsfirst 0.3.0 secrets_caller
+check "routing is carried past an intervening job key" 0 "0.3.0 -> 0.4.1 done" \
+  in_consumer secretsfirst --fix --source "$SRC" 0.4.1
+check "the runner behind secrets: inherit still reached the sweep caller" 0 \
+  "    with: { pr_workflow_name: board, runner: '\"ubuntu-22.04\"' }" \
+  sweep_of secretsfirst
+
+# ...and a comment at the on: block's own indent does not end the scan that
+# looks for a dispatch's inputs. This tree must still refuse.
+commented_inputs_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  # why this board keeps a dispatch of its own
+    inputs:
+      why:
+        type: string
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer commentedinputs 0.3.0 commented_inputs_caller
+check "a comment does not hide a dispatch's inputs from the refusal" 1 \
+  "dispatch inputs with it" in_consumer commentedinputs --check --source "$SRC" 0.4.1
+unchanged "the commented-inputs refusal writes nothing" "$TMP/commentedinputs" \
+  in_consumer commentedinputs --fix --source "$SRC" 0.4.1
+
 # --- A7: every shape the step cannot anchor is a refusal --------------------
 #
 # Each of these is a tree where a best guess is available and wrong. The
