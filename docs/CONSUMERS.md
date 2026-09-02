@@ -997,10 +997,14 @@ left you at, and grades the rest of the move the next time you run it. The
 four edits above stay the procedure: they are what the command performs,
 they are what a reader checks its output against, and they are the answer
 where it refuses. It refuses whenever it cannot anchor an edit
-unambiguously — a `labels-sweep.yml` already in the tree, two `schedule:`
-keys, a `workflow_dispatch:` carrying inputs of your own, no `permissions:`
-block, a `with:` it cannot read — and a refusal leaves the tree
-byte-identical, so the hand procedure is always still open to you.
+unambiguously — a sweep caller already in the tree under either spelling,
+two `schedule:` keys, a `workflow_dispatch:` carrying inputs of your own,
+no `permissions:` block, an `actions:` grant it did not write (anything
+other than one `actions: read`, a write you granted by hand included), a
+`name:` whose quoting it cannot decode, a `with:` it cannot read — and a
+refusal leaves the tree byte-identical, so the hand procedure is always
+still open to you. Every refusal names the file, the line and the shape,
+so what to do by hand is one edit away from what it told you.
 
 `pull_request_target` is intentional: fork PRs need the base repository's
 token to write labels. The reusable workflows execute no PR code. They check
