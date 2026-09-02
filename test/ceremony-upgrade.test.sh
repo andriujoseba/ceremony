@@ -2293,7 +2293,7 @@ check "the mirror is current after a step that wrote no tree edit" 0 \
 # MEASURED, NOT ARGUED. The claim is that this build changed nothing about an
 # unmechanised crossing, and the only reading of that claim which cannot be
 # satisfied by a sentence is the merged tree's own output beside this one's:
-# `git archive` of 1c2ffd1 (PR 598's merge, the commit this issue is minted
+# `git archive` of 1c2ffd1 (#597's merge, the commit this issue is minted
 # against) into a directory, one identical fixture each side, `diff` empty.
 MERGED="$TMP/merged-1c2ffd1"
 mkdir -p "$MERGED"
@@ -2352,7 +2352,7 @@ check "and the merged tree is the one that refuses that move" 1 \
   "FIRST CROSSED TAG: 0.5.0" \
   stepped_output_from "$MERGED/bin/ceremony-upgrade" onsplitmerged
 
-# --- B8: the CRLF grant refusal names line endings (#598, reading (a)) ------
+# --- B8: the CRLF grant refusal names line endings (#600 E8(a)) ------------
 #
 # A caller written with CRLF endings refuses correctly and always did — the
 # value read at the `actions:` line is `read` followed by a carriage return,
@@ -2408,7 +2408,7 @@ check_absent "and says nothing about line endings, which are not its problem" 1 
   "DIFFER ONLY IN THEIR LINE ENDINGS" \
   in_consumer grantnone --check --source "$SRC" 0.4.1
 
-# --- B9: the with: indent is the stub's own (#598, reading (b)) -------------
+# --- B9: the with: indent is the stub's own (#600 E8(b)) -------------------
 #
 # Every other assumption this step makes about the published block is an exact
 # count that dies loudly. The `with:` was appended at a hard-coded four spaces

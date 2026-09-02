@@ -1190,7 +1190,7 @@ step_0_4_1_two_caller_split() {
       "  by rewriting one of them and leaving the rest."
   fi
   if [ "$actions_count" -eq 1 ] && [ "$actions_value" != "read" ]; then
-    # A VALUE THIS MESSAGE PRINTS IS PRINTABLE (#598 claude-bot (a)). On a
+    # A VALUE THIS MESSAGE PRINTS IS PRINTABLE (#600 E8(a)). On a
     # caller written with CRLF endings the value read here is `read` followed
     # by a carriage return, and the refusal that shipped put those same four
     # visible bytes on both sides of a sentence saying they differ — the
@@ -1392,8 +1392,8 @@ step_0_4_1_two_caller_split() {
     "$SELF: the sweep-caller stub in $GUIDE_NAME at $first_crossed carries" \
     "  $stub_sched_lines 'schedule:' keys, and this step relocates the" \
     "  consumer's cron onto exactly one. Nothing was written."
-  # THE `with:` INDENT IS READ FROM THE STUB, NEVER ASSUMED (#598 codex-bot
-  # (b)). Every other assumption this step makes about the published block is
+  # THE `with:` INDENT IS READ FROM THE STUB, NEVER ASSUMED (#600 E8(b)).
+  # Every other assumption this step makes about the published block is
   # an exact count that dies loudly — the placeholder occurrences and the
   # `schedule:` keys above — while the append below used to write four spaces
   # because that is what the block happened to indent its job keys at. That is
