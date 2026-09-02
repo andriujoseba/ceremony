@@ -913,7 +913,7 @@ step_0_4_1_two_caller_split() {
   local disp_line="" disp_count=0
   local actions_line="" perm_last_key="" perm_indent="" on_indent=""
   local caller_name="" runner="" with_line="" lineno text indent key val
-  local stub_sched_lines with_pairs=""
+  local stub_sched_lines with_pairs="" sweep_name
 
   sweep="$GITHUB_DIR/workflows/labels-sweep.yml"
 
@@ -1170,15 +1170,21 @@ step_0_4_1_two_caller_split() {
   # nothing in it expands, and the backtick is the guide's markup.
   # shellcheck disable=SC2016
   stub_body="$(fenced_block "$guide_file" '^And the complete sweep caller, `labels-sweep\.yml` beside it')"
+  # The name the block must open with is DERIVED from the path this step
+  # creates, never written out beside it: a workflow's name and its filename
+  # are one fact, and the criterion that keeps the stub single-sourced greps
+  # for that name declaration and expects to find none under bin/.
+  sweep_name="${sweep##*/}"
+  sweep_name="${sweep_name%.yml}"
   case "$stub_body" in
-    "name: labels-sweep"*) ;;
+    "name: $sweep_name"*) ;;
     *)
       die "$SELF: $GUIDE_NAME at $first_crossed carries no sweep-caller stub" \
         "  this step can read." \
         "" \
         "  It looks for the fenced yaml block published under \"And the" \
-        "  complete sweep caller\", and that block must open with" \
-        "  'name: labels-sweep'. There is no embedded copy of it to fall back" \
+        "  complete sweep caller\", and that block must open by naming the" \
+        "  workflow $sweep_name. There is no embedded copy of it to fall back" \
         "  to and this step will not write one it did not read. Nothing was" \
         "  written."
       ;;

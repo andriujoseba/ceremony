@@ -55,6 +55,35 @@ LADDER_TAGS="0.7.8 0.7.7 0.7.6 0.7.5 0.7.4 0.7.3 0.7.2 0.7.1 0.7.0 0.6.3 0.6.2 0
   done
 } >"$SRC/CHANGELOG.md"
 
+# The guide the applied step reads, and the ONE place its caller stub comes
+# from. The block is EXTRACTED FROM THIS REPOSITORY'S OWN docs/CONSUMERS.md
+# rather than written out here: a fixture carrying its own copy of a published
+# block is the second source of truth the step exists to avoid, and it goes
+# stale silently the first time the real block moves. So the source tree
+# standing in for ceremony at a tag publishes exactly what ceremony publishes.
+sweep_stub_from_guide() {
+  awk '/^And the complete sweep caller, .labels-sweep\.yml. beside it/ { armed = 1; next }
+       armed && /^```yaml$/ { inblock = 1; next }
+       inblock && /^```$/ { exit }
+       inblock' "$ROOT/docs/CONSUMERS.md"
+}
+write_src_guide() { # $1 = source dir
+  mkdir -p "$1/docs"
+  {
+    cat <<'MD'
+# Consumers
+
+And the complete sweep caller, `labels-sweep.yml` beside it — the hourly
+cron lives HERE since #209, not on the labels caller:
+
+```yaml
+MD
+    sweep_stub_from_guide
+    printf '```\n'
+  } >"$1/docs/CONSUMERS.md"
+}
+write_src_guide "$SRC"
+
 # --- fixture builders ---------------------------------------------------------
 
 # consumer <name> <ref> — a consumer tree pinned at <ref> in FIVE places
@@ -959,5 +988,523 @@ check "the territory scan ran rather than exiting early" 0 "scanned" outside_ter
 # grade. A SCAFFOLDED.txt that emptied out would satisfy the row forever.
 check "docs/SCAFFOLDED.txt names at least one path to grade" 0 \
   ".github/pull_request_template.md" cat "$ROOT/docs/SCAFFOLDED.txt"
+
+# ============================================================================
+# The applied step — 0.4.1's two-caller split (#597)
+# ============================================================================
+#
+# THE INPUTS ARE THE REAL CONSUMERS, measured 2026-09-02 from each board's live
+# `.github/workflows/labels.yml`, and they are the whole reason this step is
+# not a `sed`: neither file resembles the published stub. Both carry
+# repo-specific prose comments, different trigger type lists, different
+# permission blocks, and a `*/15` cadence that is not the stub's hourly one. A
+# step written against the stub's bytes fails on both of them, and a step that
+# substitutes text corrupts whichever one it does not fail on.
+
+# barbershop_caller <ref> — heavy-duty/martin-reyes-barbershop's own labels
+# caller, verbatim but for the pin: a schedule and a bare workflow_dispatch
+# each carrying a trailing hand comment, six permissions including
+# `actions: read` with inline comments of its own, and an `issues:` trigger.
+barbershop_caller() {
+  cat <<EOF
+# The ceremony's labels automation: additive path-based \`scope:*\` labels, plus
+# reconciliation of PR state, blockers, handoff and stale status.
+#
+# Run its \`workflow_dispatch\` ONCE after this merges — that bootstraps the whole
+# taxonomy on a fresh repo, \`release\` included.
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}] # advisory; the handoff label is the real wake
+  workflow_dispatch:                 # bootstraps missing labels on a fresh repo
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, synchronize, labeled, unlabeled, review_requested, review_request_removed]
+  issues:
+    types: [opened, edited, assigned, unassigned, labeled, unlabeled, closed, reopened]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  # This repo is PRIVATE, so none of these three reads are implied — without
+  # them the failure appears as an empty \`state:*\` axis on the board rather than
+  # a red run, which is the harder symptom to notice.
+  checks: read     # statusCheckRollup read for PR state
+  statuses: read   # mergeability/commit-status rollup read
+  actions: read    # checkSuite.workflowRun read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+
+# cast_caller <ref> — heavy-duty/cast's own labels caller, verbatim but for the
+# pin. Three permissions and NO \`actions:\` key at all, no \`issues:\` trigger,
+# and the same */15 cadence.
+cast_caller() {
+  cat <<EOF
+name: labels
+# The automation LABELS.md promises, now implemented upstream: scope labeling
+# and the state reconciler live in the reusable workflow this caller pins. Cast
+# keeps the triggers and permissions (a called workflow cannot define them),
+# its path map in .github/labeler.yml, and its panel + scope taxonomy in
+# .github/labels.conf.
+on:
+  schedule: [{cron: "*/15 * * * *"}] # advisory; the handoff label is the real wake
+  workflow_dispatch:                 # bootstraps missing labels on a fresh repo
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, converted_to_draft, synchronize, labeled, unlabeled]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+
+# split_consumer <name> <ref> <caller-fn> — consumer() with its labels caller
+# replaced by a real one, plus a SIBLING workflow of the consumer's own that
+# carries its own schedule and its own bare workflow_dispatch. That sibling is
+# the fixture for the file-wide-substitution build: a step that removes a cron
+# by pattern rather than by the line it enumerated takes this file's with it.
+split_consumer() {
+  local name="$1" ref="$2" fn="$3"
+  consumer "$name" "$ref"
+  "$fn" "$ref" >"$TMP/$name/.github/workflows/labels.yml"
+  cat >"$TMP/$name/.github/workflows/nightly.yml" <<'EOF'
+name: nightly
+on:
+  schedule: [{cron: "0 3 * * *"}]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make nightly
+EOF
+}
+
+sweep_of() { cat "$TMP/$1/.github/workflows/labels-sweep.yml"; }
+caller_of() { cat "$TMP/$1/.github/workflows/labels.yml"; }
+# The files carrying a top-level-ish `schedule:` key, bracketed so a superset
+# cannot satisfy the row: this is the double-sweep assertion, and it is only
+# an assertion if it can fail by finding one file too many.
+schedule_sites() {
+  printf '[%s]\n' "$(
+    grep -rlE '^[[:space:]]*schedule:' "$TMP/$1/.github/workflows" |
+      sed "s|$TMP/$1/||" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
+  )"
+}
+occurrences() { grep -cF -e "$2" "$TMP/$1"; }
+
+# --- A1, A2, A5, A6: the happy path -----------------------------------------
+
+split_consumer bshop 0.3.0 barbershop_caller
+
+# A5 first, on the untouched tree: --check prints the whole plan and writes
+# nothing. Running it after the --fix below would grade the wrong tree.
+check "--check names the applied step and the tag it stops at" 0 \
+  "0.4.1 is an APPLIED STEP, so this run performs 0.3.0 -> 0.4.1 and stops there" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+check "--check names the file the step would create" 0 \
+  "create .github/workflows/labels-sweep.yml" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+check "--check names the cron relocation and the cadence it preserves" 0 \
+  'the cron RELOCATED from .github/workflows/labels.yml line 8, cadence unchanged: [{cron: "*/15 * * * *"}]' \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+check "--check names the bare workflow_dispatch deletion" 0 \
+  "the bare workflow_dispatch: key, which the sweep caller declares" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+check "--check names the actions: write grant as a line rewrite" 0 \
+  "actions: write, the trigger job's dispatch being a write" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+check "--check names the mirror re-sync" 0 "then re-sync the doctrine mirror" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+check "--check names the pin the run would leave behind" 0 \
+  "THIS RUN LEAVES THE PIN AT 0.4.1" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+unchanged "--check over an applied step leaves the whole tree byte-identical" \
+  "$TMP/bshop" in_consumer bshop --check --source "$SRC" 0.4.1
+
+# A6's baseline, taken before the run that must not move these files.
+NIGHTLY_BEFORE="$(sha256sum <"$TMP/bshop/.github/workflows/nightly.yml")"
+
+check "the applied step completes a move that ends at the crossed tag" 0 \
+  "0.3.0 -> 0.4.1 done, including the applied step for 0.4.1" \
+  in_consumer bshop --fix --source "$SRC" 0.4.1
+check "every ref moved to the crossed tag, the created caller included" 0 \
+  "$((PIN_COUNT + 1)) 0.4.1" refs bshop
+check_absent "no ref is left at the old pin" 0 "0.3.0" refs bshop
+
+# A1 — the sweep caller is the guide's stub at the crossed tag.
+check "the sweep caller exists and carries the pin substituted" 0 \
+  "uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@0.4.1" \
+  sweep_of bshop
+check "the sweep caller declares the bootstrap choice input" 0 \
+  "        type: choice" sweep_of bshop
+check "the bootstrap input keeps its yes default" 0 \
+  '        default: "yes"' sweep_of bshop
+check "the sweep caller carries the consumer's OWN cadence, relocated" 0 \
+  '  schedule: [{cron: "*/15 * * * *"}]' sweep_of bshop
+check_absent "the stub's own hourly cadence was not written over it" 0 \
+  '0 * * * *' sweep_of bshop
+check "the sweep caller keeps the stub's actions: read" 0 \
+  "  actions: read " sweep_of bshop
+
+# A1 — the labels caller. The cron and the bare dispatch are GONE, not
+# commented out and not emptied.
+check_absent "the labels caller no longer declares a schedule" 0 "schedule:" \
+  caller_of bshop
+check_absent "the labels caller no longer declares a bare workflow_dispatch" 0 \
+  "workflow_dispatch:" caller_of bshop
+check "the labels caller now grants actions: write" 0 "  actions: write" \
+  caller_of bshop
+# The blind-append build ends with BOTH keys — YAML GitHub rejects at parse
+# time, and a board that stops. The key appears once, with one value.
+check "the actions key appears exactly once" 0 "1" occurrences bshop/.github/workflows/labels.yml "actions:"
+check_absent "the old actions: read grant is gone" 0 "actions: read" caller_of bshop
+check "the labels caller keeps its own trigger list untouched" 0 \
+  "types: [opened, edited, assigned, unassigned, labeled, unlabeled, closed, reopened]" \
+  caller_of bshop
+check "the labels caller keeps its own permission comments" 0 \
+  "# This repo is PRIVATE" caller_of bshop
+
+# A2 — THE DOUBLE-SWEEP CASE, ASSERTED AS AN ABSENCE. Every other row here
+# passes against a build that COPIES the cron instead of moving it: the sweep
+# caller exists, carries the right cadence, the pin moved, actions: write
+# landed. Only this one fails, and what it catches is the damage the guide
+# capitalises — every tick firing both callers into one labels-reconcile
+# group, displacement going UP, the fix reading as the bug getting worse.
+#
+# The sibling below is A6's, and it is why this row names the files rather
+# than counting to one: the consumer's own nightly workflow has a schedule of
+# its own that nothing in this plan may touch, so "exactly once in the tree"
+# and "the sibling survives" cannot both be literally true. Naming the sites
+# keeps both must-fail builds rejected — a copied cron adds the labels caller
+# to this list, and a file-wide substitution removes the sibling from it.
+check "the cron MOVED: the only ceremony caller carrying a schedule is the sweep one" 0 \
+  "[.github/workflows/labels-sweep.yml .github/workflows/nightly.yml]" \
+  schedule_sites bshop
+
+# A6 — nothing outside the plan moved.
+nightly_now() { sha256sum <"$TMP/bshop/.github/workflows/nightly.yml"; }
+check "the consumer's own scheduled workflow is byte-identical" 0 \
+  "$NIGHTLY_BEFORE" nightly_now
+check "the consumer's README still names its own old version" 0 \
+  "Pinned to ceremony 0.3.0" cat "$TMP/bshop/README.md"
+check "the consumer's own CHANGELOG heading is untouched" 0 \
+  "## 0.3.0 — 2026-02-02" cat "$TMP/bshop/CHANGELOG.md"
+check "the mirror is current after the step, so docs-sync --check passes" 0 \
+  "is an exact mirror" in_consumer_docs_sync bshop --check --source "$SRC"
+
+# --- A4: the step stops at the first crossed tag ----------------------------
+#
+# The build this rejects applies 0.4.1 and KEEPS GOING, refusing at 0.5.0 with
+# the refs already past 0.4.1 — the half-upgraded consumer the whole command
+# exists to make unrepresentable.
+split_consumer bshoplong 0.3.0 barbershop_caller
+# The plan rows run BEFORE the --fix below: afterwards this tree stands at
+# 0.4.1 and the same command grades a different move, so a row placed after it
+# would assert nothing about a partial one.
+check "the run says which pin it will leave the tree at" 1 \
+  "THIS RUN LEAVES THE PIN AT 0.4.1" \
+  in_consumer bshoplong --check --source "$SRC" 0.7.8
+check "the run says what remains beyond it" 1 \
+  "REMAINING: 0.4.1 -> 0.7.8 is not performed by this run" \
+  in_consumer bshoplong --check --source "$SRC" 0.7.8
+check "the run names the next migration between them" 1 \
+  "The next migration between them is 0.5.0" \
+  in_consumer bshoplong --check --source "$SRC" 0.7.8
+check_absent "a partial move never reports the requested move as done" 1 \
+  "0.3.0 -> 0.7.8 done" in_consumer bshoplong --check --source "$SRC" 0.7.8
+unchanged "the partial-move plan writes nothing either" "$TMP/bshoplong" \
+  in_consumer bshoplong --check --source "$SRC" 0.7.8
+check "a move past the crossed tag performs only the first step" 1 \
+  "0.3.0 -> 0.4.1 done, including the applied step for 0.4.1" \
+  in_consumer bshoplong --fix --source "$SRC" 0.7.8
+check "every ref stops at the first crossed tag" 0 "$((PIN_COUNT + 1)) 0.4.1" \
+  refs bshoplong
+check_absent "no ref ran on to the requested target" 0 "0.7.8" refs bshoplong
+# The next run is the ladder's next rung, and it must be a real refusal at
+# 0.5.0 rather than a second step: this is the row that proves the command
+# stopped rather than merely paused.
+check "the next run from the new pin refuses at the next unmechanised tag" 1 \
+  "FIRST CROSSED TAG: 0.5.0" in_consumer bshoplong --check --source "$SRC" 0.7.8
+
+# --- A3: an unmechanised first crossed tag still refuses, unchanged ---------
+#
+# cast at 0.1.0 is the honest measurement of what this issue does NOT buy: its
+# first crossed tag is 0.2.0, which has no step, so the tag mechanised here is
+# not reached and the refusal is the one that shipped before it existed.
+split_consumer castold 0.1.0 cast_caller
+check "an unmechanised first crossed tag refuses the whole move" 1 \
+  "crosses 3 migration(s)" in_consumer castold --check --source "$SRC" 0.4.1
+check "the refusal names the unmechanised tag it stops at" 1 \
+  "FIRST CROSSED TAG: 0.2.0" in_consumer castold --check --source "$SRC" 0.4.1
+check "the refusal still says the crossing is hand-only" 1 \
+  "THE CROSSING IS HAND-ONLY" in_consumer castold --check --source "$SRC" 0.4.1
+check_absent "no applied step is announced for an unmechanised tag" 1 \
+  "APPLIED STEP" in_consumer castold --check --source "$SRC" 0.4.1
+check_absent "no anchoring complaint is made about a tree never analysed" 1 \
+  "CANNOT RUN ON THIS TREE" in_consumer castold --check --source "$SRC" 0.4.1
+check_absent "a mechanised tag deeper in the interval does not leak a step" 1 \
+  "THE PLAN" in_consumer castold --check --source "$SRC" 0.4.1
+unchanged "the unmechanised refusal leaves the WHOLE tree byte-identical (--check)" \
+  "$TMP/castold" in_consumer castold --check --source "$SRC" 0.4.1
+unchanged "the unmechanised refusal leaves the WHOLE tree byte-identical (--fix)" \
+  "$TMP/castold" in_consumer castold --fix --source "$SRC" 0.4.1
+
+# --- D5: the consumer's own routing rides onto the new caller ---------------
+
+named_caller() {
+  cat <<EOF
+name: board
+on:
+  schedule: [{cron: "17 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  issues: write
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+    with: { runner: '["self-hosted","ci-runner"]' }
+EOF
+}
+split_consumer named 0.3.0 named_caller
+check "a caller not named labels carries its name onto the sweep caller" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer named --fix --source "$SRC" 0.4.1
+# Both keys on ONE flow mapping: the guide says not to repeat `with:`, and a
+# routing value that is itself a quoted JSON list is why the reader splitting
+# that mapping has to know about quotes and brackets.
+check "the sweep caller carries the name and the runner in one with: mapping" 0 \
+  "    with: { pr_workflow_name: board, runner: '[\"self-hosted\",\"ci-runner\"]' }" \
+  sweep_of named
+check "the routed sweep caller keeps the consumer's own cadence" 0 \
+  '  schedule: [{cron: "17 * * * *"}]' sweep_of named
+
+# The insert path: cast's permission block has no `actions:` key at all, so
+# the grant is an insertion rather than a rewrite. A step that only knows how
+# to rewrite silently leaves that board's trigger job red on every event.
+split_consumer noactions 0.3.0 cast_caller
+check "--check calls the missing grant an insertion, not a rewrite" 0 \
+  "insert after line" in_consumer noactions --check --source "$SRC" 0.4.1
+check "a permissions block with no actions key gains one" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer noactions --fix --source "$SRC" 0.4.1
+check "the inserted grant is actions: write" 0 "  actions: write" caller_of noactions
+check "the actions key appears exactly once after an insert" 0 "1" \
+  occurrences noactions/.github/workflows/labels.yml "actions:"
+check "the keys the block already had are still there" 0 "  pull-requests: write" \
+  caller_of noactions
+
+# --- A7: every shape the step cannot anchor is a refusal --------------------
+#
+# Each of these is a tree where a best guess is available and wrong. The
+# refusal is the ORDINARY crossed-migration refusal — the hand procedure is
+# still the answer for this tree — plus a section naming what could not be
+# anchored, so the reader is not sent to audit the whole file for it.
+
+split_consumer sweeppresent 0.3.0 barbershop_caller
+# No ceremony pin in it: the fixture is about the file EXISTING, and a pin
+# here would make the row pass on the mixed-refs fault instead.
+printf 'name: labels-sweep\non: {workflow_dispatch: {}}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' \
+  >"$TMP/sweeppresent/.github/workflows/labels-sweep.yml"
+check "an existing sweep caller is a refusal, not a merge" 1 \
+  "already exists. This step creates the sweep" \
+  in_consumer sweeppresent --check --source "$SRC" 0.4.1
+check "that refusal is still the crossed-migration refusal" 1 \
+  "THE CROSSING IS HAND-ONLY" in_consumer sweeppresent --check --source "$SRC" 0.4.1
+unchanged "the existing-sweep-caller refusal writes nothing" "$TMP/sweeppresent" \
+  in_consumer sweeppresent --fix --source "$SRC" 0.4.1
+
+twoschedule_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  schedule: [{cron: "0 * * * *"}]
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer twoschedules 0.3.0 twoschedule_caller
+check "two schedule keys are a refusal rather than a pick" 1 \
+  "declares 'schedule:' 2 times" \
+  in_consumer twoschedules --check --source "$SRC" 0.4.1
+unchanged "the two-schedule refusal writes nothing" "$TMP/twoschedules" \
+  in_consumer twoschedules --fix --source "$SRC" 0.4.1
+
+inputs_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+    inputs:
+      why:
+        description: why this board is being swept by hand
+        type: string
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer dispatchinputs 0.3.0 inputs_caller
+check "a workflow_dispatch carrying inputs is not silently deleted" 1 \
+  "would delete the" in_consumer dispatchinputs --check --source "$SRC" 0.4.1
+check "that refusal names the consumer's own dispatch inputs" 1 \
+  "dispatch inputs with it" in_consumer dispatchinputs --check --source "$SRC" 0.4.1
+unchanged "the dispatch-inputs refusal writes nothing" "$TMP/dispatchinputs" \
+  in_consumer dispatchinputs --fix --source "$SRC" 0.4.1
+check "the consumer's dispatch input is still there afterwards" 0 \
+  "      why:" caller_of dispatchinputs
+
+noperms_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer noperms 0.3.0 noperms_caller
+check "a caller with no permissions block is a refusal" 1 \
+  "has no top-level 'permissions:' block" \
+  in_consumer noperms --check --source "$SRC" 0.4.1
+check "that refusal says why the block is not created" 1 \
+  "sets every unnamed one to none" \
+  in_consumer noperms --check --source "$SRC" 0.4.1
+unchanged "the no-permissions refusal writes nothing" "$TMP/noperms" \
+  in_consumer noperms --fix --source "$SRC" 0.4.1
+
+blockwith_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+    with:
+      runner: '"ubuntu-22.04"'
+EOF
+}
+split_consumer badwith 0.3.0 blockwith_caller
+check "a with: block the step cannot read is a refusal" 1 \
+  "writes 'with:' as a block" in_consumer badwith --check --source "$SRC" 0.4.1
+check "that refusal says it will not carry routing it did not understand" 1 \
+  "single-line flow mapping" in_consumer badwith --check --source "$SRC" 0.4.1
+unchanged "the unreadable-with refusal writes nothing" "$TMP/badwith" \
+  in_consumer badwith --fix --source "$SRC" 0.4.1
+
+# --- A8: the stub has one source, and the step really reads it --------------
+#
+# The grep is the structural half — no copy of the block under bin/, and the
+# occurrences are the ones this repository already had. The altered-source row
+# is the behavioural half: point the step at a guide whose block has been
+# changed and the changed bytes must land in the consumer, which no embedded
+# default and no cached copy can produce.
+sweep_stub_sites() {
+  printf '[%s]\n' "$(git -C "$ROOT" grep -lF 'name: labels-sweep' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+}
+check "the caller stub is declared in the guide, the reusable, the dogfood caller and the fixtures" 0 \
+  "[.github/workflows/labels-sweep.yml .github/workflows/self-labels-sweep.yml docs/CONSUMERS.md test/ceremony-upgrade.test.sh test/fixtures/incubator-callers/.github/workflows/labels-sweep.yml]" \
+  sweep_stub_sites
+bin_stub_copies() {
+  printf '[%s]\n' "$(git -C "$ROOT" grep -lF 'name: labels-sweep' -- bin | tr '\n' ' ' | sed 's/ $//')"
+}
+check "no copy of the caller stub ships under bin/" 0 "[]" bin_stub_copies
+
+SRC_ALTERED="$TMP/src-altered"
+cp -pPR "$SRC" "$SRC_ALTERED"
+sed -i 's|^  # A manual full-board sweep\..*$|  # ALTERED IN THE SOURCE GUIDE, and only there.|' \
+  "$SRC_ALTERED/docs/CONSUMERS.md"
+split_consumer altered 0.3.0 barbershop_caller
+check "the step writes the guide it was pointed at" 0 "0.3.0 -> 0.4.1 done" \
+  in_consumer altered --fix --source "$SRC_ALTERED" 0.4.1
+check "the altered guide's bytes are the ones that landed" 0 \
+  "  # ALTERED IN THE SOURCE GUIDE, and only there." sweep_of altered
+check_absent "the unaltered comment did not come from anywhere else" 0 \
+  "A manual full-board sweep" sweep_of altered
+
+# ...and a source tree whose guide has no such block fails loudly rather than
+# falling back to a default. This is the row that would catch an embedded copy
+# added later "just in case the read fails".
+SRC_NOSTUB="$TMP/src-nostub"
+cp -pPR "$SRC" "$SRC_NOSTUB"
+printf '# Consumers\n\nnothing published here.\n' >"$SRC_NOSTUB/docs/CONSUMERS.md"
+split_consumer nostub 0.3.0 barbershop_caller
+check "a guide with no sweep-caller stub is a loud failure" 1 \
+  "carries no sweep-caller stub" \
+  in_consumer nostub --check --source "$SRC_NOSTUB" 0.4.1
+check "that failure says there is no copy to fall back to" 1 \
+  "will not write one it did not read" \
+  in_consumer nostub --check --source "$SRC_NOSTUB" 0.4.1
+unchanged "a missing stub writes nothing" "$TMP/nostub" \
+  in_consumer nostub --fix --source "$SRC_NOSTUB" 0.4.1
+
+# --- A9: the rollback holds over the enlarged territory ---------------------
+#
+# The step writes two files the ref rewrite never touched, and docs-sync runs
+# AFTER both. A rollback that only restores what the ref pass wrote leaves the
+# sweep caller behind — a consumer whose board now has two callers, one of
+# them pinned to a ref its own labels caller is not at.
+write_src_guide "$SRC_SCAF"
+split_consumer rollback 0.3.0 barbershop_caller
+printf 'Our own template.\n\n<!-- ceremony:pr-template:start -->\n\nnever closed\n' \
+  >"$TMP/rollback/.github/pull_request_template.md"
+unchanged "a docs-sync refusal after an applied step rolls the WHOLE tree back" \
+  "$TMP/rollback" in_consumer rollback --fix --source "$SRC_SCAF" 0.4.1
+sweep_state() {
+  if [ -e "$TMP/rollback/.github/workflows/labels-sweep.yml" ]; then
+    echo "sweep-caller-left-behind"
+  else
+    echo "no-sweep-caller"
+  fi
+}
+check "the rolled-back run left no sweep caller behind" 0 "no-sweep-caller" sweep_state
+check "the rolled-back run left the cron where it was" 0 \
+  '  schedule: [{cron: "*/15 * * * *"}] # advisory; the handoff label is the real wake' \
+  caller_of rollback
+check "the rolled-back run left the old permission grant alone" 0 \
+  "  actions: read    # checkSuite.workflowRun read" caller_of rollback
+check "the pins did not move under the rolled-back step" 0 "$PIN_COUNT 0.3.0" \
+  refs rollback
+check "the run said it rolled back" 1 "rolled back" \
+  in_consumer rollback --fix --source "$SRC_SCAF" 0.4.1
+# Not vacuous: with the marker closed the SAME move over the SAME source tree
+# succeeds, so the row above is measuring a rollback and not an impossibility.
+split_consumer rollback-ok 0.3.0 barbershop_caller
+printf 'Our own template.\n\n<!-- ceremony:pr-template:start -->\nold\n<!-- ceremony:pr-template:end -->\n' \
+  >"$TMP/rollback-ok/.github/pull_request_template.md"
+check "the same move over the same source succeeds with the marker closed" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer rollback-ok --fix --source "$SRC_SCAF" 0.4.1
+check "and that run really did write the sweep caller" 0 \
+  "labels-sweep.yml@0.4.1" sweep_of rollback-ok
 
 summary
