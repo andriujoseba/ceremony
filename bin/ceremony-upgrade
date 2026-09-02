@@ -911,13 +911,15 @@ top_level_key() {
 # declining costs the reader one hand migration they already had a procedure
 # for. Guessing costs them the board.
 step_0_4_1_two_caller_split() {
-  local sweep stub_body i line
-  local caller="" caller_pin_line=""
+  local sweep stub_body i line existing sched_repl
+  local caller="" caller_pin_line="" job_line=""
   local on_line on_rest perm_line perm_rest
   local sched_line="" sched_value="" sched_count=0
   local disp_line="" disp_count=0
-  local actions_line="" perm_last_key="" perm_indent="" on_indent=""
-  local caller_name="" runner="" with_line="" lineno text indent key val
+  local actions_line="" actions_value="" actions_count=0
+  local perm_last_key="" perm_indent="" on_indent=""
+  local caller_name="" caller_name_raw="" runner="" with_line=""
+  local lineno text indent key val
   local stub_sched_lines with_pairs="" sweep_name
 
   sweep="$GITHUB_DIR/workflows/labels-sweep.yml"
@@ -925,12 +927,20 @@ step_0_4_1_two_caller_split() {
   # The sweep caller must not already exist. This step CREATES it; merging
   # into a file someone else wrote is a different act with a different set of
   # ways to be wrong, and it is not this one.
-  if [ -e "$sweep" ]; then
+  #
+  # BOTH SPELLINGS, because GitHub reads both and this file's own enumeration
+  # already knows it: a hand-written `labels-sweep.yaml` that only a `.yml`
+  # test looks past gets a second sweep caller written beside it, and two
+  # sweep callers on one board is the DOUBLE SWEEPS this tag is first on the
+  # ladder to prevent — reached at exit 0, by the operator who did half the
+  # migration by hand and then reached for the command (claude-bot §3).
+  for existing in "$sweep" "${sweep%.yml}.yaml"; do
+    [ -e "$existing" ] || continue
     step_refuse \
       "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
-      "  $sweep already exists. This step creates the sweep" \
+      "  $existing already exists. This step creates the sweep" \
       "  caller; it never merges into a file that is already there."
-  fi
+  done
 
   # The labels caller is the file carrying the ceremony labels.yml pin, found
   # through the enumerated pin lines — the one reader, again, so this step
@@ -1091,7 +1101,11 @@ step_0_4_1_two_caller_split() {
     [ -n "$perm_indent" ] || perm_indent="$indent"
     [ "$indent" = "$perm_indent" ] || continue
     perm_last_key="$lineno"
-    [ "$key" = "actions" ] && actions_line="$lineno"
+    if [ "$key" = "actions" ]; then
+      actions_count=$((actions_count + 1))
+      actions_line="$lineno"
+      actions_value="$(printf '%s\n' "$text" | yaml_uncomment | sed "s/^[[:space:]]*$key:[[:space:]]*//")"
+    fi
   done < <(block_body "$caller" "$perm_line")
   if [ -z "$perm_last_key" ]; then
     step_refuse \
@@ -1100,6 +1114,30 @@ step_0_4_1_two_caller_split() {
       "  this step can read, so it has nowhere anchored to grant" \
       "  actions: write."
   fi
+  # THE GRANT HAS EXACTLY TWO ANCHORED SHAPES and no third (codex-bot §2). The
+  # guide's edit is "grant actions: write", which on a caller that already
+  # reads `actions: read` is a rewrite of that line and on one with no
+  # `actions:` key at all — cast's shape — is an insertion. A step that
+  # substituted whatever value it found would rewrite a grant it did not put
+  # there without saying so, and a step that took the LAST of several
+  # `actions:` keys would leave the others behind, so both are refusals: the
+  # value is READ here, not just the line number.
+  if [ "$actions_count" -gt 1 ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller's 'permissions:' block declares 'actions:' $actions_count" \
+      "  times. Which one GitHub reads is not a question this step may answer" \
+      "  by rewriting one of them and leaving the rest."
+  fi
+  if [ "$actions_count" -eq 1 ] && [ "$actions_value" != "read" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller line $actions_line already grants 'actions: $actions_value'." \
+      "  This step rewrites an 'actions: read' grant, or inserts the key where" \
+      "  the block has none. It does not overwrite a grant someone else chose" \
+      "  — including a write already granted by hand, which is that hand's" \
+      "  decision to keep and this step's to leave alone."
+  fi
 
   # --- the labels caller's name, and its `with:` block ---
   #
@@ -1107,8 +1145,40 @@ step_0_4_1_two_caller_split() {
   # label machinery's own check entries never count toward a red-CI blocker.
   # The stub's own comment says to pass it; a caller not named `labels` that
   # does not gets a board whose blockers fire on the board's own workflow.
-  IFS=$'\t' read -r _ caller_name < <(top_level_key "$caller" "name") || true
-  caller_name="$(printf '%s\n' "${caller_name:-}" | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/")"
+  #
+  # THE NAME IS A YAML SCALAR, so it is decoded here and re-encoded where it
+  # is written (codex-bot §3). `name: "labels: private"` is a valid workflow
+  # name, and so is one carrying a comma, a brace or a quote; carrying the raw
+  # bytes into a flow mapping ships the consumer a `with:` that GitHub cannot
+  # parse. One shape is a refusal instead: a double-quoted name carrying a
+  # backslash, whose escapes this step would have to implement YAML's
+  # double-quoted style to read, and it will not guess at a workflow's name.
+  IFS=$'\t' read -r _ caller_name_raw < <(top_level_key "$caller" "name") || true
+  caller_name_raw="${caller_name_raw:-}"
+  case "$caller_name_raw" in
+    '"'*'"')
+      case "$caller_name_raw" in
+        *\\*)
+          step_refuse \
+            "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+            "  $caller writes its 'name:' as a double-quoted scalar carrying a" \
+            "  backslash escape: $caller_name_raw" \
+            "  The sweep caller has to be told what the PR-facing caller is" \
+            "  called, and this step will not guess at the name those escapes" \
+            "  stand for."
+          ;;
+      esac
+      caller_name="${caller_name_raw#\"}"
+      caller_name="${caller_name%\"}"
+      ;;
+    "'"*"'")
+      caller_name="${caller_name_raw#\'}"
+      caller_name="${caller_name%\'}"
+      # YAML's single-quoted style escapes a quote by doubling it.
+      caller_name="${caller_name//\'\'/\'}"
+      ;;
+    *) caller_name="$caller_name_raw" ;;
+  esac
   if [ -z "$caller_name" ]; then
     step_refuse \
       "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
@@ -1121,16 +1191,36 @@ step_0_4_1_two_caller_split() {
   # Read at the pin line's own indent, so a `with:` belonging to some other
   # job in the same file is not read as this one's.
   #
-  # EVERY key of that job is looked at, not just the one after the pin: a
-  # caller writing `secrets: inherit` between its `uses:` and its `with:` is
-  # ordinary, and a reader that stopped at the first sibling would carry no
-  # routing while reporting none to carry — silently, which is the one way
-  # this step is not allowed to be wrong.
+  # EVERY key of that job is looked at, not just the ones after the pin. A
+  # job is a YAML mapping and its keys are unordered: `secrets: inherit`
+  # between the `uses:` and the `with:` is ordinary, and so is a `with:`
+  # written ABOVE the `uses:` — a scan starting at the pin line reads neither,
+  # carries no routing, reports none to carry, and skips the sweep_workflow
+  # guard on the way past (claude-bot §1). So the window is the JOB: found by
+  # walking up from the pin to the nearest enclosing key at a lower indent,
+  # and read from there to the end of that job's block. Silently carrying
+  # nothing is the one way this step is not allowed to be wrong.
   indent="$(sed -n "${caller_pin_line}p" "$caller")"
   indent="${indent%%[! ]*}"
+  job_line="$(awk -v pin="$caller_pin_line" -v ind="${#indent}" '
+    NR >= pin { exit }
+    { line = $0; sub(/[ \t]+$/, "", line) }
+    line == "" { next }
+    { bare = line; sub(/^[ \t]*/, "", bare) }
+    bare ~ /^#/ { next }
+    { n = match(line, /[^ ]/) - 1; if (n < ind) last = NR }
+    END { if (last) print last }
+  ' "$caller")"
+  if [ -z "$job_line" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller line $caller_pin_line calls the ceremony labels workflow" \
+      "  with nothing enclosing it that this step can read as the job it" \
+      "  belongs to, so the routing that job declares cannot be bounded and" \
+      "  cannot be carried onto the sweep caller."
+  fi
   while IFS=$'\t' read -r lineno text; do
     [ -n "$lineno" ] || continue
-    [ "$lineno" -gt "$caller_pin_line" ] || continue
     case "$text" in
       "$indent"[!\ ]*) ;;
       *) continue ;;
@@ -1140,7 +1230,7 @@ step_0_4_1_two_caller_split() {
       with_line="$lineno"
       with_pairs="$(printf '%s\n' "$text" | yaml_uncomment | sed "s/^[[:space:]]*with:[[:space:]]*//")"
     fi
-  done < <(awk -v start="$caller_pin_line" -v ind="${#indent}" '
+  done < <(awk -v start="$job_line" -v ind="${#indent}" '
     NR <= start { next }
     { line = $0; sub(/[ \t]*$/, "", line) }
     line == "" { next }
@@ -1205,7 +1295,11 @@ step_0_4_1_two_caller_split() {
         "  written."
       ;;
   esac
-  [ "$(printf '%s\n' "$stub_body" | grep -cF '@<pinned-tag>')" -eq 1 ] || die \
+  # OCCURRENCES, not lines: `grep -c` counts matching lines, so a stub line
+  # carrying the placeholder twice would satisfy a line count and then ship
+  # one of the two unsubstituted. A latch for whoever next edits the published
+  # block, which is why the substitution below is global as well (claude-bot).
+  [ "$(printf '%s\n' "$stub_body" | grep -oF '@<pinned-tag>' | wc -l)" -eq 1 ] || die \
     "$SELF: the sweep-caller stub in $GUIDE_NAME at $first_crossed does not" \
     "  carry exactly one '@<pinned-tag>' placeholder, so this step cannot" \
     "  tell which ref it is being asked to pin. Nothing was written."
@@ -1218,13 +1312,19 @@ step_0_4_1_two_caller_split() {
   # The pin, the consumer's own cadence, and the routing it owns. The cron is
   # RELOCATED and not re-decided: the cadence is the consumer's, and this step
   # moves a schedule rather than choosing one.
+  # The cadence is a consumer's own bytes going into a `sed` REPLACEMENT, where
+  # `&`, `\` and the delimiter mean something other than themselves. No
+  # plausible cron carries one and a block scalar has already been refused
+  # above, but the value is not this step's to reason about (claude-bot).
+  sched_repl="$(printf '%s' "$sched_value" | sed -e 's/[\\&|]/\\&/g')"
   step_new_body="$(
     printf '%s\n' "$stub_body" |
-      sed -e "s|@<pinned-tag>|@$first_crossed|" \
-        -e "s|^  schedule:.*\$|  schedule: $sched_value|"
+      sed -e "s|@<pinned-tag>|@$first_crossed|g" \
+        -e "s|^  schedule:.*\$|  schedule: $sched_repl|"
   )"
   with_pairs=""
-  [ "$caller_name" = "labels" ] || with_pairs="pr_workflow_name: $caller_name"
+  [ "$caller_name" = "labels" ] ||
+    with_pairs="pr_workflow_name: $(flow_scalar "$caller_name")"
   if [ -n "$runner" ]; then
     with_pairs="${with_pairs:+$with_pairs, }runner: $runner"
   fi
@@ -1235,10 +1335,18 @@ step_0_4_1_two_caller_split() {
 
   step_new_file="$sweep"
   step_edit_file="$caller"
-  step_edit_ops=(
-    "$caller_pin_line	mask	"
-    "$sched_line	del	"
-  )
+  # EVERY enumerated pin line in this file is masked, not just the labels one
+  # (claude-bot §2). The ref pass rewrites all of them, so a walker told about
+  # one sees the others as changes the plan never named — a correct rollback,
+  # but announced as a bug in this command and a request to report it, for a
+  # tree a consumer is entitled to have. The suite's own fixture puts two
+  # ceremony pins in one file, so this is an ordinary shape.
+  step_edit_ops=()
+  for i in "${!pin_files[@]}"; do
+    [ "${pin_files[$i]}" = "$caller" ] || continue
+    step_edit_ops+=("${pin_lines[$i]}	mask	")
+  done
+  step_edit_ops+=("$sched_line	del	")
   [ -z "$disp_line" ] || step_edit_ops+=("$disp_line	del	")
   if [ -n "$actions_line" ]; then
     step_edit_ops+=("$actions_line	sub	${perm_indent}actions: write   # the trigger job's dispatch of the sweep caller")
@@ -1272,6 +1380,28 @@ step_0_4_1_two_caller_split() {
       "        + ${step_edit_ops[-1]#*$'\t'*$'\t'}"
     )
   fi
+}
+
+# flow_scalar VALUE — VALUE encoded so it can be written INSIDE a single-line
+# YAML flow mapping and read back as itself (#597, codex-bot §3).
+#
+# A workflow name is a scalar a consumer chose, and `name: "labels: private"`
+# is as valid as `name: labels`. Written raw into `with: { pr_workflow_name:
+# ... }` the colon opens a nested mapping, a comma opens a second pair, a
+# brace closes the mapping early and a ` #` truncates the line — so what a
+# consumer gets is not a differently-routed sweep caller but an unparseable
+# one. Plain where plain is safe, so the ordinary name is written the ordinary
+# way; single-quoted otherwise, which is YAML's one style with no escapes
+# except the doubled quote and therefore the one that cannot be got wrong.
+flow_scalar() {
+  local v="$1"
+  case "$v" in
+    *[!A-Za-z0-9\ ._-]*) ;;
+    [!A-Za-z0-9]* | *' ') ;;
+    "") ;;
+    *) printf '%s\n' "$v"; return 0 ;;
+  esac
+  printf "'%s'\n" "${v//\'/\'\'}"
 }
 
 # flow_pairs — a single-line YAML flow mapping on stdin, one "<key>\t<value>"
