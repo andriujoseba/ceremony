@@ -100,10 +100,10 @@ CHANGELOG_NAME="CHANGELOG.md"
 # performed exactly one migration and named which; both were true when written
 # and both were repaired here. THEY ARE DESCRIBED AND NOT QUOTED, because a
 # comment carrying such a sentence verbatim is one more site claiming it, and
-# the suite's own scan for that claim would find this file.
-# After 0.5.0 the rows a forward move can cross
-# with no step are 0.2.0, 0.3.0, 0.6.0, 0.7.0 and 0.7.8 — 0.1.0 is the sixth
-# such row and no forward move crosses it, being the first release. Whoever
+# the suite's own scan for that claim would find this file. After 0.5.0 the
+# rows a forward move can cross with no step are 0.2.0, 0.3.0, 0.6.0, 0.7.0
+# and 0.7.8 — 0.1.0 is the sixth such row and no forward move crosses it,
+# being the first release. Whoever
 # mints the third re-reads the refusal message and the guide's clauses AS THEY
 # STAND THEN and never as an issue body quotes them, because this comment goes
 # stale in exactly the way it is describing.
@@ -1190,14 +1190,14 @@ step_0_4_1_two_caller_split() {
       "  by rewriting one of them and leaving the rest."
   fi
   if [ "$actions_count" -eq 1 ] && [ "$actions_value" != "read" ]; then
-    # A VALUE THIS MESSAGE PRINTS IS PRINTABLE (#600 E8(a)). On a
-    # caller written with CRLF endings the value read here is `read` followed
-    # by a carriage return, and the refusal that shipped put those same four
+    # A VALUE THIS MESSAGE PRINTS IS PRINTABLE (#600 E8(a)). On a caller
+    # written with CRLF endings the value read here is `read` followed by a
+    # carriage return, and the refusal that shipped put those same four
     # visible bytes on both sides of a sentence saying they differ — the
     # reader is told to compare `actions: read` against `actions: read` and
     # find the difference. The CR is rendered as \r wherever the value is
-    # shown, and where the ONLY difference is the line ending the message
-    # says so outright: line endings are the one way this comparison can fail
+    # shown, and where the ONLY difference is the line ending the message says
+    # so outright: line endings are the one way this comparison can fail
     # invisibly, and "look harder" is not a remedy anyone can act on.
     actions_value_shown="${actions_value//$'\r'/\\r}"
     grant_refusal=(
@@ -1393,14 +1393,19 @@ step_0_4_1_two_caller_split() {
     "  $stub_sched_lines 'schedule:' keys, and this step relocates the" \
     "  consumer's cron onto exactly one. Nothing was written."
   # THE `with:` INDENT IS READ FROM THE STUB, NEVER ASSUMED (#600 E8(b)).
-  # Every other assumption this step makes about the published block is
-  # an exact count that dies loudly — the placeholder occurrences and the
+  # Every other assumption this step makes about the published block is an
+  # exact count that dies loudly — the placeholder occurrences and the
   # `schedule:` keys above — while the append below used to write four spaces
   # because that is what the block happened to indent its job keys at. That is
-  # the same assumption with no guard on it, and a re-indented block would
-  # have shipped a consumer a `with:` at the wrong depth at exit 0: either a
-  # key of some other mapping or a top-level one, and in neither case the
-  # routing the plan announced.
+  # the same assumption with no guard on it, and a re-indented block would have
+  # shipped a consumer a `with:` at the wrong depth at exit 0: either a key of
+  # some other mapping or a top-level one, and in neither case the routing the
+  # plan announced.
+  #
+  # The guard fires whether or not this tree needs a `with:`, like the two
+  # counts above it: a published block this step cannot read is the same fact
+  # for every consumer, and a latch that only trips for some of them is a latch
+  # that reports the stub is fine to most of the boards it is not fine for.
   #
   # The anchor is the line the `with:` joins — the sweep job's own `uses:`,
   # which is the placeholder line just counted, so the two move together by
