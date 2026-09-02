@@ -986,6 +986,22 @@ Bump without the sweep caller and the trigger job goes red on every PR
 and issue event — the loud failure mode above — so never split these
 four edits across PRs.
 
+**[`ceremony-upgrade`](#ceremony-upgrade--the-bump-run-for-you) performs
+this migration for you**, and it is the only migration it performs: point
+it at `0.4.1` from the root of your checkout and it moves every ceremony
+ref, writes `.github/workflows/labels-sweep.yml` from the stub above,
+relocates your cron onto it with your own cadence, grants `actions: write`,
+and re-syncs the mirror — the same four edits, in one commit's worth of
+tree. It stops at `0.4.1` whatever tag you asked for, tells you the pin it
+left you at, and grades the rest of the move the next time you run it. The
+four edits above stay the procedure: they are what the command performs,
+they are what a reader checks its output against, and they are the answer
+where it refuses. It refuses whenever it cannot anchor an edit
+unambiguously — a `labels-sweep.yml` already in the tree, two `schedule:`
+keys, a `workflow_dispatch:` carrying inputs of your own, no `permissions:`
+block, a `with:` it cannot read — and a refusal leaves the tree
+byte-identical, so the hand procedure is always still open to you.
+
 `pull_request_target` is intentional: fork PRs need the base repository's
 token to write labels. The reusable workflows execute no PR code. They check
 out only the consumer's base branch and the pinned ceremony implementation.
@@ -1802,7 +1818,7 @@ The refusals, and what each one means:
 | **the refs are not all at one ref** | two ceremony refs in one tree, so it has no single pin — usually a bump that moved some lines and not others | put them on one ref by hand, then re-run; the message names the files that differ |
 | **the current pin is not a released tag** | a branch or a commit SHA cannot be placed on the release ladder, so which migrations the move crosses is unknowable | pin to a released tag first |
 | **the target tag does not exist** | the tag was never cut — check it against the [releases page](https://github.com/heavy-duty/ceremony/releases), or pass `--source` to preview an unreleased tree | — |
-| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | the crossing is hand-only: perform the first crossed tag's edits and move the ceremony refs to that tag in the same commit, because tree edits alone do not change the pinned interval. When a released tag exists between the current pin and that first crossing, the message emits that shorter runnable move; otherwise it says no shorter move exists |
+| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | it depends on the first crossed tag. Where that tag carries an **applied step** — [`0.4.1`](#labels-automation)'s two-caller split, and today it is the only one — the command performs that tag for you, refs and edits in one pass, then stops there and names the pin it left you at and what still stands between that pin and the tag you asked for; run it again from the new pin for the next rung. Where the first crossed tag has no applied step, and where a step cannot anchor one of its edits in your tree, the crossing is hand-only: perform the first crossed tag's edits and move the ceremony refs to that tag in the same commit, because tree edits alone do not change the pinned interval. When a released tag exists between the current pin and that first crossing, the message emits that shorter runnable move; otherwise it says no shorter move exists |
 | **the move is backwards** | a downgrade; this guide's notes are written forwards and none of them says how to undo a tag | undo the crossed migrations deliberately and move the refs by hand |
 
 Every refusal names the tags it is refusing over and the section of this

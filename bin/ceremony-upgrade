@@ -886,6 +886,11 @@ top_level_key() {
 
 # --- 0.4.1: the two-caller split ------------------------------------------
 #
+# THE LADDER'S FIRST TAG, and the destructive one, so it is the tag the
+# mechanism is proven against (#597). The guide's own refusal table records
+# that a crossing was hand-only for every tag before this; it is hand-only for
+# every other tag still.
+#
 # The guide states this migration as ONE atomic PR with exactly four edits:
 # bump every ceremony ref; ADD .github/workflows/labels-sweep.yml, the stub
 # verbatim with its bootstrap input; MOVE — never copy — the hourly cron off
