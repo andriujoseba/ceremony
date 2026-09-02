@@ -1304,7 +1304,7 @@ check "a caller not named labels carries its name onto the sweep caller" 0 \
 # routing value that is itself a quoted JSON list is why the reader splitting
 # that mapping has to know about quotes and brackets.
 check "the sweep caller carries the name and the runner in one with: mapping" 0 \
-  "    with: { pr_workflow_name: board, runner: '[\"self-hosted\",\"ci-runner\"]' }" \
+  "    with: { pr_workflow_name: 'board', runner: '[\"self-hosted\",\"ci-runner\"]' }" \
   sweep_of named
 check "the routed sweep caller keeps the consumer's own cadence" 0 \
   '  schedule: [{cron: "17 * * * *"}]' sweep_of named
@@ -1349,7 +1349,7 @@ split_consumer secretsfirst 0.3.0 secrets_caller
 check "routing is carried past an intervening job key" 0 "0.3.0 -> 0.4.1 done" \
   in_consumer secretsfirst --fix --source "$SRC" 0.4.1
 check "the runner behind secrets: inherit still reached the sweep caller" 0 \
-  "    with: { pr_workflow_name: board, runner: '\"ubuntu-22.04\"' }" \
+  "    with: { pr_workflow_name: 'board', runner: '\"ubuntu-22.04\"' }" \
   sweep_of secretsfirst
 
 # ...and a comment at the on: block's own indent does not end the scan that
@@ -1410,7 +1410,7 @@ check "--check names routing declared above the pin line" 0 \
 check "a with: above the uses: is still the job's routing" 0 \
   "0.3.0 -> 0.4.1 done" in_consumer withfirst --fix --source "$SRC" 0.4.1
 check "the runner declared before the pin reached the sweep caller" 0 \
-  "    with: { pr_workflow_name: board, runner: '[\"self-hosted\"]' }" \
+  "    with: { pr_workflow_name: 'board', runner: '[\"self-hosted\"]' }" \
   sweep_of withfirst
 
 # The same ordering with the guard behind it: a consumer already routing the
@@ -1545,11 +1545,86 @@ check "a name carrying an apostrophe is carried, not refused" 0 \
 check "a name carrying an apostrophe is escaped by doubling it" 0 \
   "    with: { pr_workflow_name: 'the board''s labels' }" \
   sweep_of aponame
-# ...and the plain path is untouched by any of it: the ordinary name stays
-# ordinary bytes, which is what the D5 rows above already assert.
-check "a plain name is still written plain" 0 \
-  "    with: { pr_workflow_name: board, runner: '\"ubuntu-22.04\"' }" \
+# ...and the ordinary name is quoted too, because there is no plain path left
+# to take. What the sweep caller is handed has to be the consumer's name AND
+# its type, and a plain scalar decides the second one by what the characters
+# happen to look like (codex-bot, round 2).
+check "an ordinary name is quoted as well, there being no plain path" 0 \
+  "    with: { pr_workflow_name: 'board', runner: '\"ubuntu-22.04\"' }" \
   sweep_of secretsfirst
+
+# A NAME YAML WOULD RESOLVE AS SOMETHING OTHER THAN A STRING. `name: "true"`
+# is a legal workflow name; written plain into the flow mapping it comes back
+# a boolean, and `labels-sweep.yml` declares pr_workflow_name `type: string`.
+# The consumer is then handed neither their name nor its type — by a step
+# whose whole job at this key is to carry the one it read.
+# The name comes from $implicit_name, the pin from split_consumer's own $ref,
+# so one fixture builder serves every implicit-typed name below.
+implicit_name_caller() {
+  cat <<EOF
+name: "$implicit_name"
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+implicit_name="true"
+split_consumer booname 0.3.0 implicit_name_caller
+check "a name YAML would read as a boolean is carried, not refused" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer booname --fix --source "$SRC" 0.4.1
+check "a boolean-looking name is quoted into the flow mapping" 0 \
+  "    with: { pr_workflow_name: 'true' }" sweep_of booname
+check_absent "the bare boolean is not what landed" 0 \
+  "pr_workflow_name: true" sweep_of booname
+implicit_name="123"
+split_consumer numname 0.3.0 implicit_name_caller
+check "a name YAML would read as an integer is carried too" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer numname --fix --source "$SRC" 0.4.1
+check "an integer-looking name is quoted into the flow mapping" 0 \
+  "    with: { pr_workflow_name: '123' }" sweep_of numname
+check_absent "the bare integer is not what landed" 0 \
+  "pr_workflow_name: 123" sweep_of numname
+
+# THE TYPE IS ASSERTED BY A PARSER, not by the bytes. The rows above grade
+# what this step wrote; these grade what a YAML reader makes of it, which is
+# the thing the consumer's board actually depends on. yq is the suite's
+# existing instrument for that (test/labels-scope.test.sh, #130) —
+# preinstalled on ubuntu-latest, optional locally, and never silently skipped
+# in CI because ci.yml sets CEREMONY_REQUIRE_YQ.
+if command -v yq >/dev/null 2>&1; then
+  # The job key is not hardcoded: the stub names it, and this reads back
+  # whatever the published block calls it.
+  carried_tag() { yq '.jobs | to_entries | .[0].value.with.pr_workflow_name | tag' "$TMP/$1/.github/workflows/labels-sweep.yml"; }
+  carried_name() { yq '.jobs | to_entries | .[0].value.with.pr_workflow_name' "$TMP/$1/.github/workflows/labels-sweep.yml"; }
+  check "the carried name parses back as a string, not a boolean" 0 \
+    "!!str" carried_tag booname
+  check "and reads back as the name the caller declared" 0 \
+    "true" carried_name booname
+  check "an integer-looking name parses back as a string too" 0 \
+    "!!str" carried_tag numname
+  check "and reads back as the digits the caller declared" 0 \
+    "123" carried_name numname
+  # Not vacuous: the same probe on a name nobody could mistake for a scalar
+  # of another type still says !!str, so the two rows above are graded by a
+  # probe that is reading the emitted file and not returning a constant.
+  check "the punctuated name parses back as a string as well" 0 \
+    "!!str" carried_tag quotedname
+  check "and round-trips to the caller's own name byte for byte" 0 \
+    "labels: private # board" carried_name quotedname
+elif [ -n "${CEREMONY_REQUIRE_YQ:-}" ]; then
+  echo "FAIL: CEREMONY_REQUIRE_YQ is set but yq is missing — the carried-name type cases did not run"
+  FAIL=$((FAIL + 1))
+else
+  echo "SKIP: yq not found — the carried-name type cases not exercised"
+fi
 
 # --- A7: every shape the step cannot anchor is a refusal --------------------
 #
@@ -1646,6 +1721,79 @@ check "that refusal says why the block is not created" 1 \
   in_consumer noperms --check --source "$SRC" 0.4.1
 unchanged "the no-permissions refusal writes nothing" "$TMP/noperms" \
   in_consumer noperms --fix --source "$SRC" 0.4.1
+
+# A CALLER WHOSE ONLY TRIGGERS ARE THE TWO THIS STEP RELOCATES (claude-bot
+# §1). Both keys are triggers, so performing the plan on this tree leaves
+# `on:` with no value: actionlint's "string should not be empty", a file
+# GitHub rejects, and with it the trigger job that dispatches the sweep
+# caller the same run just created. It is the one way this step reaches exit
+# 0 having broken a board, and it gets there by doing exactly what the plan
+# said, so it joins the refusals rather than being fixed up afterwards.
+onlytriggers_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer onlytriggers 0.3.0 onlytriggers_caller
+check "a caller left with no trigger at all is a refusal" 1 \
+  "declares nothing but what this step relocates" \
+  in_consumer onlytriggers --check --source "$SRC" 0.4.1
+check "that refusal names both keys it would have taken" 1 \
+  "the 'schedule:' at line 3 and the bare 'workflow_dispatch:' at line 4" \
+  in_consumer onlytriggers --check --source "$SRC" 0.4.1
+check "and says what the emptied on: block would be" 1 \
+  "one GitHub cannot parse" \
+  in_consumer onlytriggers --check --source "$SRC" 0.4.1
+check "it is still the ordinary crossed-migration refusal" 1 \
+  "THE CROSSING IS HAND-ONLY" in_consumer onlytriggers --check --source "$SRC" 0.4.1
+unchanged "the no-trigger-left refusal writes nothing" "$TMP/onlytriggers" \
+  in_consumer onlytriggers --fix --source "$SRC" 0.4.1
+# The `done` that build reaches is what the refusal replaces, so its absence
+# is asserted too: a guard that refused and then carried on would satisfy
+# every row above.
+check_absent "no such tree is reported as migrated" 1 \
+  "0.3.0 -> 0.4.1 done" in_consumer onlytriggers --fix --source "$SRC" 0.4.1
+# NOT VACUOUS, and this is the row that keeps the guard a guard: the same
+# caller with ONE more trigger completes, because something survives the
+# deletions. A guard counting the keys it deletes rather than the keys that
+# remain would refuse here too and take every real consumer with it — both
+# measured ones carry pull_request_target.
+onetrigger_caller() {
+  onlytriggers_caller | sed 's/^  workflow_dispatch:$/  workflow_dispatch:\n  pull_request_target:\n    types: [opened]/'
+}
+split_consumer onetrigger 0.3.0 onetrigger_caller
+check "one surviving trigger is enough for the step to run" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer onetrigger --fix --source "$SRC" 0.4.1
+check "and the trigger that survived is still there" 0 \
+  "  pull_request_target:" caller_of onetrigger
+check "while the relocated cadence reached the sweep caller" 0 \
+  '  schedule: [{cron: "*/15 * * * *"}]' sweep_of onetrigger
+# The dispatch-only half of the same count: with no bare workflow_dispatch to
+# delete, one surviving key is the schedule alone — which is deleted — so the
+# arithmetic has to read one deletion, not two.
+sched_only_caller() {
+  onlytriggers_caller | sed '/^  workflow_dispatch:$/d'
+}
+split_consumer schedonly 0.3.0 sched_only_caller
+check "a schedule-only caller is a refusal on the same count" 1 \
+  "declares nothing but what this step relocates" \
+  in_consumer schedonly --check --source "$SRC" 0.4.1
+check_absent "and it does not name a dispatch it never found" 1 \
+  "bare 'workflow_dispatch:' at line" \
+  in_consumer schedonly --check --source "$SRC" 0.4.1
+unchanged "the schedule-only refusal writes nothing" "$TMP/schedonly" \
+  in_consumer schedonly --fix --source "$SRC" 0.4.1
 
 blockwith_caller() {
   cat <<EOF
