@@ -499,10 +499,24 @@ check "crossing 0.4.1 names what breaks without it" 1 "RED ON EVERY PR AND ISSUE
 # The interval is HALF-OPEN at the current pin: standing ON 0.4.1 and moving
 # up must not re-fire the migration this consumer has already done. A closed
 # interval passes every row above and refuses every consumer forever.
+#
+# THE EXIT CODE ON THESE TWO MOVED 1 -> 0 WHEN 0.5.0 GAINED A STEP (#600), and
+# nothing else about them did: the crossed count is still one and it is still
+# 0.5.0's, the split is still not re-listed, and both are still read off a
+# half-open interval. What changed is what happens to the one tag inside it —
+# it is performed now rather than refused — so the row that used to be graded
+# by a refusal's exit code is graded by a completion's.
 consumer onsplit 0.4.1
-check "the interval is half-open at the current pin" 1 "crosses 1 migration(s)" \
+check "the interval is half-open at the current pin" 0 "crosses 1 migration(s)" \
   in_consumer onsplit --check --source "$SRC" 0.5.0
-check_absent "0.4.1 is not re-listed when the consumer already stands on it" 1 "TWO-CALLER SPLIT" \
+check_absent "0.4.1 is not re-listed when the consumer already stands on it" 0 "TWO-CALLER SPLIT" \
+  in_consumer onsplit --check --source "$SRC" 0.5.0
+# ...and the one tag in that interval is the one the pin has NOT crossed. A
+# closed interval would put 0.4.1 in the slice too, and 0.4.1 has a step of its
+# own — so the failure this row now guards against is a re-run of the split on
+# a consumer that already did it, which no exit code alone would show.
+check "the tag inside that interval is 0.5.0 and no other" 0 \
+  "0.5.0 is an APPLIED STEP, so this run performs 0.4.1 -> 0.5.0 and stops there" \
   in_consumer onsplit --check --source "$SRC" 0.5.0
 
 # ...and CLOSED at the target: arriving AT a migration tag is crossing it.
@@ -1242,17 +1256,78 @@ check_absent "a partial move never reports the requested move as done" 1 \
   "0.3.0 -> 0.7.8 done" in_consumer bshoplong --check --source "$SRC" 0.7.8
 unchanged "the partial-move plan writes nothing either" "$TMP/bshoplong" \
   in_consumer bshoplong --check --source "$SRC" 0.7.8
+# --- B3, B4: two runs climb two rungs, one rung each (#600) -----------------
+#
+# THE RUNS ARE CAPTURED, NOT RE-RUN. Every other block in this file re-invokes
+# the command per row, which is free while the row is a --check or a refusal.
+# Here the rows grade a SEQUENCE — run one's output, then run two's — and a
+# `check` that re-invoked --fix would climb a third rung under the row below
+# it. So each run happens exactly once and the rows replay what it said.
+capture_run() { # <outfile> <cmd...>
+  local out="$1"
+  shift
+  "$@" >"$out" 2>&1
+  printf '%s\n' "$?" >"$out.rc"
+}
+replay_run() { # <outfile> — its output, and its exit status as the row's
+  local out="$1"
+  cat "$out"
+  return "$(cat "$out.rc")"
+}
+
+RUN1="$TMP/bshoplong-run1"
+capture_run "$RUN1" in_consumer bshoplong --fix --source "$SRC" 0.7.8
+
 check "a move past the crossed tag performs only the first step" 1 \
   "0.3.0 -> 0.4.1 done, including the applied step for 0.4.1" \
-  in_consumer bshoplong --fix --source "$SRC" 0.7.8
+  replay_run "$RUN1"
 check "every ref stops at the first crossed tag" 0 "$((PIN_COUNT + 1)) 0.4.1" \
   refs bshoplong
 check_absent "no ref ran on to the requested target" 0 "0.7.8" refs bshoplong
-# The next run is the ladder's next rung, and it must be a real refusal at
-# 0.5.0 rather than a second step: this is the row that proves the command
-# stopped rather than merely paused.
-check "the next run from the new pin refuses at the next unmechanised tag" 1 \
-  "FIRST CROSSED TAG: 0.5.0" in_consumer bshoplong --check --source "$SRC" 0.7.8
+# B4 — ONE RUN NEVER CLIMBS TWO RUNGS, and this is the first release in which
+# that build is reachable: with 0.5.0 mechanised too, a step that chained
+# would perform both and report a move to 0.5.0 at exit non-zero, passing
+# every row above. The `-> 0.5.0 done` absence covers both spellings a chainer
+# could print (0.3.0 -> and 0.4.1 ->), and the ref assertion is the tree's own
+# answer to the same question.
+check_absent "run one leaves no ref at the second rung" 0 "0.5.0" refs bshoplong
+check_absent "run one reports no completed move to the second rung" 1 \
+  "-> 0.5.0 done" replay_run "$RUN1"
+check_absent "run one reports no completed move to the requested target" 1 \
+  "0.3.0 -> 0.7.8 done" replay_run "$RUN1"
+check "run one names the second rung as what comes next, not as done" 1 \
+  "The next migration between them is 0.5.0" replay_run "$RUN1"
+
+# B3 — the second run, and the first time a step ever follows a step. The
+# sweep caller run one created is a file run two did not plan to touch, and
+# the only thing that may move in it is the pin the ref pass rewrites.
+SWEEP_AFTER_RUN1="$TMP/bshoplong-sweep-run1"
+sweep_of bshoplong >"$SWEEP_AFTER_RUN1"
+
+RUN2="$TMP/bshoplong-run2"
+capture_run "$RUN2" in_consumer bshoplong --fix --source "$SRC" 0.7.8
+
+check "the next run from the new pin performs the second rung" 1 \
+  "0.4.1 -> 0.5.0 done, including the applied step for 0.5.0" replay_run "$RUN2"
+check "the second rung names the third as what comes next" 1 \
+  "The next migration between them is 0.6.0" replay_run "$RUN2"
+check "the second run leaves the pin at the second rung" 1 \
+  "THIS RUN LEAVES THE PIN AT 0.5.0" replay_run "$RUN2"
+check_absent "the second run does not report the requested move as done either" 1 \
+  "0.7.8 done" replay_run "$RUN2"
+check "every ref now reads the second rung, the created caller included" 0 \
+  "$((PIN_COUNT + 1)) 0.5.0" refs bshoplong
+check_absent "no ref is left at the first rung" 0 "0.4.1" refs bshoplong
+# The sweep caller is run one's file with its pin moved and NOTHING else: run
+# two writes no consumer byte, so a build whose second step reached for this
+# file — re-writing the stub, re-relocating a cron, appending a second with: —
+# fails here even though every ref assertion above would still pass.
+sweep_run1_repinned() { sed 's|labels-sweep\.yml@0\.4\.1|labels-sweep.yml@0.5.0|' "$SWEEP_AFTER_RUN1"; }
+sweep_diff_run1_to_run2() {
+  diff <(sweep_run1_repinned) <(sweep_of bshoplong) && echo "identical-but-for-the-pin"
+}
+check "run two moved the sweep caller's pin and not one other byte of it" 0 \
+  "identical-but-for-the-pin" sweep_diff_run1_to_run2
 
 # --- A3: an unmechanised first crossed tag still refuses, unchanged ---------
 #
