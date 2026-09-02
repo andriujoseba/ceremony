@@ -1380,6 +1380,177 @@ check "a comment does not hide a dispatch's inputs from the refusal" 1 \
 unchanged "the commented-inputs refusal writes nothing" "$TMP/commentedinputs" \
   in_consumer commentedinputs --fix --source "$SRC" 0.4.1
 
+# ...and a `with:` written ABOVE the `uses:` is the same failure with the
+# order reversed (claude-bot §1). A job is a YAML mapping and its keys are
+# unordered, so this file is as ordinary as the one above; a scan that starts
+# at the pin line reads no routing, says nothing about reading none, and skips
+# the sweep_workflow guard on the way past. The consumer's sweep then runs on
+# the default runner — on a runner-isolated board, on no runner at all.
+withfirst_caller() {
+  cat <<EOF
+name: board
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    with: { runner: '["self-hosted"]' }
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer withfirst 0.3.0 withfirst_caller
+check "--check names routing declared above the pin line" 0 \
+  "the routing this tree already declares" \
+  in_consumer withfirst --check --source "$SRC" 0.4.1
+check "a with: above the uses: is still the job's routing" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer withfirst --fix --source "$SRC" 0.4.1
+check "the runner declared before the pin reached the sweep caller" 0 \
+  "    with: { pr_workflow_name: board, runner: '[\"self-hosted\"]' }" \
+  sweep_of withfirst
+
+# The same ordering with the guard behind it: a consumer already routing the
+# trigger job at a sweep caller of its own name must still be refused, and a
+# scan that never reaches the `with:` never reaches the guard either.
+sweepfirst_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    with: { sweep_workflow: board-sweep.yml }
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer sweepfirst 0.3.0 sweepfirst_caller
+check "a sweep_workflow declared above the pin still refuses" 1 \
+  "sweep caller named board-sweep.yml" \
+  in_consumer sweepfirst --check --source "$SRC" 0.4.1
+unchanged "the routed-elsewhere refusal writes nothing" "$TMP/sweepfirst" \
+  in_consumer sweepfirst --fix --source "$SRC" 0.4.1
+
+# --- a labels caller carrying a SECOND ceremony pin -------------------------
+#
+# The ref pass rewrites every enumerated pin in the file; the step's plan
+# named one of them. A walker told about one line sees the other as a change
+# the plan never named — the rollback is right, but the run tells the operator
+# this is a bug in ceremony-upgrade and asks them to report it, for a tree
+# they are entitled to have (claude-bot §2). The suite's own consumer() puts
+# two ceremony pins in ci.yml, so a multi-pin file is nothing unusual.
+twopin_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: heavy-duty/ceremony/actions/docs-sync@$ref
+EOF
+}
+split_consumer twopins 0.3.0 twopin_caller
+check "a second ceremony pin in the labels caller does not fault the step" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer twopins --fix --source "$SRC" 0.4.1
+check "both ceremony pins in that file moved to the crossed tag" 0 \
+  "$((PIN_COUNT + 2)) 0.4.1" refs twopins
+check "the second pin is at the crossed tag too" 0 \
+  "      - uses: heavy-duty/ceremony/actions/docs-sync@0.4.1" caller_of twopins
+check_absent "the multi-pin caller still lost its schedule" 0 "schedule:" \
+  caller_of twopins
+check "the multi-pin caller still gained the grant" 0 "  actions: write" \
+  caller_of twopins
+# The FALSE DIAGNOSIS is the damage, and it is asserted as an absence on a
+# fixture of its own — a second --fix over the tree above would be a different
+# move against a tree already at the crossed tag. What this rejects is the run
+# printing ceremony's own "this is a bug in ceremony-upgrade … please report
+# it" over a shape ceremony handles.
+split_consumer twopinsagain 0.3.0 twopin_caller
+check_absent "no fault is announced over a tree the command handles" 0 \
+  "FAULT" in_consumer twopinsagain --fix --source "$SRC" 0.4.1
+split_consumer twopinsonce 0.3.0 twopin_caller
+check_absent "and the operator is not sent to file a ceremony bug" 0 \
+  "Please report it against" in_consumer twopinsonce --fix --source "$SRC" 0.4.1
+
+# --- D5: a workflow name is a YAML scalar, and it is encoded as one ---------
+#
+# `name: "labels: private"` is a valid workflow name. Carried raw into the
+# flow mapping the sweep caller is routed with, the colon opens a nested
+# mapping and what the consumer gets is not a differently-named sweep caller
+# but an unparseable one (codex-bot §3).
+quoted_name_caller() {
+  cat <<EOF
+name: "labels: private # board"
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer quotedname 0.3.0 quoted_name_caller
+check "a quoted name carrying punctuation is carried, not refused" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer quotedname --fix --source "$SRC" 0.4.1
+check "the name is written as a quoted scalar the flow mapping can hold" 0 \
+  "    with: { pr_workflow_name: 'labels: private # board' }" \
+  sweep_of quotedname
+check_absent "the raw scalar is not what landed" 0 \
+  "pr_workflow_name: labels: private" sweep_of quotedname
+# The quote style that has no escapes but the doubled quote is the one that
+# cannot be got wrong, so a name carrying one is doubled rather than dropped.
+apostrophe_name_caller() {
+  cat <<EOF
+name: "the board's labels"
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer aponame 0.3.0 apostrophe_name_caller
+check "a name carrying an apostrophe is carried, not refused" 0 \
+  "0.3.0 -> 0.4.1 done" in_consumer aponame --fix --source "$SRC" 0.4.1
+check "a name carrying an apostrophe is escaped by doubling it" 0 \
+  "    with: { pr_workflow_name: 'the board''s labels' }" \
+  sweep_of aponame
+# ...and the plain path is untouched by any of it: the ordinary name stays
+# ordinary bytes, which is what the D5 rows above already assert.
+check "a plain name is still written plain" 0 \
+  "    with: { pr_workflow_name: board, runner: '\"ubuntu-22.04\"' }" \
+  sweep_of secretsfirst
+
 # --- A7: every shape the step cannot anchor is a refusal --------------------
 #
 # Each of these is a tree where a best guess is available and wrong. The
@@ -1501,6 +1672,124 @@ check "that refusal says it will not carry routing it did not understand" 1 \
   "single-line flow mapping" in_consumer badwith --check --source "$SRC" 0.4.1
 unchanged "the unreadable-with refusal writes nothing" "$TMP/badwith" \
   in_consumer badwith --fix --source "$SRC" 0.4.1
+
+# The OTHER spelling of the sweep caller. GitHub reads `.yaml` in
+# .github/workflows/ as readily as `.yml`, and this file's own enumeration
+# already knows both — so an operator who wrote labels-sweep.yaml by hand and
+# then reached for the command got a second sweep caller written beside it at
+# exit 0. Two callers, both scheduled: DOUBLE SWEEPS, which is the damage this
+# tag is first on the ladder to prevent (claude-bot §3).
+split_consumer sweepyaml 0.3.0 barbershop_caller
+printf 'name: labels-sweep\non: {workflow_dispatch: {}}\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n' \
+  >"$TMP/sweepyaml/.github/workflows/labels-sweep.yaml"
+check "a sweep caller spelled .yaml is a refusal too" 1 \
+  ".github/workflows/labels-sweep.yaml already exists" \
+  in_consumer sweepyaml --check --source "$SRC" 0.4.1
+unchanged "the .yaml-sweep-caller refusal writes nothing" "$TMP/sweepyaml" \
+  in_consumer sweepyaml --fix --source "$SRC" 0.4.1
+sweep_files() {
+  printf '[%s]\n' "$(
+    find "$TMP/$1/.github/workflows" -name 'labels-sweep.*' -printf '%f\n' |
+      LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
+  )"
+}
+check "no second sweep caller was written beside the one already there" 0 \
+  "[labels-sweep.yaml]" sweep_files sweepyaml
+
+# --- the permission grant has exactly two anchored shapes -------------------
+#
+# `actions: read` to rewrite, or no `actions:` key to insert after. A step
+# reading only the LINE the key is on substitutes whatever value is there and
+# leaves a duplicate key duplicated (codex-bot §2), so the value is read and
+# every other shape refuses with the value it found named.
+# The pin comes from split_consumer's own `ref`, as every builder here does;
+# the grant's value comes from $ACTIONS_VALUE, set beside each fixture.
+actions_valued_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: $ACTIONS_VALUE
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+ACTIONS_VALUE="none"
+split_consumer actionsnone 0.3.0 actions_valued_caller
+check "a grant this step did not write is not overwritten" 1 \
+  "already grants 'actions: none'" \
+  in_consumer actionsnone --check --source "$SRC" 0.4.1
+check "that refusal says which two shapes it does anchor" 1 \
+  "rewrites an 'actions: read' grant, or inserts the key where" \
+  in_consumer actionsnone --check --source "$SRC" 0.4.1
+unchanged "the foreign-grant refusal writes nothing" "$TMP/actionsnone" \
+  in_consumer actionsnone --fix --source "$SRC" 0.4.1
+
+# A write already granted by hand is the same refusal, and deliberately so:
+# treating it as satisfied is a third shape this step does not have, and the
+# hand that granted it is the one that knows why.
+ACTIONS_VALUE="write"
+split_consumer actionswrite 0.3.0 actions_valued_caller
+check "a write already granted by hand is left alone, not rewritten" 1 \
+  "already grants 'actions: write'" \
+  in_consumer actionswrite --check --source "$SRC" 0.4.1
+unchanged "the already-granted refusal writes nothing" "$TMP/actionswrite" \
+  in_consumer actionswrite --fix --source "$SRC" 0.4.1
+
+twoactions_caller() {
+  cat <<EOF
+name: labels
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer twoactions 0.3.0 twoactions_caller
+check "two actions keys are a refusal rather than a rewrite of the last" 1 \
+  "block declares 'actions:' 2" \
+  in_consumer twoactions --check --source "$SRC" 0.4.1
+unchanged "the duplicate-grant refusal writes nothing" "$TMP/twoactions" \
+  in_consumer twoactions --fix --source "$SRC" 0.4.1
+
+# A double-quoted name carrying a backslash is the one name shape that
+# refuses: reading it means implementing YAML's double-quoted escapes, and a
+# step that guessed would tell the sweep caller the wrong name for the board.
+escaped_name_caller() {
+  cat <<EOF
+name: "labels \\"private\\""
+on:
+  schedule: [{cron: "*/15 * * * *"}]
+  workflow_dispatch:
+  pull_request_target:
+    types: [opened]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  labels:
+    uses: heavy-duty/ceremony/.github/workflows/labels.yml@$ref
+EOF
+}
+split_consumer escapedname 0.3.0 escaped_name_caller
+check "a name this step cannot decode is a refusal, not a guess" 1 \
+  "backslash escape" in_consumer escapedname --check --source "$SRC" 0.4.1
+unchanged "the undecodable-name refusal writes nothing" "$TMP/escapedname" \
+  in_consumer escapedname --fix --source "$SRC" 0.4.1
 
 # --- A8: the stub has one source, and the step really reads it --------------
 #
