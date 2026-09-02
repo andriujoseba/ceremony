@@ -220,10 +220,14 @@ PIN_RE='^[[:space:]]*(-[[:space:]]*)?uses:[[:space:]]*heavy-duty/ceremony(/[^@[:
 # tree moves together. Symlinks are enumerated (-o -type l) so that one is
 # REFUSED below rather than skipped — a link silently missed by `-type f`
 # leaves a ref behind and turns "all or none" into a lie.
-mapfile -t yaml_files < <(
-  find "$GITHUB_DIR" \( -type f -o -type l \) \
-    \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort
-)
+#
+# The scan is INSIDE enumerate_pins rather than beside it, so the one reader
+# reads the tree as it stands each time it runs. An applied step creates a
+# caller file carrying a pin of its own, and a file list captured once before
+# any write is a list that cannot see it — the post-write re-enumeration then
+# reports one ref fewer than the plan announced and rolls a correct run back
+# (#597).
+yaml_files=()
 
 # enumerate_pins — read every ceremony pin in the tree into pin_files,
 # pin_refs, pin_lines (1-based line numbers) and pin_file_list (the distinct
@@ -247,6 +251,10 @@ pin_lines=()
 pin_file_list=()
 enumerate_pins() {
   local f line lineno ref had
+  mapfile -t yaml_files < <(
+    find "$GITHUB_DIR" \( -type f -o -type l \) \
+      \( -name '*.yml' -o -name '*.yaml' \) | LC_ALL=C sort
+  )
   pin_files=()
   pin_refs=()
   pin_lines=()
@@ -871,7 +879,8 @@ top_level_key() {
   ' "$1" | {
     IFS=$'\t' read -r n rest || return 0
     [ -n "${n:-}" ] || return 0
-    printf '%s\t%s\n' "$n" "$(printf '%s\n' "$rest" | yaml_uncomment)"
+    printf '%s\t%s\n' "$n" \
+      "$(printf '%s\n' "$rest" | yaml_uncomment | sed 's/^[[:space:]]*//')"
   }
 }
 
@@ -1365,6 +1374,8 @@ take_snapshot
 
 planned_refs="${#pin_files[@]}"
 planned_files="${#pin_file_list[@]}"
+expected_refs="$planned_refs"
+expected_files="$planned_files"
 
 rewritten=0
 for f in "${pin_file_list[@]}"; do
@@ -1439,11 +1450,13 @@ if [ "$step_active" -eq 1 ] && [ -n "$step_new_file" ]; then
     "  Nothing further will be written; the tree is rolled back."
   mkdir -p "$(dirname "$step_new_file")"
   printf '%s\n' "$step_new_body" >"$step_new_file"
-  # The file the step creates carries a ceremony pin of its own, so the plan's
-  # counts have to grow with it or the re-enumeration below reads it as a ref
-  # nobody announced.
-  planned_refs=$((planned_refs + 1))
-  planned_files=$((planned_files + 1))
+  # The file the step creates carries a ceremony pin of its own, so what the
+  # re-enumeration expects has to grow with it or that pin reads as a ref
+  # nobody announced. The REWRITE's own counts do not grow: this file was
+  # created at the target and never rewritten, and a message conflating the
+  # two tells the operator a file was edited that was not there to edit.
+  expected_refs=$((expected_refs + 1))
+  expected_files=$((expected_files + 1))
 fi
 
 # --- the rewrite verifies its own work ------------------------------------
@@ -1564,11 +1577,11 @@ if [ "$step_active" -eq 1 ] && [ -n "$step_new_file" ]; then
 fi
 
 enumerate_pins
-if [ "${#pin_files[@]}" -ne "$planned_refs" ]; then
-  verify_failures+=("the plan named $planned_refs ceremony ref(s); the tree now carries ${#pin_files[@]}")
+if [ "${#pin_files[@]}" -ne "$expected_refs" ]; then
+  verify_failures+=("the plan named $expected_refs ceremony ref(s); the tree now carries ${#pin_files[@]}")
 fi
-if [ "${#pin_file_list[@]}" -ne "$planned_files" ]; then
-  verify_failures+=("the plan named $planned_files file(s) carrying a pin; the tree now has ${#pin_file_list[@]}")
+if [ "${#pin_file_list[@]}" -ne "$expected_files" ]; then
+  verify_failures+=("the plan named $expected_files file(s) carrying a pin; the tree now has ${#pin_file_list[@]}")
 fi
 for i in "${!pin_refs[@]}"; do
   if [ "${pin_refs[$i]}" != "$target" ]; then
@@ -1591,6 +1604,9 @@ if [ "${#verify_failures[@]}" -gt 0 ]; then
   exit 1
 fi
 echo "$SELF: rewrote $planned_refs ceremony ref(s) in $rewritten file(s) to @$target, and verified the tree against the plan."
+if [ "$step_active" -eq 1 ] && [ -n "$step_new_file" ]; then
+  echo "$SELF: created $step_new_file at @$target, and verified it against the bytes the plan announced."
+fi
 
 # The pin this reads is the one just written, which is why the call is here
 # and not before the rewrite. It is inside the transaction: docs-sync refuses
