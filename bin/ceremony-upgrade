@@ -1255,10 +1255,22 @@ step_0_4_1_two_caller_split() {
   step_plan+=("    edit $caller:")
   step_plan+=("      delete line $sched_line — the schedule: key, which MOVES to the sweep caller")
   [ -z "$disp_line" ] || step_plan+=("      delete line $disp_line — the bare workflow_dispatch: key, which the sweep caller declares")
+  # THE PLAN SHOWS THE BYTES, not a description of them. This rewrite replaces
+  # the line's trailing comment as well as its value — the comment beside a
+  # read grant explains a read, and leaving it beside a write is a note that
+  # has quietly become false — so a reader who is only told "the actions grant
+  # is rewritten" cannot tell before the run whether their own prose survives.
   if [ -n "$actions_line" ]; then
-    step_plan+=("      rewrite line $actions_line — actions: write, the trigger job's dispatch being a write")
+    step_plan+=(
+      "      rewrite line $actions_line — actions: write, the trigger job's dispatch being a write:"
+      "        - $(sed -n "${actions_line}p" "$caller")"
+      "        + ${step_edit_ops[-1]#*$'\t'*$'\t'}"
+    )
   else
-    step_plan+=("      insert after line $perm_last_key — actions: write, the trigger job's dispatch being a write")
+    step_plan+=(
+      "      insert after line $perm_last_key — actions: write, the trigger job's dispatch being a write:"
+      "        + ${step_edit_ops[-1]#*$'\t'*$'\t'}"
+    )
   fi
 }
 

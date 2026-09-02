@@ -1131,6 +1131,16 @@ check "--check names the bare workflow_dispatch deletion" 0 \
 check "--check names the actions: write grant as a line rewrite" 0 \
   "actions: write, the trigger job's dispatch being a write" \
   in_consumer bshop --check --source "$SRC" 0.4.1
+# The plan shows the BYTES, both sides. This rewrite replaces the consumer's
+# own trailing comment as well as the value — a note explaining a read grant
+# is false beside a write one — and a reader who is only told "the grant is
+# rewritten" cannot tell beforehand that their prose is going with it.
+check "--check shows the exact line the rewrite replaces" 0 \
+  "-   actions: read    # checkSuite.workflowRun read" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
+check "--check shows the exact line it would write there" 0 \
+  "+   actions: write   # the trigger job's dispatch of the sweep caller" \
+  in_consumer bshop --check --source "$SRC" 0.4.1
 check "--check names the mirror re-sync" 0 "then re-sync the doctrine mirror" \
   in_consumer bshop --check --source "$SRC" 0.4.1
 check "--check names the pin the run would leave behind" 0 \
