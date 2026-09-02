@@ -1645,6 +1645,24 @@ check "that refusal is still the crossed-migration refusal" 1 \
   "THE CROSSING IS HAND-ONLY" in_consumer sweeppresent --check --source "$SRC" 0.4.1
 unchanged "the existing-sweep-caller refusal writes nothing" "$TMP/sweeppresent" \
   in_consumer sweeppresent --fix --source "$SRC" 0.4.1
+# The shorter move is the LAST line before the tree verdict, so on a step
+# refusal it reads as the recommended exit when the hand procedure above it
+# is the one that crosses the tag (claude-bot). It keeps its bytes — a reader
+# and this suite both grep them — and gains a sentence saying what it is not.
+check "a step refusal still emits its shorter move" 1 \
+  "SHORTER MOVE:" in_consumer sweeppresent --check --source "$SRC" 0.4.1
+check "and says that move stops below the shape that refused" 1 \
+  "stops BELOW the shape named above rather than crossing it" \
+  in_consumer sweeppresent --check --source "$SRC" 0.4.1
+check "naming the tag the hand procedure is still owed for" 1 \
+  "The hand procedure is what crosses 0.4.1." \
+  in_consumer sweeppresent --check --source "$SRC" 0.4.1
+# Not vacuous, and this is the conditional: a refusal that reached no step —
+# an ordinary crossed migration with a shorter move of its own — carries the
+# line without the sentence, because there is no shape above it to stop below.
+check_absent "an ordinary crossed migration's shorter move carries no such note" 1 \
+  "stops BELOW the shape named above" \
+  in_consumer stepable --check --source "$SRC" 0.7.8
 
 twoschedule_caller() {
   cat <<EOF
@@ -1889,6 +1907,32 @@ check "a write already granted by hand is left alone, not rewritten" 1 \
   in_consumer actionswrite --check --source "$SRC" 0.4.1
 unchanged "the already-granted refusal writes nothing" "$TMP/actionswrite" \
   in_consumer actionswrite --fix --source "$SRC" 0.4.1
+
+# A QUOTED `read` IS THE SAME REFUSAL, and the case the message has to work
+# hardest for: YAML resolves `'read'` and `read` alike, so a sentence saying
+# the grant differs from the one this step rewrites shows the reader the same
+# four bytes on both sides of it (claude-bot). The refusal is the
+# conservative call and stays; what it says is that the comparison is on the
+# bytes.
+ACTIONS_VALUE="'read'"
+split_consumer actionsquoted 0.3.0 actions_valued_caller
+check "a quoted read grant is a refusal, not a rewrite" 1 \
+  "already grants 'actions: 'read''" \
+  in_consumer actionsquoted --check --source "$SRC" 0.4.1
+check "and the refusal says the comparison is on the bytes" 1 \
+  "THE VALUE IS COMPARED AS WRITTEN" \
+  in_consumer actionsquoted --check --source "$SRC" 0.4.1
+check "it names the shape that makes the sentence read oddly" 1 \
+  "a quoted 'read' is not the" \
+  in_consumer actionsquoted --check --source "$SRC" 0.4.1
+unchanged "the quoted-read refusal writes nothing" "$TMP/actionsquoted" \
+  in_consumer actionsquoted --fix --source "$SRC" 0.4.1
+# Not vacuous: that clause belongs to this refusal and not to every
+# diagnostic the command prints, so the plain crossed-migration refusal —
+# which reaches no step at all — must not carry it.
+check_absent "the byte-comparison note belongs to the grant refusal alone" 1 \
+  "THE VALUE IS COMPARED AS WRITTEN" \
+  in_consumer ancient --check --source "$SRC" 0.7.7
 
 twoactions_caller() {
   cat <<EOF

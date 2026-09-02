@@ -1000,8 +1000,12 @@ where it refuses. It refuses whenever it cannot anchor an edit
 unambiguously — a sweep caller already in the tree under either spelling,
 two `schedule:` keys, a `workflow_dispatch:` carrying inputs of your own,
 no `permissions:` block, an `actions:` grant it did not write (anything
-other than one `actions: read`, a write you granted by hand included), a
-`name:` whose quoting it cannot decode, a `with:` it cannot read — and a
+other than one `actions: read`, a write you granted by hand included, and
+the value is compared as written, so a quoted `'read'` is not one), a
+`name:` whose quoting it cannot decode, a `with:` it cannot read, an `on:`
+block carrying nothing but the two triggers it relocates (performing the
+edits there would leave your caller with no trigger at all, and what
+triggers it instead is yours to decide) — and a
 refusal leaves the tree byte-identical, so the hand procedure is always
 still open to you. Every refusal names the file, the line and the shape,
 so what to do by hand is one edit away from what it told you.
