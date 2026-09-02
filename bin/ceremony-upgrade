@@ -137,7 +137,7 @@ MIGRATIONS=(
   "0.2.0|Bootstrap a new repo|triage-actors= becomes MANDATORY in .github/labels.conf — its absence is a parse failure, not an ignored setting. Fragment mode, changelog-assembled, runner-isolated and the labeler's issues: trigger arrive with it.|"
   "0.3.0|Labels automation|.github/labeler.yml's accepted shape NARROWS to additive scope rows — any other key now fails the run loudly rather than being ignored.|"
   "0.4.1|Labels automation|THE TWO-CALLER SPLIT (#209), and it is the destructive one. Add .github/workflows/labels-sweep.yml; MOVE the hourly cron out of labels.yml into it — move, never copy, because a copied cron gives DOUBLE SWEEPS; and grant actions: write. Without the split the trigger job goes RED ON EVERY PR AND ISSUE EVENT and event-woken sweeps stop.|step_0_4_1_two_caller_split"
-  "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written.|"
+  "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written.|step_0_5_0_panel_rows"
   "0.6.0|Doctrine mirror|RELEASES.md joins the vendored set and .ceremony/ is short a file until the mirror is re-synced; refs-not-closing becomes available; and the manifest at a tag is guaranteed the complete set only from here.|"
   "0.7.0|The artifact hook|Native release-candidate cuts and deterministic rc re-arming arrive; earlier pins do not carry the rc release path.|"
   "0.7.8|The guarded scaffold — ceremony owns a block, you own the rest|.github/pull_request_template.md gains a ceremony-owned block, read from the pin's docs/SCAFFOLDED.txt, and docs-sync --check goes RED until it is there. Run docs-sync --fix from the repo root and commit that file alongside .ceremony/ in the SAME PR that moves the ref — split them and the default branch is red in between. Where the template already exists, --fix appends the block and leaves your own content alone.|"
@@ -932,6 +932,8 @@ step_0_4_1_two_caller_split() {
   local caller_name="" caller_name_raw="" runner="" with_line=""
   local lineno text indent key val
   local stub_sched_lines with_pairs="" sweep_name
+  local actions_value_shown="" stub_uses="" stub_indent=""
+  local grant_refusal=()
 
   sweep="$GITHUB_DIR/workflows/labels-sweep.yml"
 
@@ -1174,17 +1176,37 @@ step_0_4_1_two_caller_split() {
       "  by rewriting one of them and leaving the rest."
   fi
   if [ "$actions_count" -eq 1 ] && [ "$actions_value" != "read" ]; then
-    step_refuse \
-      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
-      "  $caller line $actions_line already grants 'actions: $actions_value'." \
-      "  This step rewrites an 'actions: read' grant, or inserts the key where" \
-      "  the block has none. It does not overwrite a grant someone else chose" \
-      "  — including a write already granted by hand, which is that hand's" \
-      "  decision to keep and this step's to leave alone." \
-      "  THE VALUE IS COMPARED AS WRITTEN, which is worth saying when the two" \
-      "  sides of that sentence are the same word: a quoted 'read' is not the" \
-      "  bare read this step rewrites, though YAML resolves them alike. A line" \
+    # A VALUE THIS MESSAGE PRINTS IS PRINTABLE (#598 claude-bot (a)). On a
+    # caller written with CRLF endings the value read here is `read` followed
+    # by a carriage return, and the refusal that shipped put those same four
+    # visible bytes on both sides of a sentence saying they differ — the
+    # reader is told to compare `actions: read` against `actions: read` and
+    # find the difference. The CR is rendered as \r wherever the value is
+    # shown, and where the ONLY difference is the line ending the message
+    # says so outright: line endings are the one way this comparison can fail
+    # invisibly, and "look harder" is not a remedy anyone can act on.
+    actions_value_shown="${actions_value//$'\r'/\\r}"
+    grant_refusal=(
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE"
+      "  $caller line $actions_line already grants 'actions: $actions_value_shown'."
+      "  This step rewrites an 'actions: read' grant, or inserts the key where"
+      "  the block has none. It does not overwrite a grant someone else chose"
+      "  — including a write already granted by hand, which is that hand's"
+      "  decision to keep and this step's to leave alone."
+      "  THE VALUE IS COMPARED AS WRITTEN, which is worth saying when the two"
+      "  sides of that sentence are the same word: a quoted 'read' is not the"
+      "  bare read this step rewrites, though YAML resolves them alike. A line"
       "  it cannot recognise byte for byte is a line it will not rewrite."
+    )
+    if [ "${actions_value%$'\r'}" = "read" ]; then
+      grant_refusal+=(
+        "  THE TWO VALUES DIFFER ONLY IN THEIR LINE ENDINGS: $caller is written"
+        "  with CRLF endings, so line $actions_line ends 'read' with a carriage"
+        "  return and this step compares against a bare 'read'. Convert that file"
+        "  to LF endings and run this again; nothing else about it is in the way."
+      )
+    fi
+    step_refuse "${grant_refusal[@]}"
   fi
 
   # --- the labels caller's name, and its `with:` block ---
@@ -1356,6 +1378,40 @@ step_0_4_1_two_caller_split() {
     "$SELF: the sweep-caller stub in $GUIDE_NAME at $first_crossed carries" \
     "  $stub_sched_lines 'schedule:' keys, and this step relocates the" \
     "  consumer's cron onto exactly one. Nothing was written."
+  # THE `with:` INDENT IS READ FROM THE STUB, NEVER ASSUMED (#598 codex-bot
+  # (b)). Every other assumption this step makes about the published block is
+  # an exact count that dies loudly — the placeholder occurrences and the
+  # `schedule:` keys above — while the append below used to write four spaces
+  # because that is what the block happened to indent its job keys at. That is
+  # the same assumption with no guard on it, and a re-indented block would
+  # have shipped a consumer a `with:` at the wrong depth at exit 0: either a
+  # key of some other mapping or a top-level one, and in neither case the
+  # routing the plan announced.
+  #
+  # The anchor is the line the `with:` joins — the sweep job's own `uses:`,
+  # which is the placeholder line just counted, so the two move together by
+  # construction. A placeholder that is not on a `uses:` line, or one at
+  # column 0, is a block this step has not understood and it says so rather
+  # than picking a width.
+  stub_uses="$(printf '%s\n' "$stub_body" | grep -F '@<pinned-tag>')"
+  stub_indent="${stub_uses%%[! ]*}"
+  case "$stub_uses" in
+    "$stub_indent"uses:*) ;;
+    *)
+      die "$SELF: the sweep-caller stub in $GUIDE_NAME at $first_crossed" \
+        "  carries its '@<pinned-tag>' placeholder on a line that is not a" \
+        "  'uses:' key:" \
+        "    $stub_uses" \
+        "  This step writes the caller's routing as a 'with:' beside that key" \
+        "  and takes its indent from it, so a placeholder somewhere else is a" \
+        "  block it has not understood. Nothing was written."
+      ;;
+  esac
+  [ -n "$stub_indent" ] || die \
+    "$SELF: the sweep-caller stub in $GUIDE_NAME at $first_crossed writes its" \
+    "  sweep job's 'uses:' at column 0, so the 'with:' this step writes beside" \
+    "  it would be a top-level key rather than one of that job's. Nothing was" \
+    "  written."
 
   # The pin, the consumer's own cadence, and the routing it owns. The cron is
   # RELOCATED and not re-decided: the cadence is the consumer's, and this step
@@ -1378,7 +1434,7 @@ step_0_4_1_two_caller_split() {
   fi
   if [ -n "$with_pairs" ]; then
     step_new_body="$step_new_body
-    with: { $with_pairs }"
+${stub_indent}with: { $with_pairs }"
   fi
 
   step_new_file="$sweep"
@@ -1428,6 +1484,52 @@ step_0_4_1_two_caller_split() {
       "        + ${step_edit_ops[-1]#*$'\t'*$'\t'}"
     )
   fi
+}
+
+# --- 0.5.0: the crossing that asks this tree for nothing --------------------
+#
+# THE LADDER'S SECOND TAG, and the first of a different kind (#600): every
+# edit this crossing needs is one the command already performs for every move
+# — the refs, and the mirror re-sync at the end. There is no consumer byte
+# left for a step to write, so this one writes none.
+#
+# 0.5.0 made the OPTIONAL `panel[<login>]=` row LEGAL in .github/labels.conf.
+# Three published sources say the same thing about which direction that
+# costs: the guide's own note ("the optional rows are available at 0.5.0 and
+# later … on any earlier pin a bracketed row is a parse failure"), the 0.5.0
+# release entry ("consumers gain the row at their next pin bump — adding it
+# BEFORE that bump is a parse failure"), and the table row above ("never move
+# BACKWARDS across this tag with one written"). The hazard is a backwards
+# move, and fault 5 refuses every backwards move outright, above, before any
+# step is dispatched. Writing the row is not this command's to do either: the
+# note calls it optional and its value is a consumer's own reviewer set.
+#
+# The tag's other consumer-visible change is doctrine — third-party actions
+# and their SHA pins — which reaches a tree through the vendored mirror, and
+# the mirror is re-synced on the way out of every run.
+#
+# IT CALLS step_refuse NOWHERE, AND THAT IS A DECISION RATHER THAN AN
+# OMISSION (#600 E3). 0.4.1's step refuses two dozen shapes because its edits
+# have to land in a consumer's own bytes, and every one of those anchors can
+# be missing, doubled or unreadable. This step reads no anchor and writes no
+# byte, so there is nothing it can fail to find and no tree shape a FORWARD
+# crossing of 0.5.0 breaks. An absent guard and a forgotten one look
+# identical to the next reader, which is what this paragraph is for.
+#
+# AND IT IS A ROW WITH A STEP, NEVER A DELETED ROW (#597 D2). Dropping the
+# row would make the crossing "work" by making the tag uncountable: every
+# neighbouring message's crossed count would move, and the suite's ratchet
+# against the guide's own availability notes would red on a note whose tag
+# carries no row.
+step_0_5_0_panel_rows() {
+  step_plan+=(
+    "    no edit to this tree: $first_crossed asks it for nothing. The tag makes the"
+    "    OPTIONAL panel[<login>]= row LEGAL in .github/labels.conf; it requires no"
+    "    row and this command writes none, a reviewer set being yours to choose."
+    "    $GUIDE_NAME § \"Labels automation\" is where that is stated, and it puts"
+    "    the requirement on the EARLIER pin: a bracketed row below this tag is the"
+    "    parse failure, never one at it. So this run is the refs and the mirror."
+  )
 }
 
 # flow_scalar VALUE — VALUE encoded so it can be written INSIDE a single-line
