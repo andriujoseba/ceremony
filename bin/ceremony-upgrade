@@ -75,10 +75,24 @@ CHANGELOG_NAME="CHANGELOG.md"
 # --- the migration table --------------------------------------------------
 #
 # One row per tag at which docs/CONSUMERS.md records an "available at `X` and
-# later" note: `tag|CONSUMERS.md section|what the consumer must do by hand`.
+# later" note:
+#
+#   tag|CONSUMERS.md section|what the consumer must do by hand|applied step
+#
 # The interval is half-open, `(current, target]`, so a row fires when the move
 # ARRIVES at that tag or passes over it, and never when the consumer is
 # already standing on it.
+#
+# FIELD 4 IS THE ONLY THING THAT SAYS A TAG IS MECHANISED, and an empty field
+# 4 is the whole of "it is not" (#597). A row with a step names the shell
+# function that performs that tag's own edits; a row without one refuses
+# exactly as every row did before any step existed, and the refusal's bytes
+# are what the suite pins. The dispatch reads the FIRST crossed tag's field 4
+# and nothing else: a mechanised tag deeper in the interval is unreachable
+# until the tags below it are crossed, which is the ladder, one tag at a
+# time. Fields 1-3 are unchanged by a row gaining a step — the hand procedure
+# stays the source of truth for what the step performs, and stays what the
+# reader is shown when the step cannot run against their tree.
 #
 # IT IS A LIST OF TAGS, NOT A LIST OF DESTRUCTIVE TAGS. Some of these notes
 # announce a capability a consumer may ignore; others take a board down. The
@@ -119,14 +133,14 @@ CHANGELOG_NAME="CHANGELOG.md"
 # note that ships without its row, not a proof that the prose scan is
 # complete.
 MIGRATIONS=(
-  "0.1.0|Read the manifest, never a copy of it|docs/VENDORED.txt is the manifest actions/docs-sync mirrors; it ships with docs-sync itself and every later pin carries it."
-  "0.2.0|Bootstrap a new repo|triage-actors= becomes MANDATORY in .github/labels.conf — its absence is a parse failure, not an ignored setting. Fragment mode, changelog-assembled, runner-isolated and the labeler's issues: trigger arrive with it."
-  "0.3.0|Labels automation|.github/labeler.yml's accepted shape NARROWS to additive scope rows — any other key now fails the run loudly rather than being ignored."
-  "0.4.1|Labels automation|THE TWO-CALLER SPLIT (#209), and it is the destructive one. Add .github/workflows/labels-sweep.yml; MOVE the hourly cron out of labels.yml into it — move, never copy, because a copied cron gives DOUBLE SWEEPS; and grant actions: write. Without the split the trigger job goes RED ON EVERY PR AND ISSUE EVENT and event-woken sweeps stop."
-  "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written."
-  "0.6.0|Doctrine mirror|RELEASES.md joins the vendored set and .ceremony/ is short a file until the mirror is re-synced; refs-not-closing becomes available; and the manifest at a tag is guaranteed the complete set only from here."
-  "0.7.0|The artifact hook|Native release-candidate cuts and deterministic rc re-arming arrive; earlier pins do not carry the rc release path."
-  "0.7.8|The guarded scaffold — ceremony owns a block, you own the rest|.github/pull_request_template.md gains a ceremony-owned block, read from the pin's docs/SCAFFOLDED.txt, and docs-sync --check goes RED until it is there. Run docs-sync --fix from the repo root and commit that file alongside .ceremony/ in the SAME PR that moves the ref — split them and the default branch is red in between. Where the template already exists, --fix appends the block and leaves your own content alone."
+  "0.1.0|Read the manifest, never a copy of it|docs/VENDORED.txt is the manifest actions/docs-sync mirrors; it ships with docs-sync itself and every later pin carries it.|"
+  "0.2.0|Bootstrap a new repo|triage-actors= becomes MANDATORY in .github/labels.conf — its absence is a parse failure, not an ignored setting. Fragment mode, changelog-assembled, runner-isolated and the labeler's issues: trigger arrive with it.|"
+  "0.3.0|Labels automation|.github/labeler.yml's accepted shape NARROWS to additive scope rows — any other key now fails the run loudly rather than being ignored.|"
+  "0.4.1|Labels automation|THE TWO-CALLER SPLIT (#209), and it is the destructive one. Add .github/workflows/labels-sweep.yml; MOVE the hourly cron out of labels.yml into it — move, never copy, because a copied cron gives DOUBLE SWEEPS; and grant actions: write. Without the split the trigger job goes RED ON EVERY PR AND ISSUE EVENT and event-woken sweeps stop.|"
+  "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written.|"
+  "0.6.0|Doctrine mirror|RELEASES.md joins the vendored set and .ceremony/ is short a file until the mirror is re-synced; refs-not-closing becomes available; and the manifest at a tag is guaranteed the complete set only from here.|"
+  "0.7.0|The artifact hook|Native release-candidate cuts and deterministic rc re-arming arrive; earlier pins do not carry the rc release path.|"
+  "0.7.8|The guarded scaffold — ceremony owns a block, you own the rest|.github/pull_request_template.md gains a ceremony-owned block, read from the pin's docs/SCAFFOLDED.txt, and docs-sync --check goes RED until it is there. Run docs-sync --fix from the repo root and commit that file alongside .ceremony/ in the SAME PR that moves the ref — split them and the default branch is red in between. Where the template already exists, --fix appends the block and leaves your own content alone.|"
 )
 
 die() {
@@ -618,17 +632,36 @@ fi
 # shipped when the target was cut — simply is not in the slice.
 crossed=()
 first_crossed_i=-1
+first_crossed_step=""
 for ((i = current_i + 1; i <= target_i; i++)); do
   for row in "${MIGRATIONS[@]}"; do
     if [ "${row%%|*}" = "${ladder[$i]}" ]; then
       crossed+=("$row")
-      [ "$first_crossed_i" -ge 0 ] || first_crossed_i="$i"
+      if [ "$first_crossed_i" -lt 0 ]; then
+        first_crossed_i="$i"
+        # Field 4 of the FIRST crossed row, and the only read of it: empty
+        # means the tag is not mechanised and the refusal below is the whole
+        # of this command's answer.
+        IFS='|' read -r _ _ _ first_crossed_step <<<"$row"
+      fi
     fi
   done
 done
 
-if [ "${#crossed[@]}" -gt 0 ]; then
-  first_crossed="${ladder[$first_crossed_i]}"
+# refuse_crossing — the crossed-migration refusal, and the ONE place its bytes
+# are written. Two callers reach it and they must not drift apart: a first
+# crossed tag with no applied step (every row before #597, and every row but
+# one after it), and a mechanised tag whose step cannot anchor itself in THIS
+# tree. The second adds a section saying what could not be anchored and
+# nothing else, because everything the first says — the crossed set in ladder
+# order, each tag's section, the hand procedure, the shorter move, the
+# unchanged tree — is exactly as true when the step is the thing that failed.
+#
+# `step_blocked` is that section: empty for the unmechanised case, which is
+# what keeps those bytes identical to the ones the suite pins.
+step_blocked=()
+refuse_crossing() {
+  local row tag rest section what step_i
   step_i=$((first_crossed_i - 1))
   printf -v runnable_self '%q' "$0"
   if [ -n "$source_dir" ]; then
@@ -649,7 +682,8 @@ if [ "${#crossed[@]}" -gt 0 ]; then
       tag="${row%%|*}"
       rest="${row#*|}"
       section="${rest%%|*}"
-      what="${rest#*|}"
+      rest="${rest#*|}"
+      what="${rest%%|*}"
       echo "  $tag — docs/CONSUMERS.md § \"$section\""
       # fold, not a fixed wrap in the table: the table's cells stay one
       # editable line each and the terminal decides where they break.
@@ -663,6 +697,10 @@ if [ "${#crossed[@]}" -gt 0 ]; then
     ref_report
     echo "    then re-sync the doctrine mirror (docs-sync --fix)."
     echo
+    if [ "${#step_blocked[@]}" -gt 0 ]; then
+      printf '%s\n' "${step_blocked[@]}"
+      echo
+    fi
     # The pin, not evidence of a hand edit in the tree, defines the interval.
     # So the only truthful crossing moves the edits and refs together, while
     # the only automatic alternative must end below the first crossed tag
@@ -686,6 +724,13 @@ if [ "${#crossed[@]}" -gt 0 ]; then
     echo "  THE TREE IS UNCHANGED: nothing was written."
   } >&2
   exit 1
+}
+
+if [ "${#crossed[@]}" -gt 0 ]; then
+  first_crossed="${ladder[$first_crossed_i]}"
+  # THE DISPATCH. An unmechanised first crossed tag refuses and stops here;
+  # everything below this line belongs to a tag that has an applied step.
+  [ -n "$first_crossed_step" ] || refuse_crossing
 fi
 
 # --- the plan, and (only in --fix) the writes ------------------------------
