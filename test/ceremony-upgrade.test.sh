@@ -211,18 +211,31 @@ refs() {
 #
 # Default mode refuses, which is what makes every --source row a proof that
 # the --source path opens no socket (test/docs-sync.test.sh, #393).
+#
+# It also LOGS THE URL of every call, which is the only way to grade one thing
+# --source cannot express: with a local source tree standing in for ceremony,
+# "the guide at the crossed tag" and "the guide at the target" are the same
+# bytes, so a build that read the wrong ref passes every --source row. On the
+# fetch path the two are different URLs, and the log is what says which one
+# was asked for.
 mkdir -p "$TMP/stub"
 cat >"$TMP/stub/curl" <<'STUB'
 #!/usr/bin/env bash
 out=""
+url=""
 prev=""
 for arg in "$@"; do
   [ "$prev" = "-o" ] && out="$arg"
+  case "$arg" in https://*) url="$arg" ;; esac
   prev="$arg"
 done
+[ -z "${CURL_STUB_LOG:-}" ] || printf '%s\n' "$url" >>"$CURL_STUB_LOG"
 case "${CURL_STUB:-none}" in
   ok)
-    cp "$CURL_STUB_BODY" "$out"
+    case "$url" in
+      *docs/CONSUMERS.md) cp "${CURL_STUB_GUIDE:-$CURL_STUB_BODY}" "$out" ;;
+      *) cp "$CURL_STUB_BODY" "$out" ;;
+    esac
     printf '200'
     ;;
   404)
@@ -1467,6 +1480,30 @@ check "that failure says there is no copy to fall back to" 1 \
   in_consumer nostub --check --source "$SRC_NOSTUB" 0.4.1
 unchanged "a missing stub writes nothing" "$TMP/nostub" \
   in_consumer nostub --fix --source "$SRC_NOSTUB" 0.4.1
+
+# The tag the guide is read AT, graded where it is observable. The move asked
+# for is 0.3.0 -> 0.7.8 and the crossed tag is 0.4.1, so the ladder is fetched
+# at the target and the caller stub at the crossing — two different refs in
+# one run. A build that read the stub at the target, or at a default branch,
+# writes a consumer the bytes of a tag the crossing is not about.
+split_consumer fetchguide 0.3.0 barbershop_caller
+CURL_STUB_GUIDE="$SRC/docs/CONSUMERS.md"
+export CURL_STUB_GUIDE
+guide_urls() {
+  local log="$TMP/curl-urls"
+  : >"$log"
+  (
+    cd "$TMP/fetchguide" || return
+    CURL_STUB=ok CURL_STUB_LOG="$log" bash "$SCRIPT" --check 0.7.8
+  ) >/dev/null 2>&1
+  grep 'CONSUMERS.md' "$log" || echo "no-guide-fetch"
+}
+check "the caller stub is fetched at the CROSSED tag" 0 \
+  "https://raw.githubusercontent.com/heavy-duty/ceremony/0.4.1/docs/CONSUMERS.md" \
+  guide_urls
+check_absent "it is not fetched at the target that was asked for" 0 \
+  "/0.7.8/docs/CONSUMERS.md" guide_urls
+check_absent "and never from a branch" 0 "/main/docs/CONSUMERS.md" guide_urls
 
 # --- A9: the rollback holds over the enlarged territory ---------------------
 #
