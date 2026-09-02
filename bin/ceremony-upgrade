@@ -136,7 +136,7 @@ MIGRATIONS=(
   "0.1.0|Read the manifest, never a copy of it|docs/VENDORED.txt is the manifest actions/docs-sync mirrors; it ships with docs-sync itself and every later pin carries it.|"
   "0.2.0|Bootstrap a new repo|triage-actors= becomes MANDATORY in .github/labels.conf — its absence is a parse failure, not an ignored setting. Fragment mode, changelog-assembled, runner-isolated and the labeler's issues: trigger arrive with it.|"
   "0.3.0|Labels automation|.github/labeler.yml's accepted shape NARROWS to additive scope rows — any other key now fails the run loudly rather than being ignored.|"
-  "0.4.1|Labels automation|THE TWO-CALLER SPLIT (#209), and it is the destructive one. Add .github/workflows/labels-sweep.yml; MOVE the hourly cron out of labels.yml into it — move, never copy, because a copied cron gives DOUBLE SWEEPS; and grant actions: write. Without the split the trigger job goes RED ON EVERY PR AND ISSUE EVENT and event-woken sweeps stop.|"
+  "0.4.1|Labels automation|THE TWO-CALLER SPLIT (#209), and it is the destructive one. Add .github/workflows/labels-sweep.yml; MOVE the hourly cron out of labels.yml into it — move, never copy, because a copied cron gives DOUBLE SWEEPS; and grant actions: write. Without the split the trigger job goes RED ON EVERY PR AND ISSUE EVENT and event-woken sweeps stop.|step_0_4_1_two_caller_split"
   "0.5.0|Labels automation|panel[<login>]= rows become legal in .github/labels.conf. A bracketed row on an earlier pin is a parse failure and the whole label board goes down, so never move backwards across this tag with one written.|"
   "0.6.0|Doctrine mirror|RELEASES.md joins the vendored set and .ceremony/ is short a file until the mirror is re-synced; refs-not-closing becomes available; and the manifest at a tag is guaranteed the complete set only from here.|"
   "0.7.0|The artifact hook|Native release-candidate cuts and deterministic rc re-arming arrive; earlier pins do not carry the rc release path.|"
@@ -726,20 +726,614 @@ refuse_crossing() {
   exit 1
 }
 
+# --- the applied step -----------------------------------------------------
+#
+# AN APPLIED STEP NEVER MOVES PAST THE FIRST CROSSED TAG. Where that tag is
+# mechanised, this command performs `current -> first_crossed` — the refs,
+# that tag's own edits, and the mirror — and stops, reporting the pin it left
+# the tree at and what is left between there and the tag that was asked for.
+# It does not chain steps in one run: that is the ladder, one tag at a time,
+# and the run that chains is the half-upgraded consumer this whole command
+# exists to make unrepresentable. The next run continues from the new pin,
+# which is exactly what the hand procedure has always told a reader to do.
+#
+# A STEP IS A PLANNER, NOT A WRITER. It reads the tree, refuses anything it
+# cannot anchor unambiguously, and fills the four arrays below; the generic
+# apply and verify passes at the bottom of this file do every write. Two
+# reasons, and the second is the one that matters: a step that wrote for
+# itself would be a second writer of a consumer tree, outside the declared
+# territory's transaction and outside the plan --check prints — and the plan
+# and the writes disagreeing at exit 0 is the defect class this command has
+# already shipped once.
+#
+#   step_plan[]      lines printed under THE PLAN, by --check and by --fix
+#   step_new_file    a path this step creates (its bytes in $step_new_body)
+#   step_edit_file   a path this step edits in place
+#   step_edit_ops[]  those edits, one per line, keyed by the line number in
+#                    the file AS IT STANDS NOW: "<lineno>\t<kind>\t<text>",
+#                    kind being del (drop it), sub (replace with text), ins
+#                    (keep it, then emit text after it) or mask (a pin line,
+#                    rewritten by the ref pass and compared by nobody here)
+step_plan=()
+step_new_file=""
+step_new_body=""
+step_edit_file=""
+step_edit_ops=()
+step_next_crossed=""
+
+# step_refuse — the step cannot anchor itself in this tree, so the crossing is
+# hand-only for this tree and the ordinary refusal is the right answer. The
+# lines given become the section that says which shape stopped it.
+step_refuse() {
+  step_blocked=("$@")
+  refuse_crossing
+}
+
+GUIDE_NAME="docs/CONSUMERS.md"
+
+# load_guide TAG — put docs/CONSUMERS.md AS IT STANDS AT TAG in $guide_file.
+#
+# THE GUIDE AT THE CROSSED TAG IS THE ONE SOURCE OF THE CALLER STUB, and this
+# is the only read of it. No copy of that stub ships in this file, in a
+# manifest, or in a fixture: two copies of a published block are two things to
+# bump and two things to disagree, and the block a consumer is told to write
+# by hand and the block this step writes for them cannot be allowed to be
+# different bytes. The tag matters as much as the file — the stub's bytes move
+# across releases, and the crossing is about the tag being crossed, never
+# about the target the operator happened to ask for or about main.
+#
+# The network path fetches ONE FILE, not the tree, in the same two-step
+# status-captured shape as the ladder read above (#393). --source substitutes
+# a local ceremony checkout for it, as everywhere else in this command.
+guide_file=""
+load_guide() {
+  local tag="$1" url fetch_rc http_code
+  if [ -n "$source_dir" ]; then
+    guide_file="$source_dir/$GUIDE_NAME"
+    [ -f "$guide_file" ] || die \
+      "$SELF: --source: no $GUIDE_NAME in $source_dir." \
+      "" \
+      "  The applied step for $tag writes the caller stub that guide" \
+      "  publishes, and there is no second copy of it anywhere to fall back" \
+      "  to. Nothing was written."
+    return 0
+  fi
+  guide_file="$scratch/CONSUMERS.md"
+  url="https://raw.githubusercontent.com/heavy-duty/ceremony/$tag/$GUIDE_NAME"
+  fetch_rc=0
+  http_code="$(curl -fsSL --retry 3 --retry-delay 5 --retry-connrefused \
+    -o "$guide_file" -w '%{http_code}' "$url")" || fetch_rc=$?
+  [ "$fetch_rc" -eq 0 ] || die \
+    "$SELF: could not read $GUIDE_NAME at the crossed tag $tag — curl exit" \
+    "  $fetch_rc, HTTP status $http_code for:" \
+    "    $url" \
+    "" \
+    "  The applied step writes the caller stub that guide publishes at the" \
+    "  tag being crossed, and there is no second copy of it to fall back to." \
+    "  Nothing was written."
+}
+
+# fenced_block FILE ANCHOR — the first ```yaml fence after the line matching
+# ANCHOR, exactly as the suite extracts the release caller from the same
+# guide. A block that is not there is not defaulted: every caller of this
+# fails loudly on empty output.
+fenced_block() {
+  awk -v anchor="$2" '
+    $0 ~ anchor { armed = 1; next }
+    armed && /^```yaml$/ { inblock = 1; next }
+    inblock && /^```$/ { exit }
+    inblock { print }
+  ' "$1"
+}
+
+# yaml_uncomment — stdin with a trailing YAML comment removed, quote-aware, so
+# a `#` inside a quoted scalar is not mistaken for one. A `#` only opens a
+# comment at the start of the line or after whitespace, which is YAML's own
+# rule and the difference between reading `cron: "0 * * * *"` and truncating
+# it.
+yaml_uncomment() {
+  awk '
+    BEGIN { sq = sprintf("%c", 39); dq = sprintf("%c", 34) }
+    {
+      out = ""; q = ""
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        if (q != "") { if (c == q) q = "" }
+        else if (c == sq || c == dq) { q = c }
+        else if (c == "#" && (i == 1 || substr($0, i - 1, 1) ~ /[ \t]/)) { break }
+        out = out c
+      }
+      sub(/[ \t]+$/, "", out)
+      print out
+    }
+  '
+}
+
+# block_body FILE START — every line of the block opened by the top-level key
+# at line START, as "<lineno>\t<line>". The block ends at the next line that
+# begins in column 0 with something that is not a space, which is what "top
+# level" means in a workflow file. A comment at column 0 ends it too: it is
+# not indented into the block, so nothing here may claim it is.
+block_body() {
+  awk -v start="$2" '
+    NR <= start { next }
+    /^[^ \t]/ { exit }
+    { printf "%s\t%s\n", NR, $0 }
+  ' "$1"
+}
+
+# top_level_key FILE KEY — "<lineno>\t<rest of the line after the colon>" for
+# the first `KEY:` at column 0, or nothing. The rest is uncommented, so a bare
+# block key comes back empty and a flow value does not.
+top_level_key() {
+  awk -v key="$2" '
+    $0 ~ "^" key ":" { printf "%s\t%s\n", NR, substr($0, length(key) + 2); exit }
+  ' "$1" | {
+    IFS=$'\t' read -r n rest || return 0
+    [ -n "${n:-}" ] || return 0
+    printf '%s\t%s\n' "$n" "$(printf '%s\n' "$rest" | yaml_uncomment)"
+  }
+}
+
+# --- 0.4.1: the two-caller split ------------------------------------------
+#
+# The guide states this migration as ONE atomic PR with exactly four edits:
+# bump every ceremony ref; ADD .github/workflows/labels-sweep.yml, the stub
+# verbatim with its bootstrap input; MOVE — never copy — the hourly cron off
+# the labels caller; and grant actions: write there. This step performs all
+# four, and the ref bump is the ordinary one above.
+#
+# EVERY READ HERE IS ANCHORED, AND ANYTHING IT CANNOT ANCHOR IS A REFUSAL. The
+# two real consumers measured for this step share not one line with the
+# published stub — different cadence, different trigger lists, different
+# permission blocks, repo-specific comments on the very lines being deleted —
+# so a step that matched the stub's bytes, or that reached for `sed`, would
+# fail on both of them. What it can anchor is the shape: a top-level `on:`
+# block mapping carrying exactly one single-line `schedule:` and at most one
+# bare `workflow_dispatch:`, and a top-level `permissions:` block mapping.
+# Anything else — two schedules, a dispatch carrying inputs, a schedule
+# written as a block sequence with no bound the step can find, a flow mapping
+# where a block is expected — is a tree this step declines to guess at, and
+# declining costs the reader one hand migration they already had a procedure
+# for. Guessing costs them the board.
+step_0_4_1_two_caller_split() {
+  local sweep stub_body i line
+  local caller="" caller_pin_line=""
+  local on_line on_rest perm_line perm_rest
+  local sched_line="" sched_value="" sched_count=0
+  local disp_line="" disp_count=0
+  local actions_line="" perm_last_key="" perm_indent="" on_indent=""
+  local caller_name="" runner="" with_line="" lineno text indent key val
+  local stub_sched_lines with_pairs=""
+
+  sweep="$GITHUB_DIR/workflows/labels-sweep.yml"
+
+  # The sweep caller must not already exist. This step CREATES it; merging
+  # into a file someone else wrote is a different act with a different set of
+  # ways to be wrong, and it is not this one.
+  if [ -e "$sweep" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $sweep already exists. This step creates the sweep" \
+      "  caller; it never merges into a file that is already there."
+  fi
+
+  # The labels caller is the file carrying the ceremony labels.yml pin, found
+  # through the enumerated pin lines — the one reader, again, so this step
+  # cannot disagree with the plan about which file it is looking at.
+  for i in "${!pin_files[@]}"; do
+    line="$(sed -n "${pin_lines[$i]}p" "${pin_files[$i]}")"
+    case "$line" in
+      *heavy-duty/ceremony/.github/workflows/labels.yml@*)
+        if [ -n "$caller" ]; then
+          step_refuse \
+            "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+            "  Two files call the ceremony labels workflow — $caller and" \
+            "  ${pin_files[$i]} — so which one the cron moves off, and which" \
+            "  one is granted actions: write, is not a question this step may" \
+            "  answer by picking."
+        fi
+        caller="${pin_files[$i]}"
+        caller_pin_line="${pin_lines[$i]}"
+        ;;
+    esac
+  done
+  if [ -z "$caller" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  No file under $GITHUB_DIR/ calls the ceremony labels workflow, so" \
+      "  there is no caller to move a cron off and none to grant" \
+      "  actions: write. This step edits the labels caller and nothing else."
+  fi
+
+  # --- the labels caller's `on:` block ---
+  IFS=$'\t' read -r on_line on_rest < <(top_level_key "$caller" "on") || true
+  if [ -z "${on_line:-}" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller has no top-level 'on:' key, so the schedule and the bare" \
+      "  workflow_dispatch this step relocates cannot be found."
+  fi
+  if [ -n "$on_rest" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller line $on_line writes 'on:' with a value on the same line." \
+      "  This step deletes two keys out of that mapping by line, which it can" \
+      "  only do when they are lines: a flow list or a flow mapping there has" \
+      "  no line of its own to delete."
+  fi
+
+  while IFS=$'\t' read -r lineno text; do
+    [ -n "$lineno" ] || continue
+    case "$text" in
+      [[:space:]]*[!\ ]*) ;;
+      *) continue ;;
+    esac
+    indent="${text%%[! ]*}"
+    key="$(printf '%s\n' "$text" | yaml_uncomment | sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_-]*\):.*$/\1/p')"
+    # The block's key indent is the first key's, and only lines at exactly
+    # that indent are keys OF the block: a `types:` two levels in belongs to
+    # the trigger above it and is none of this step's business.
+    [ -n "$key" ] || continue
+    [ -n "$on_indent" ] || on_indent="$indent"
+    [ "$indent" = "$on_indent" ] || continue
+    val="$(printf '%s\n' "$text" | yaml_uncomment | sed "s/^[[:space:]]*$key:[[:space:]]*//")"
+    case "$key" in
+      schedule)
+        sched_count=$((sched_count + 1))
+        sched_line="$lineno"
+        sched_value="$val"
+        ;;
+      workflow_dispatch)
+        disp_count=$((disp_count + 1))
+        disp_line="$lineno"
+        [ -z "$val" ] || step_refuse \
+          "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+          "  $caller line $lineno writes 'workflow_dispatch:' with a value on" \
+          "  the same line. This step deletes the bare key and nothing else."
+        ;;
+    esac
+  done < <(block_body "$caller" "$on_line")
+
+  if [ "$sched_count" -eq 0 ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller declares no 'schedule:' in its 'on:' block, so there is no" \
+      "  cron for this step to RELOCATE. The cadence is the consumer's" \
+      "  ($GUIDE_NAME says so), and a step that invented one here would be" \
+      "  deciding how often a board is swept and what that costs."
+  fi
+  if [ "$sched_count" -gt 1 ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller declares 'schedule:' $sched_count times in its 'on:' block." \
+      "  Which cron moves to the sweep caller is then a guess, and the cost of" \
+      "  guessing wrong is a board swept twice a tick or not at all."
+  fi
+  if [ -z "$sched_value" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller line $sched_line writes 'schedule:' as a block, so the cron" \
+      "  it carries runs over lines this step has no anchored way to bound." \
+      "  Only a single-line value can be relocated whole."
+  fi
+  if [ "$disp_count" -gt 1 ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller declares 'workflow_dispatch:' $disp_count times in its 'on:'" \
+      "  block, so which one is the bare key this step deletes is a guess."
+  fi
+  # A dispatch carrying inputs is the consumer's own, and deleting it takes
+  # those inputs with it — silently, and only visibly when someone reaches for
+  # a dispatch that is no longer there.
+  if [ -n "$disp_line" ]; then
+    while IFS=$'\t' read -r lineno text; do
+      [ -n "$lineno" ] || continue
+      [ "$lineno" -gt "$disp_line" ] || continue
+      case "$text" in
+        [[:space:]]*[!\ ]*) ;;
+        *) continue ;;
+      esac
+      indent="${text%%[! ]*}"
+      if [ "${#indent}" -le "${#on_indent}" ]; then break; fi
+      step_refuse \
+        "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+        "  $caller line $disp_line writes 'workflow_dispatch:' with its own" \
+        "  block beneath it (line $lineno). Deleting that key would delete the" \
+        "  consumer's own dispatch inputs with it. The sweep caller this step" \
+        "  creates declares the inputs $GUIDE_NAME publishes, and it will not" \
+        "  quietly discard a different set."
+    done < <(block_body "$caller" "$on_line")
+  fi
+
+  # --- the labels caller's `permissions:` block ---
+  IFS=$'\t' read -r perm_line perm_rest < <(top_level_key "$caller" "permissions") || true
+  if [ -z "${perm_line:-}" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller has no top-level 'permissions:' block. Naming any permission" \
+      "  sets every unnamed one to none, so this step will not create that" \
+      "  block: doing so would decide the caller's whole permission set from" \
+      "  one grant."
+  fi
+  if [ -n "$perm_rest" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller line $perm_line writes 'permissions:' with a value on the" \
+      "  same line. This step edits one key of that mapping by line, which it" \
+      "  can only do when the keys are lines."
+  fi
+  while IFS=$'\t' read -r lineno text; do
+    [ -n "$lineno" ] || continue
+    key="$(printf '%s\n' "$text" | yaml_uncomment | sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_-]*\):.*$/\1/p')"
+    [ -n "$key" ] || continue
+    indent="${text%%[! ]*}"
+    [ -n "$perm_indent" ] || perm_indent="$indent"
+    [ "$indent" = "$perm_indent" ] || continue
+    perm_last_key="$lineno"
+    [ "$key" = "actions" ] && actions_line="$lineno"
+  done < <(block_body "$caller" "$perm_line")
+  if [ -z "$perm_last_key" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller's 'permissions:' block at line $perm_line carries no key" \
+      "  this step can read, so it has nowhere anchored to grant" \
+      "  actions: write."
+  fi
+
+  # --- the labels caller's name, and its `with:` block ---
+  #
+  # The sweep exports the PR-facing caller's name as SELF_WORKFLOW so the
+  # label machinery's own check entries never count toward a red-CI blocker.
+  # The stub's own comment says to pass it; a caller not named `labels` that
+  # does not gets a board whose blockers fire on the board's own workflow.
+  IFS=$'\t' read -r _ caller_name < <(top_level_key "$caller" "name") || true
+  caller_name="$(printf '%s\n' "${caller_name:-}" | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/")"
+  if [ -z "$caller_name" ]; then
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller declares no top-level 'name:', so GitHub names that workflow" \
+      "  after its path and this step cannot tell the sweep caller what the" \
+      "  PR-facing caller is called."
+  fi
+
+  # `with:` on the labels caller's job: the routing the new caller inherits.
+  # Read at the pin line's own indent, so a `with:` belonging to some other
+  # job in the same file is not read as this one's.
+  indent="$(sed -n "${caller_pin_line}p" "$caller")"
+  indent="${indent%%[! ]*}"
+  while IFS=$'\t' read -r lineno text; do
+    [ -n "$lineno" ] || continue
+    [ "$lineno" -gt "$caller_pin_line" ] || continue
+    case "$text" in
+      "$indent"[!\ ]*) ;;
+      *) continue ;;
+    esac
+    key="$(printf '%s\n' "$text" | yaml_uncomment | sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_-]*\):.*$/\1/p')"
+    if [ "$key" = "with" ]; then
+      with_line="$lineno"
+      with_pairs="$(printf '%s\n' "$text" | yaml_uncomment | sed "s/^[[:space:]]*with:[[:space:]]*//")"
+    fi
+    break
+  done < <(awk -v start="$caller_pin_line" -v ind="${#indent}" '
+    NR <= start { next }
+    { line = $0; sub(/[ \t]*$/, "", line) }
+    line == "" { next }
+    { n = match(line, /[^ ]/) - 1; if (n < ind) exit; printf "%s\t%s\n", NR, $0 }
+  ' "$caller")
+
+  if [ -n "$with_line" ]; then
+    if [ -z "$with_pairs" ]; then
+      step_refuse \
+        "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+        "  $caller line $with_line writes 'with:' as a block. This step reads" \
+        "  the caller's routing to carry it onto the sweep caller, and it" \
+        "  reads only the single-line flow mapping $GUIDE_NAME publishes."
+    fi
+    case "$with_pairs" in
+      "{"*"}") ;;
+      *)
+        step_refuse \
+          "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+          "  $caller line $with_line writes a 'with:' value this step cannot" \
+          "  read: $with_pairs" \
+          "  It reads only the single-line flow mapping $GUIDE_NAME" \
+          "  publishes, and it will not carry routing it has not understood."
+        ;;
+    esac
+    while IFS=$'\t' read -r key val; do
+      case "$key" in
+        runner) runner="$val" ;;
+        sweep_workflow)
+          [ "$val" = "labels-sweep.yml" ] || step_refuse \
+            "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+            "  $caller line $with_line already routes the trigger job at a" \
+            "  sweep caller named $val, and this step creates" \
+            "  $sweep. Renaming a consumer's caller is not this step's to do."
+          ;;
+      esac
+    done < <(printf '%s\n' "$with_pairs" | flow_pairs)
+  fi
+
+  # --- the sweep caller's bytes, from the guide at the crossed tag ---
+  load_guide "$first_crossed"
+  # The anchor is a regex against the guide's own prose, so it is a literal:
+  # nothing in it expands, and the backtick is the guide's markup.
+  # shellcheck disable=SC2016
+  stub_body="$(fenced_block "$guide_file" '^And the complete sweep caller, `labels-sweep\.yml` beside it')"
+  case "$stub_body" in
+    "name: labels-sweep"*) ;;
+    *)
+      die "$SELF: $GUIDE_NAME at $first_crossed carries no sweep-caller stub" \
+        "  this step can read." \
+        "" \
+        "  It looks for the fenced yaml block published under \"And the" \
+        "  complete sweep caller\", and that block must open with" \
+        "  'name: labels-sweep'. There is no embedded copy of it to fall back" \
+        "  to and this step will not write one it did not read. Nothing was" \
+        "  written."
+      ;;
+  esac
+  [ "$(printf '%s\n' "$stub_body" | grep -cF '@<pinned-tag>')" -eq 1 ] || die \
+    "$SELF: the sweep-caller stub in $GUIDE_NAME at $first_crossed does not" \
+    "  carry exactly one '@<pinned-tag>' placeholder, so this step cannot" \
+    "  tell which ref it is being asked to pin. Nothing was written."
+  stub_sched_lines="$(printf '%s\n' "$stub_body" | grep -cE '^  schedule:')"
+  [ "$stub_sched_lines" -eq 1 ] || die \
+    "$SELF: the sweep-caller stub in $GUIDE_NAME at $first_crossed carries" \
+    "  $stub_sched_lines 'schedule:' keys, and this step relocates the" \
+    "  consumer's cron onto exactly one. Nothing was written."
+
+  # The pin, the consumer's own cadence, and the routing it owns. The cron is
+  # RELOCATED and not re-decided: the cadence is the consumer's, and this step
+  # moves a schedule rather than choosing one.
+  step_new_body="$(
+    printf '%s\n' "$stub_body" |
+      sed -e "s|@<pinned-tag>|@$first_crossed|" \
+        -e "s|^  schedule:.*\$|  schedule: $sched_value|"
+  )"
+  with_pairs=""
+  [ "$caller_name" = "labels" ] || with_pairs="pr_workflow_name: $caller_name"
+  if [ -n "$runner" ]; then
+    with_pairs="${with_pairs:+$with_pairs, }runner: $runner"
+  fi
+  if [ -n "$with_pairs" ]; then
+    step_new_body="$step_new_body
+    with: { $with_pairs }"
+  fi
+
+  step_new_file="$sweep"
+  step_edit_file="$caller"
+  step_edit_ops=(
+    "$caller_pin_line	mask	"
+    "$sched_line	del	"
+  )
+  [ -z "$disp_line" ] || step_edit_ops+=("$disp_line	del	")
+  if [ -n "$actions_line" ]; then
+    step_edit_ops+=("$actions_line	sub	${perm_indent}actions: write   # the trigger job's dispatch of the sweep caller")
+  else
+    step_edit_ops+=("$perm_last_key	ins	${perm_indent}actions: write   # the trigger job's dispatch of the sweep caller")
+  fi
+
+  step_plan+=(
+    "    create $step_new_file — the sweep caller stub $GUIDE_NAME publishes at $first_crossed, with:"
+    "      the pin substituted: @$first_crossed"
+    "      the cron RELOCATED from $caller line $sched_line, cadence unchanged: $sched_value"
+  )
+  [ -z "$with_pairs" ] || step_plan+=("      the routing this tree already declares: with: { $with_pairs }")
+  step_plan+=("    edit $caller:")
+  step_plan+=("      delete line $sched_line — the schedule: key, which MOVES to the sweep caller")
+  [ -z "$disp_line" ] || step_plan+=("      delete line $disp_line — the bare workflow_dispatch: key, which the sweep caller declares")
+  if [ -n "$actions_line" ]; then
+    step_plan+=("      rewrite line $actions_line — actions: write, the trigger job's dispatch being a write")
+  else
+    step_plan+=("      insert after line $perm_last_key — actions: write, the trigger job's dispatch being a write")
+  fi
+}
+
+# flow_pairs — a single-line YAML flow mapping on stdin, one "<key>\t<value>"
+# per entry. Quote- and bracket-aware, because a routing value is itself a
+# quoted JSON list: splitting `{ runner: '["a","b"]' }` on commas is how a
+# reader ends up carrying half of one.
+flow_pairs() {
+  awk '
+    BEGIN { sq = sprintf("%c", 39); dq = sprintf("%c", 34) }
+    {
+      s = $0
+      sub(/^[ \t]*\{/, "", s)
+      sub(/\}[ \t]*$/, "", s)
+      q = ""; depth = 0; cur = ""; n = 0
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") { if (c == q) q = ""; cur = cur c; continue }
+        if (c == sq || c == dq) { q = c; cur = cur c; continue }
+        if (c == "[" || c == "{") depth++
+        if (c == "]" || c == "}") depth--
+        if (c == "," && depth == 0) { part[++n] = cur; cur = ""; continue }
+        cur = cur c
+      }
+      if (cur ~ /[^ \t]/) part[++n] = cur
+      for (i = 1; i <= n; i++) {
+        p = part[i]
+        j = index(p, ":")
+        if (j == 0) continue
+        k = substr(p, 1, j - 1); v = substr(p, j + 1)
+        gsub(/^[ \t]+|[ \t]+$/, "", k)
+        gsub(/^[ \t]+|[ \t]+$/, "", v)
+        printf "%s\t%s\n", k, v
+      }
+    }
+  '
+}
+
+step_active=0
+requested_target="$target"
 if [ "${#crossed[@]}" -gt 0 ]; then
   first_crossed="${ladder[$first_crossed_i]}"
   # THE DISPATCH. An unmechanised first crossed tag refuses and stops here;
   # everything below this line belongs to a tag that has an applied step.
   [ -n "$first_crossed_step" ] || refuse_crossing
+  step_active=1
+  # THE MOVE IS RE-AIMED AT THE FIRST CROSSED TAG, and everything downstream —
+  # the ref rewrite, the verification, the mirror — runs against that tag and
+  # not against the one that was asked for.
+  target="$first_crossed"
+  target_i="$first_crossed_i"
+  for ((i = first_crossed_i + 1; i <= $(ladder_index "$requested_target"); i++)); do
+    for row in "${MIGRATIONS[@]}"; do
+      if [ "${row%%|*}" = "${ladder[$i]}" ]; then
+        step_next_crossed="${ladder[$i]}"
+        break 2
+      fi
+    done
+  done
+  "$first_crossed_step"
 fi
 
 # --- the plan, and (only in --fix) the writes ------------------------------
 
-echo "$SELF: $current -> $target, ${#pin_files[@]} ceremony ref(s) in ${#pin_file_list[@]} file(s) under $GITHUB_DIR/:"
-ref_report
-echo "$SELF: no migration between $current and $target (checked ${#MIGRATIONS[@]} table entries against the ${#ladder[@]}-tag ladder at $ladder_origin)."
+if [ "$step_active" -eq 1 ]; then
+  echo "$SELF: $current -> $requested_target crosses ${#crossed[@]} migration(s); $first_crossed is an APPLIED STEP, so this run performs $current -> $first_crossed and stops there."
+  echo "$SELF: $current -> $target, ${#pin_files[@]} ceremony ref(s) in ${#pin_file_list[@]} file(s) under $GITHUB_DIR/:"
+  ref_report
+  echo "$SELF: THE PLAN"
+  echo "    rewrite ${#pin_files[@]} ceremony ref(s) from @$current to @$target"
+  printf '%s\n' "${step_plan[@]}"
+  echo "    then re-sync the doctrine mirror (docs-sync --fix)."
+else
+  echo "$SELF: $current -> $target, ${#pin_files[@]} ceremony ref(s) in ${#pin_file_list[@]} file(s) under $GITHUB_DIR/:"
+  ref_report
+  echo "$SELF: no migration between $current and $target (checked ${#MIGRATIONS[@]} table entries against the ${#ladder[@]}-tag ladder at $ladder_origin)."
+fi
+
+# report_remainder — what this run did NOT do, and how the rest is reached.
+# An applied step stops at the first crossed tag, so the operator is told the
+# pin this run leaves behind and what still stands between it and the tag they
+# asked for. Non-zero when the requested move did not complete: a run that
+# performed one rung of a longer move has not done what it was asked, and
+# saying so with an exit code is the difference between a ladder and a silent
+# short move.
+report_remainder() {
+  [ "$step_active" -eq 1 ] || return 0
+  echo "$SELF: THIS RUN LEAVES THE PIN AT $first_crossed."
+  if [ "$first_crossed" = "$requested_target" ]; then
+    return 0
+  fi
+  echo "$SELF: REMAINING: $first_crossed -> $requested_target is not performed by this run."
+  if [ -n "$step_next_crossed" ]; then
+    echo "$SELF: The next migration between them is $step_next_crossed. Commit what this run produced, then run this command again from the new pin."
+  else
+    echo "$SELF: No migration stands between them. Commit what this run produced, then run this command again from the new pin."
+  fi
+  return 1
+}
 
 if [ "$mode" = "check" ]; then
+  if [ "$step_active" -eq 1 ]; then
+    echo "$SELF: --check changes nothing. Re-run with --fix to perform the step above."
+    report_remainder || exit 1
+    exit 0
+  fi
   echo "$SELF: --check changes nothing. Re-run with --fix to rewrite the ref(s) and re-sync the mirror (docs-sync --fix)."
   exit 0
 fi
@@ -794,6 +1388,64 @@ for f in "${pin_file_list[@]}"; do
   rewritten=$((rewritten + 1))
 done
 
+# --- the applied step's own writes ----------------------------------------
+#
+# AFTER the refs and never before: the ops the step planned are keyed by line
+# number in the file as `enumerate_pins` read it, and the ref rewrite above
+# substitutes inside a line without adding or removing one, so those numbers
+# still point where the step aimed them. The step's own deletions DO move
+# lines, which is why they happen second and why nothing keyed by line number
+# runs after them.
+#
+# One writer, and it is here rather than in the step: the step declared what
+# to do and this is the only code that does it, so a step cannot write outside
+# the plan, outside the snapshot, or past the verification below.
+if [ "$step_active" -eq 1 ] && [ -n "$step_edit_file" ]; then
+  printf '%s\n' "${step_edit_ops[@]}" >"$scratch/edit-ops"
+  final_nl=1
+  if [ -s "$step_edit_file" ] && [ "$(tail -c 1 "$step_edit_file" | wc -l)" -eq 0 ]; then
+    final_nl=0
+  fi
+  awk -v ops="$scratch/edit-ops" '
+    BEGIN {
+      FS = "\t"
+      while ((getline l < ops) > 0) {
+        split(l, f, "\t")
+        kind[f[1] + 0] = f[2]
+        text[f[1] + 0] = f[3]
+      }
+    }
+    {
+      if (NR in kind) {
+        if (kind[NR] == "del") next
+        if (kind[NR] == "sub") { print text[NR]; next }
+        if (kind[NR] == "ins") { print; print text[NR]; next }
+      }
+      print
+    }
+  ' "$step_edit_file" >"$scratch/edited"
+  if [ "$final_nl" -eq 0 ]; then
+    size="$(wc -c <"$scratch/edited")"
+    if [ "$size" -gt 0 ]; then
+      head -c "$((size - 1))" "$scratch/edited" >"$scratch/trimmed"
+      mv "$scratch/trimmed" "$scratch/edited"
+    fi
+  fi
+  cat "$scratch/edited" >"$step_edit_file"
+fi
+if [ "$step_active" -eq 1 ] && [ -n "$step_new_file" ]; then
+  [ ! -e "$step_new_file" ] || die \
+    "$SELF: $step_new_file appeared between the plan and the write." \
+    "  Nothing further will be written; the tree is rolled back."
+  mkdir -p "$(dirname "$step_new_file")"
+  printf '%s\n' "$step_new_body" >"$step_new_file"
+  # The file the step creates carries a ceremony pin of its own, so the plan's
+  # counts have to grow with it or the re-enumeration below reads it as a ref
+  # nobody announced.
+  planned_refs=$((planned_refs + 1))
+  planned_files=$((planned_files + 1))
+fi
+
 # --- the rewrite verifies its own work ------------------------------------
 #
 # THE WRITES WERE NEVER CHECKED AGAINST THE PLAN, and that — not any one
@@ -829,8 +1481,60 @@ has_final_newline() {
   fi
 }
 
+# walk_edit_ops BEFORE AFTER OPS — the same assertion for a file an applied
+# step edited, where masking cannot serve: a deletion moves every line after
+# it, so there is no line number that means the same thing on both sides.
+#
+# It is a COMPARISON and never a second application of the ops, which is the
+# whole point: rebuilding the expected file with the code that wrote it would
+# agree with itself no matter what that code did. This walks the snapshot and
+# the result together, following the plan — a `del` consumes a before line and
+# no after line, an `ins` consumes one of each and then requires the announced
+# line, a `sub` requires the announced line in place of the before one, a
+# `mask` is the ref rewrite's own line and is compared by the pin assertions
+# instead, and every other line must survive byte for byte. It ends only when
+# both sides end together, so a line the plan never mentioned cannot be added
+# at the tail either.
+walk_edit_ops() {
+  awk -v ops="$3" -v before="$1" -v after="$2" '
+    BEGIN {
+      while ((getline l < ops) > 0) {
+        split(l, f, "\t")
+        kind[f[1] + 0] = f[2]
+        text[f[1] + 0] = f[3]
+      }
+      na = 0; nb = 0
+      while ((getline l < after) > 0) a[++na] = l
+      while ((getline l < before) > 0) b[++nb] = l
+      ai = 1
+      for (bi = 1; bi <= nb; bi++) {
+        k = (bi in kind) ? kind[bi] : "keep"
+        if (k == "del") continue
+        if (ai > na) { print "the result ends at line " ai - 1 ", before the plan does"; exit }
+        if (k == "mask") { ai++; continue }
+        if (k == "sub") {
+          if (a[ai] != text[bi]) { print "line " bi " was rewritten to something the plan did not announce"; exit }
+          ai++
+          continue
+        }
+        if (a[ai] != b[bi]) { print "line " bi " changed and the plan never named it"; exit }
+        ai++
+        if (k == "ins") {
+          if (ai > na) { print "the line the plan inserts after line " bi " is not there"; exit }
+          if (a[ai] != text[bi]) { print "the line inserted after line " bi " is not the one the plan announced"; exit }
+          ai++
+        }
+      }
+      if (ai != na + 1) { print "the result carries " na - ai + 1 " line(s) past the end of the plan" }
+    }
+  ' </dev/null
+}
+
 verify_failures=()
 for f in "${pin_file_list[@]}"; do
+  if [ "$step_active" -eq 1 ] && [ "$f" = "$step_edit_file" ]; then
+    continue
+  fi
   want="$(pin_lines_in "$f")"
   mask_pin_lines "$SNAP/$f" "$want" >"$scratch/masked-before"
   mask_pin_lines "$f" "$want" >"$scratch/masked-after"
@@ -841,6 +1545,23 @@ for f in "${pin_file_list[@]}"; do
     verify_failures+=("$f's final newline changed, and that byte is not part of any pin line")
   fi
 done
+
+if [ "$step_active" -eq 1 ] && [ -n "$step_edit_file" ]; then
+  walked="$(walk_edit_ops "$SNAP/$step_edit_file" "$step_edit_file" "$scratch/edit-ops")"
+  [ -z "$walked" ] || verify_failures+=("$step_edit_file: $walked")
+  if [ "$(has_final_newline "$SNAP/$step_edit_file")" != "$(has_final_newline "$step_edit_file")" ]; then
+    verify_failures+=("$step_edit_file's final newline changed, and that byte is in no line the plan named")
+  fi
+fi
+if [ "$step_active" -eq 1 ] && [ -n "$step_new_file" ]; then
+  if [ ! -f "$step_new_file" ]; then
+    verify_failures+=("the plan creates $step_new_file and it is not there")
+  else
+    printf '%s\n' "$step_new_body" >"$scratch/planned-new"
+    cmp -s "$scratch/planned-new" "$step_new_file" ||
+      verify_failures+=("$step_new_file is not the bytes the plan announced")
+  fi
+fi
 
 enumerate_pins
 if [ "${#pin_files[@]}" -ne "$planned_refs" ]; then
@@ -886,4 +1607,9 @@ fi
 # Past every way this run could still fail: from here the tree keeps what was
 # written to it.
 committed=1
+if [ "$step_active" -eq 1 ]; then
+  echo "$SELF: $current -> $target done, including the applied step for $first_crossed. Commit the ref(s), the caller files and the mirror together: a pin that moves without the edits that tag requires is the half-upgraded tree this command refuses everywhere else."
+  report_remainder || exit 1
+  exit 0
+fi
 echo "$SELF: $current -> $target done. Commit the ref(s) and the mirror together: the pin and the doctrine it governs are one change."
