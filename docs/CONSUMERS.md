@@ -987,7 +987,7 @@ and issue event — the loud failure mode above — so never split these
 four edits across PRs.
 
 **[`ceremony-upgrade`](#ceremony-upgrade--the-bump-run-for-you) performs
-this migration for you**, and it is the only migration it performs: point
+this migration for you**: point
 it at `0.4.1` from the root of your checkout and it moves every ceremony
 ref, writes `.github/workflows/labels-sweep.yml` from the stub above,
 relocates your cron onto it with your own cadence, grants `actions: write`,
@@ -1050,6 +1050,16 @@ bought at `0.2.0`, but harsher in practice: the reconcile job dies on every
 PR event and every sweep until the row is removed, so the whole label board
 goes down. Add the row only at or after the pin bump that carries it, never
 before it and never through mixed refs.
+
+**[`ceremony-upgrade`](#ceremony-upgrade--the-bump-run-for-you) crosses this
+tag for you**, and crossing it is the whole of the migration: `0.5.0` asks a
+tree moving forwards for nothing. Point the command at `0.5.0` and it moves
+every ceremony ref and re-syncs the mirror, and that is the migration
+performed — it writes no `panel[<login>]=` row, because the row is optional
+and which logins are on which panel is yours to choose. The hazard the
+paragraph above names is a move *backwards* across this tag with a bracketed
+row already written, and the command refuses every backwards move outright,
+so there is no shape of this crossing it performs half.
 
 Both actor lists are whitespace-separated. `triage-actors` names the identities
 allowed to mint issues without the sweep applying `needs-triage`. Label rows use exactly
@@ -1826,7 +1836,7 @@ The refusals, and what each one means:
 | **the refs are not all at one ref** | two ceremony refs in one tree, so it has no single pin — usually a bump that moved some lines and not others | put them on one ref by hand, then re-run; the message names the files that differ |
 | **the current pin is not a released tag** | a branch or a commit SHA cannot be placed on the release ladder, so which migrations the move crosses is unknowable | pin to a released tag first |
 | **the target tag does not exist** | the tag was never cut — check it against the [releases page](https://github.com/heavy-duty/ceremony/releases), or pass `--source` to preview an unreleased tree | — |
-| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | it depends on the first crossed tag. Where that tag carries an **applied step** — [`0.4.1`](#labels-automation)'s two-caller split, and today it is the only one — the command performs that tag for you, refs and edits in one pass, then stops there and names the pin it left you at and what still stands between that pin and the tag you asked for; run it again from the new pin for the next rung. Where the first crossed tag has no applied step, and where a step cannot anchor one of its edits in your tree, the crossing is hand-only: perform the first crossed tag's edits and move the ceremony refs to that tag in the same commit, because tree edits alone do not change the pinned interval. When a released tag exists between the current pin and that first crossing, the message emits that shorter runnable move; otherwise it says no shorter move exists |
+| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | it depends on the first crossed tag. Where that tag carries an **applied step** — [`0.4.1`](#labels-automation)'s two-caller split and [`0.5.0`](#labels-automation)'s panel rows, the tags mechanised so far — the command performs that tag for you, the refs and whatever edits that tag needs in one pass, then stops there and names the pin it left you at and what still stands between that pin and the tag you asked for; run it again from the new pin for the next rung. Where the first crossed tag has no applied step, and where a step cannot anchor one of its edits in your tree, the crossing is hand-only: perform the first crossed tag's edits and move the ceremony refs to that tag in the same commit, because tree edits alone do not change the pinned interval. When a released tag exists between the current pin and that first crossing, the message emits that shorter runnable move; otherwise it says no shorter move exists |
 | **the move is backwards** | a downgrade; this guide's notes are written forwards and none of them says how to undo a tag | undo the crossed migrations deliberately and move the refs by hand |
 
 Every refusal names the tags it is refusing over and the section of this

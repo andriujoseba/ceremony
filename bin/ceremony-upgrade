@@ -94,6 +94,20 @@ CHANGELOG_NAME="CHANGELOG.md"
 # stays the source of truth for what the step performs, and stays what the
 # reader is shown when the step cannot run against their tree.
 #
+# EVERY NEW STEP FALSIFIES A SENTENCE WRITTEN FOR THE TAGS THAT HAVE NONE
+# (#597, #600), which is the ladder's standing cost and is paid by the mint
+# that adds the step. Two of docs/CONSUMERS.md's sentences said the command
+# performed exactly one migration and named which; both were true when written
+# and both were repaired here. THEY ARE DESCRIBED AND NOT QUOTED, because a
+# comment carrying such a sentence verbatim is one more site claiming it, and
+# the suite's own scan for that claim would find this file.
+# After 0.5.0 the rows a forward move can cross
+# with no step are 0.2.0, 0.3.0, 0.6.0, 0.7.0 and 0.7.8 — 0.1.0 is the sixth
+# such row and no forward move crosses it, being the first release. Whoever
+# mints the third re-reads the refusal message and the guide's clauses AS THEY
+# STAND THEN and never as an issue body quotes them, because this comment goes
+# stale in exactly the way it is describing.
+#
 # IT IS A LIST OF TAGS, NOT A LIST OF DESTRUCTIVE TAGS. Some of these notes
 # announce a capability a consumer may ignore; others take a board down. The
 # table does not sort them, because the sorting is a judgement made once, by
@@ -898,8 +912,8 @@ top_level_key() {
 #
 # THE LADDER'S FIRST TAG, and the destructive one, so it is the tag the
 # mechanism is proven against (#597). The guide's own refusal table records
-# that a crossing was hand-only for every tag before this; it is hand-only for
-# every other tag still.
+# that a crossing was hand-only for every tag before this; 0.5.0 is mechanised
+# below and every other row's crossing is hand-only still.
 #
 # The guide states this migration as ONE atomic PR with exactly four edits:
 # bump every ceremony ref; ADD .github/workflows/labels-sweep.yml, the stub

@@ -2487,4 +2487,71 @@ check "and it says nothing was written" 1 "Nothing was written." \
 unchanged "an unreadable stub writes nothing" "$TMP/nouses" \
   in_consumer nouses --fix --source "$SRC_NOUSES" 0.4.1
 
+# --- B7: the guide is true in both places, and a row keeps it so ------------
+#
+# THE ONE MUST-FAIL BUILD NOTHING ELSE READS. Leave the refusals table saying
+# 0.4.1 is the only mechanised tag and every row above still passes, while the
+# published guide tells a consumer something the command contradicts on its
+# first run. That damage is invisible to a suite that only drives the command,
+# so these rows read the guide instead — the same ratchet shape the migration
+# table already gets against the guide's availability notes, pointed the other
+# way.
+guide_section() { # <heading> — that section's paragraphs, unwrapped
+  awk -v want="$1" '
+    $0 == want { inside = 1; next }
+    inside && /^## / { exit }
+    inside && /^[[:space:]]*$/ { if (p != "") { print p; p = "" }; next }
+    inside { p = p " " $0 }
+    END { if (p != "") print p }
+  ' "$ROOT/docs/CONSUMERS.md"
+}
+labels_section() { guide_section '## Labels automation'; }
+# Not vacuous: an awk that matched no heading would print nothing and satisfy
+# every absence row below while proving nothing about the guide.
+labels_section_size() { printf '[%s]\n' "$(labels_section | wc -l | tr -d ' ')"; }
+check_absent "the Labels automation section is not empty" 0 "[0]" labels_section_size
+
+check "the 0.5.0 note is in the section this reads" 0 \
+  "The optional \`panel[<login>]=\` rows are available at \`0.5.0\` and later" \
+  labels_section
+check "the 0.5.0 section names the command as the mechanised route" 0 \
+  'crosses this' labels_section
+check "and says what that crossing performs" 0 \
+  'it moves every ceremony ref and re-syncs the mirror' labels_section
+check "and says it writes no panel row of its own" 0 \
+  "it writes no \`panel[<login>]=\` row" labels_section
+check "the 0.4.1 note still names the command too" 0 \
+  'performs this migration for you' labels_section
+
+# The clause the first mechanised tag left behind, and the shape of clause the
+# next rung will leave behind again: a count. The absence is asserted over the
+# WHOLE tree, not the guide alone, because a sentence like this gets quoted.
+# BOTH SCANS EXCLUDE THIS FILE, and that is the assertion's shape rather than
+# a convenience: the phrase being looked for is written here, in the row that
+# looks for it, so a scan reading its own needle can only ever fail. What the
+# rows are about is a sentence a CONSUMER reads, and this file is not one.
+NOT_THIS_FILE=':!test/ceremony-upgrade.test.sh'
+stale_only_claim_sites() {
+  printf '[%s]\n' "$(git -C "$ROOT" grep -lF 'today it is the only one' -- "$NOT_THIS_FILE" | tr '\n' ' ' | sed 's/ $//')"
+}
+check "no file still claims one tag is the only mechanised one" 0 "[]" \
+  stale_only_claim_sites
+also_stale_only_claim_sites() {
+  printf '[%s]\n' "$(git -C "$ROOT" grep -lF 'the only migration it performs' -- "$NOT_THIS_FILE" | tr '\n' ' ' | sed 's/ $//')"
+}
+check "and none claims the command performs only one migration" 0 "[]" \
+  also_stale_only_claim_sites
+
+refusals_row() { grep -hF '| **the move crosses a migration** |' "$ROOT/docs/CONSUMERS.md"; }
+check "the refusals row names 0.4.1's applied step" 0 \
+  "[\`0.4.1\`](#labels-automation)'s two-caller split" refusals_row
+check "the refusals row names 0.5.0's" 0 \
+  "[\`0.5.0\`](#labels-automation)'s panel rows" refusals_row
+# "the tags mechanised so far" and not "both" or "two": a count is the thing
+# the NEXT rung falsifies again, and this row is what stops one being written.
+check "the refusals row claims no count the next rung would falsify" 0 \
+  "the tags mechanised so far" refusals_row
+check_absent "it does not say two" 0 "the two tags" refusals_row
+check_absent "and it does not say both" 0 "both of them" refusals_row
+
 summary
