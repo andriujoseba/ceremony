@@ -2167,4 +2167,324 @@ check "the same move over the same source succeeds with the marker closed" 0 \
 check "and that run really did write the sweep caller" 0 \
   "labels-sweep.yml@0.4.1" sweep_of rollback-ok
 
+# ============================================================================
+# The applied step — 0.5.0, the crossing that asks this tree for nothing (#600)
+# ============================================================================
+#
+# The ladder's second tag, and the first whose whole work is what the command
+# already does for every move. That makes the assertions the inverse of
+# 0.4.1's: there, the question was whether the announced bytes landed; here it
+# is whether ANY byte landed that was not the pin.
+
+# github_hashes <name> — every regular file under the consumer's .github/,
+# path and content hash. The PATHS as well as the hashes, so a file this
+# crossing created or deleted moves the list too.
+github_hashes() {
+  (cd "$TMP/$1" && find .github -type f | LC_ALL=C sort | while IFS= read -r p; do
+    printf '%s  %s\n' "$(sha256sum <"$p" | cut -d' ' -f1)" "$p"
+  done)
+}
+github_paths() {
+  printf '[%s]\n' "$(
+    (cd "$TMP/$1" && find .github \( -type f -o -type l \) | LC_ALL=C sort) |
+      tr '\n' ' ' | sed 's/ $//'
+  )"
+}
+
+# --- B1: the crossing completes and writes nothing under .github/ -----------
+#
+# The fixture is the POST-SPLIT barbershop shape at 0.4.1 — the tree the rung
+# below this one leaves a consumer at — built by running that rung rather than
+# hand-written, so what this row grades is the state the command itself
+# produces and not a fixture author's idea of it.
+split_consumer panelrows 0.3.0 barbershop_caller
+check "the fixture is built by the rung below this one" 0 "0.3.0 -> 0.4.1 done" \
+  in_consumer panelrows --fix --source "$SRC" 0.4.1
+
+# --- B2: the plan, before the run that would make it stale ------------------
+#
+# plan_block — everything printed under THE PLAN, its own heading through the
+# mirror line that closes it. The rows below grade the WHOLE block rather than
+# grepping it, because the defect this criterion is written against prints
+# nothing: `printf '%s\n' "${step_plan[@]}"` over an empty array emits a blank
+# line, and a step that was an empty function passes every other row here.
+plan_block() { # <name> <target>
+  in_consumer "$1" --check --source "$SRC" "$2" 2>&1 |
+    sed -n '/: THE PLAN$/,/then re-sync the doctrine mirror/p'
+}
+# Bracketed, so "not blank" is a positive assertion about a specific line
+# rather than a substring that a blank line would also satisfy.
+plan_line() { # <name> <target> <n> — the nth line after THE PLAN
+  printf '[%s]\n' "$(plan_block "$1" "$2" | sed -n "$(($3 + 1))p")"
+}
+plan_blank_lines() { printf '[%s]\n' "$(plan_block "$1" "$2" | grep -c '^[[:space:]]*$')"; }
+
+check "--check names 0.5.0 as an applied step and the tag it stops at" 0 \
+  "0.5.0 is an APPLIED STEP, so this run performs 0.4.1 -> 0.5.0 and stops there" \
+  in_consumer panelrows --check --source "$SRC" 0.5.0
+check "the plan says the tag asks this tree for nothing" 0 \
+  "no edit to this tree: 0.5.0 asks it for nothing" \
+  in_consumer panelrows --check --source "$SRC" 0.5.0
+check "the plan names the guide section that says why" 0 \
+  'docs/CONSUMERS.md § "Labels automation" is where that is stated' \
+  in_consumer panelrows --check --source "$SRC" 0.5.0
+check "the plan says the row it does not write is optional and yours" 0 \
+  "a reviewer set being yours to choose" \
+  in_consumer panelrows --check --source "$SRC" 0.5.0
+# THE EMPTY-ARRAY PRINT, ASSERTED DIRECTLY. Two lines are graded because the
+# criterion's "immediately following THE PLAN" and the position the blank line
+# actually lands at are not the same line: line 1 is the ref rewrite the
+# generic plan always prints, and line 2 is the first of step_plan[] — the one
+# an empty step turns into a blank. Both are pinned to their exact bytes.
+check "the line immediately following THE PLAN is not blank" 0 \
+  "[    rewrite $((PIN_COUNT + 1)) ceremony ref(s) from @0.4.1 to @0.5.0]" \
+  plan_line panelrows 0.5.0 1
+check "the step's own first plan line is not the empty-array blank" 0 \
+  "[    no edit to this tree: 0.5.0 asks it for nothing. The tag makes the]" \
+  plan_line panelrows 0.5.0 2
+check "no line of the plan is blank" 0 "[0]" plan_blank_lines panelrows 0.5.0
+unchanged "--check over a step that writes nothing writes nothing" \
+  "$TMP/panelrows" in_consumer panelrows --check --source "$SRC" 0.5.0
+
+# ...and now the crossing itself.
+GH_BEFORE="$TMP/panelrows-github-before"
+github_hashes panelrows >"$GH_BEFORE"
+PATHS_BEFORE="$(github_paths panelrows)"
+
+# Captured once, for the same reason the two-run climb above is: the rows
+# grade one crossing, and a `check` that re-ran --fix would grade a second
+# invocation over a tree the first one already moved.
+CROSSING="$TMP/panelrows-crossing"
+capture_run "$CROSSING" in_consumer panelrows --fix --source "$SRC" 0.5.0
+
+check "the crossing completes and ends where it was asked to" 0 \
+  "0.4.1 -> 0.5.0 done, including the applied step for 0.5.0" replay_run "$CROSSING"
+check "the run that completes its whole move names the pin it leaves" 0 \
+  "THIS RUN LEAVES THE PIN AT 0.5.0" replay_run "$CROSSING"
+check_absent "and owes no remainder, the requested target being the crossed tag" 0 \
+  "REMAINING:" replay_run "$CROSSING"
+check "every ref reads the crossed tag afterwards" 0 "$((PIN_COUNT + 1)) 0.5.0" \
+  refs panelrows
+check_absent "no ref is left at the pin the run started from" 0 "0.4.1" refs panelrows
+
+# THE CHANGED SET IS NAMED, NOT COUNTED (#597 A2, on the inverse claim). A row
+# reading "5 files changed" is satisfied by five wrong files; the list is
+# sorted, bracketed and exhaustive, so a superset — a step that helpfully
+# wrote a panel[<login>]= row into .github/labels.conf, say — fails it, and so
+# does a subset.
+changed_github() {
+  printf '[%s]\n' "$(
+    diff "$GH_BEFORE" <(github_hashes panelrows) |
+      sed -n 's/^[<>] [0-9a-f]*  //p' | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//'
+  )"
+}
+check "the files that moved under .github/ are exactly the ref-carrying ones" 0 \
+  "[.github/actions/vouch/action.yml .github/workflows/ci.yml .github/workflows/labels-sweep.yml .github/workflows/labels.yml .github/workflows/release.yml]" \
+  changed_github
+paths_now() { github_paths panelrows; }
+check "no path under .github/ was created or deleted" 0 "$PATHS_BEFORE" paths_now
+check "the labels caller keeps the grant the rung below wrote" 0 \
+  "  actions: write" caller_of panelrows
+check "the mirror is current after a step that wrote no tree edit" 0 \
+  "is an exact mirror" in_consumer_docs_sync panelrows --check --source "$SRC"
+
+# --- B5: a tag with no step still refuses, byte for byte --------------------
+#
+# MEASURED, NOT ARGUED. The claim is that this build changed nothing about an
+# unmechanised crossing, and the only reading of that claim which cannot be
+# satisfied by a sentence is the merged tree's own output beside this one's:
+# `git archive` of 1c2ffd1 (PR 598's merge, the commit this issue is minted
+# against) into a directory, one identical fixture each side, `diff` empty.
+MERGED="$TMP/merged-1c2ffd1"
+mkdir -p "$MERGED"
+git -C "$ROOT" archive 1c2ffd1 | tar -x -C "$MERGED"
+merged_script_present() {
+  [ -x "$MERGED/bin/ceremony-upgrade" ] && echo "merged-tree-extracted"
+}
+check "the merged tree this is measured against was extracted" 0 \
+  "merged-tree-extracted" merged_script_present
+
+split_consumer castmerged 0.1.0 cast_caller
+split_consumer castnow 0.1.0 cast_caller
+refusal_from() { # <script> <fixture>
+  (cd "$TMP/$2" && bash "$1" --check --source "$SRC" 0.5.0) 2>&1
+}
+refusal_diff() {
+  diff \
+    <(refusal_from "$MERGED/bin/ceremony-upgrade" castmerged) \
+    <(refusal_from "$SCRIPT" castnow) &&
+    echo "byte-identical-to-the-merged-tree"
+}
+check "the unmechanised refusal is byte-identical to the merged tree's" 0 \
+  "byte-identical-to-the-merged-tree" refusal_diff
+check "and it is a refusal, at the tag with no step" 1 "FIRST CROSSED TAG: 0.2.0" \
+  refusal_from "$SCRIPT" castnow
+check_absent "no applied step is announced for it" 1 "APPLIED STEP" \
+  refusal_from "$SCRIPT" castnow
+check_absent "and the tag mechanised here does not leak into it" 1 \
+  "asks it for nothing" refusal_from "$SCRIPT" castnow
+unchanged "the unmechanised refusal still leaves the tree byte-identical (--check)" \
+  "$TMP/castnow" in_consumer castnow --check --source "$SRC" 0.5.0
+unchanged "the unmechanised refusal still leaves the tree byte-identical (--fix)" \
+  "$TMP/castnow" in_consumer castnow --fix --source "$SRC" 0.5.0
+# NOT VACUOUS, and this is the row that says so. The comparison above is only
+# evidence if it can come out the other way, so the SAME comparison is run
+# over the one move whose behaviour this build changes — 0.4.1 -> 0.5.0, which
+# the merged tree refuses and this one performs. A `diff` that reported
+# "identical" for both is a `diff` measuring nothing.
+consumer onsplitmerged 0.4.1
+consumer onsplitnow 0.4.1
+stepped_output_from() { # <script> <fixture>
+  (cd "$TMP/$2" && bash "$1" --check --source "$SRC" 0.5.0) 2>&1
+}
+stepped_diff() {
+  if diff \
+    <(stepped_output_from "$MERGED/bin/ceremony-upgrade" onsplitmerged) \
+    <(stepped_output_from "$SCRIPT" onsplitnow) >/dev/null; then
+    echo "same-as-merged"
+  else
+    echo "differs-from-merged"
+  fi
+}
+check "the comparison can tell the two trees apart where behaviour moved" 0 \
+  "differs-from-merged" stepped_diff
+check "and the merged tree is the one that refuses that move" 1 \
+  "FIRST CROSSED TAG: 0.5.0" \
+  stepped_output_from "$MERGED/bin/ceremony-upgrade" onsplitmerged
+
+# --- B8: the CRLF grant refusal names line endings (#598, reading (a)) ------
+#
+# A caller written with CRLF endings refuses correctly and always did — the
+# value read at the `actions:` line is `read` followed by a carriage return,
+# which is not the bare `read` this step rewrites. What shipped was a message
+# printing those same four visible bytes on both sides of a sentence saying
+# they differ, so the reader is told to compare `actions: read` with
+# `actions: read` and find it.
+#
+# THE FIXTURE IS THE `named` CALLER AND NOT THE BARBERSHOP ONE, which is a
+# measured fact about the reach of this reading rather than a fixture
+# preference. Barbershop's grant line carries a trailing hand comment, and
+# `yaml_uncomment` breaks at the `#` — so the carriage return, which sits after
+# that comment, is dropped with it and that caller's value compares equal.
+# What CRLF actually reaches is a grant line with nothing after the value,
+# which is cast's shape and this one's.
+split_consumer crlf 0.3.0 named_caller
+sed -i 's/$/\r/' "$TMP/crlf/.github/workflows/labels.yml"
+crlf_grant_line() {
+  printf '[%s]\n' "$(sed -n '/actions:/p' "$TMP/crlf/.github/workflows/labels.yml" | cat -v)"
+}
+check "the CRLF fixture's grant line really carries the carriage return" 0 \
+  '[  actions: read^M]' crlf_grant_line
+check "a CRLF caller still refuses" 1 \
+  "THE APPLIED STEP FOR 0.4.1 CANNOT RUN ON THIS TREE" \
+  in_consumer crlf --check --source "$SRC" 0.4.1
+check "the refusal renders the carriage return instead of hiding it" 1 \
+  "already grants 'actions: read\\r'." \
+  in_consumer crlf --check --source "$SRC" 0.4.1
+check "and it says the two values differ in their line endings" 1 \
+  "THE TWO VALUES DIFFER ONLY IN THEIR LINE ENDINGS" \
+  in_consumer crlf --check --source "$SRC" 0.4.1
+check "it names the remedy in the reader's own file" 1 \
+  "to LF endings and run this again" \
+  in_consumer crlf --check --source "$SRC" 0.4.1
+# The defect itself, as an absence: the message must never print the two sides
+# as the same word. This is the row a mutation dropping the clause reds.
+check_absent "the message never prints the invisible byte as a bare read" 1 \
+  "already grants 'actions: read'." \
+  in_consumer crlf --check --source "$SRC" 0.4.1
+unchanged "the CRLF refusal leaves the tree byte-identical (--check)" \
+  "$TMP/crlf" in_consumer crlf --check --source "$SRC" 0.4.1
+unchanged "the CRLF refusal leaves the tree byte-identical (--fix)" \
+  "$TMP/crlf" in_consumer crlf --fix --source "$SRC" 0.4.1
+# ...and the clause is keyed on the line ending and nothing else: a caller
+# that really did grant something different gets the ordinary refusal, with no
+# claim about line endings it would send its reader chasing.
+split_consumer grantnone 0.3.0 barbershop_caller
+sed -i 's/^  actions: read .*$/  actions: none/' "$TMP/grantnone/.github/workflows/labels.yml"
+check "a genuinely different grant still refuses on its value" 1 \
+  "already grants 'actions: none'." \
+  in_consumer grantnone --check --source "$SRC" 0.4.1
+check_absent "and says nothing about line endings, which are not its problem" 1 \
+  "DIFFER ONLY IN THEIR LINE ENDINGS" \
+  in_consumer grantnone --check --source "$SRC" 0.4.1
+
+# --- B9: the with: indent is the stub's own (#598, reading (b)) -------------
+#
+# Every other assumption this step makes about the published block is an exact
+# count that dies loudly. The `with:` was appended at a hard-coded four spaces
+# because that is what the block happens to indent its job keys at — the same
+# assumption with no guard on it, and a latch for whoever moves that block
+# rather than a live defect while 0.4.1's stub is frozen.
+SRC_INDENT="$TMP/src-indent"
+cp -pPR "$SRC" "$SRC_INDENT"
+awk '
+  /^jobs:$/ { injobs = 1; print; next }
+  injobs && /^```$/ { injobs = 0; print; next }
+  injobs && NF { print "  " $0; next }
+  { print }
+' "$SRC/docs/CONSUMERS.md" >"$SRC_INDENT/docs/CONSUMERS.md"
+stub_job_indent() { # <source dir> — the indent of the stub's sweep `uses:`
+  printf '[%s]\n' "$(
+    awk '/^And the complete sweep caller/ { a = 1; next }
+         a && /^```yaml$/ { b = 1; next }
+         b && /^```$/ { exit }
+         b && /@<pinned-tag>/ { match($0, /^ */); print substr($0, 1, RLENGTH); exit }' "$1/docs/CONSUMERS.md" |
+      tr ' ' '.'
+  )"
+}
+altered_indent() { stub_job_indent "$SRC_INDENT"; }
+shipped_indent() { stub_job_indent "$SRC"; }
+# The fixture grades itself first: a re-indent that silently matched nothing
+# would leave both sources at four spaces and every row below would pass on a
+# build that still hard-codes them.
+check "the shipped stub indents its sweep job keys at four" 0 "[....]" shipped_indent
+check "the re-indented source really is at six" 0 "[......]" altered_indent
+
+split_consumer indented 0.3.0 named_caller
+check "the step runs against a re-indented stub" 0 "0.3.0 -> 0.4.1 done" \
+  in_consumer indented --fix --source "$SRC_INDENT" 0.4.1
+check "the with: lands at the stub's own indent, not a constant" 0 \
+  "      with: { pr_workflow_name: 'board', runner: '[\"self-hosted\",\"ci-runner\"]' }" \
+  sweep_of indented
+# The indent as a value of its own, because the substring reading cannot serve
+# here: a six-space `with:` line CONTAINS the four-space one, so an absence
+# assertion about the old constant passes on the very line it was meant to
+# reject. Measured as the whole leading run, dots for spaces.
+with_indent_of() { # <fixture>
+  printf '[%s]\n' "$(sweep_of "$1" | sed -n 's/^\( *\)with: {.*/\1/p' | tr ' ' '.')"
+}
+check "the with: indent is the stub's six and not the old constant" 0 "[......]" \
+  with_indent_of indented
+check "the re-indented caller is otherwise the stub it was read from" 0 \
+  "      uses: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@0.4.1" \
+  sweep_of indented
+# The frozen half of the criterion: 0.4.1's shipped stub is unchanged, so the
+# four-space write is still exactly what a run against it produces. The
+# `named` rows above assert that positively; this one asserts the two sources
+# really are different, so those rows and these cannot both be reading one.
+check "the shipped source still writes it at four" 0 "[....]" with_indent_of named
+
+# ...and a stub whose placeholder is not on a `uses:` key is a block this step
+# has not understood. It says so and writes nothing, rather than picking a
+# width — the loud half of B9's two permitted outcomes.
+SRC_NOUSES="$TMP/src-nouses"
+cp -pPR "$SRC" "$SRC_NOUSES"
+sed -i 's|^    uses: \(heavy-duty/ceremony/.github/workflows/labels-sweep.yml@<pinned-tag>\)$|    ref: \1|' \
+  "$SRC_NOUSES/docs/CONSUMERS.md"
+nouses_shape() {
+  printf '[%s]\n' "$(grep -c '^    ref: heavy-duty/ceremony' "$SRC_NOUSES/docs/CONSUMERS.md")"
+}
+check "the unreadable-stub fixture really moved the placeholder" 0 "[1]" nouses_shape
+split_consumer nouses 0.3.0 named_caller
+check "a placeholder off the uses: key is a loud failure" 1 \
+  "carries its '@<pinned-tag>' placeholder on a line that is not a" \
+  in_consumer nouses --check --source "$SRC_NOUSES" 0.4.1
+check "that failure quotes the line it could not read" 1 \
+  "    ref: heavy-duty/ceremony/.github/workflows/labels-sweep.yml@<pinned-tag>" \
+  in_consumer nouses --check --source "$SRC_NOUSES" 0.4.1
+check "and it says nothing was written" 1 "Nothing was written." \
+  in_consumer nouses --check --source "$SRC_NOUSES" 0.4.1
+unchanged "an unreadable stub writes nothing" "$TMP/nouses" \
+  in_consumer nouses --fix --source "$SRC_NOUSES" 0.4.1
+
 summary
