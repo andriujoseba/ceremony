@@ -1308,9 +1308,10 @@ if [ "${#crossed[@]}" -gt 0 ]; then
   # THE MOVE IS RE-AIMED AT THE FIRST CROSSED TAG, and everything downstream —
   # the ref rewrite, the verification, the mirror — runs against that tag and
   # not against the one that was asked for.
+  requested_target_i="$target_i"
   target="$first_crossed"
   target_i="$first_crossed_i"
-  for ((i = first_crossed_i + 1; i <= $(ladder_index "$requested_target"); i++)); do
+  for ((i = first_crossed_i + 1; i <= requested_target_i; i++)); do
     for row in "${MIGRATIONS[@]}"; do
       if [ "${row%%|*}" = "${ladder[$i]}" ]; then
         step_next_crossed="${ladder[$i]}"
