@@ -722,6 +722,16 @@ refuse_crossing() {
     echo
     if [ "$step_i" -gt "$current_i" ]; then
       echo "  SHORTER MOVE: $runnable_self ${ladder[$step_i]}"
+      # WHAT THAT MOVE IS NOT, when a step refused rather than a plain
+      # crossing (claude-bot). It is the last line before the tree verdict,
+      # so it reads as the recommended exit; for the operator who reached a
+      # step's refusal it is the automatic one, and the hand procedure above
+      # is the one that actually crosses the tag they asked for.
+      if [ "${#step_blocked[@]}" -gt 0 ]; then
+        echo "  That move stops BELOW the shape named above rather than crossing it, so"
+        echo "  it leaves this migration still to perform: it is the exit that runs, not"
+        echo "  the one that arrives. The hand procedure is what crosses $first_crossed."
+      fi
     else
       echo "  NO SHORTER MOVE: the first crossed tag $first_crossed is the next tag on the ladder after $current."
     fi
@@ -918,6 +928,7 @@ step_0_4_1_two_caller_split() {
   local disp_line="" disp_count=0
   local actions_line="" actions_value="" actions_count=0
   local perm_last_key="" perm_indent="" on_indent=""
+  local on_key_count=0 on_deleted=1 on_relocated=""
   local caller_name="" caller_name_raw="" runner="" with_line=""
   local lineno text indent key val
   local stub_sched_lines with_pairs="" sweep_name
@@ -1001,6 +1012,10 @@ step_0_4_1_two_caller_split() {
     [ -n "$key" ] || continue
     [ -n "$on_indent" ] || on_indent="$indent"
     [ "$indent" = "$on_indent" ] || continue
+    # Every key of the block is counted, not just the two this step reads:
+    # what the deletions below leave behind is the question, and the answer
+    # is a count of the keys that are not them.
+    on_key_count=$((on_key_count + 1))
     val="$(printf '%s\n' "$text" | yaml_uncomment | sed "s/^[[:space:]]*$key:[[:space:]]*//")"
     case "$key" in
       schedule)
@@ -1076,6 +1091,35 @@ step_0_4_1_two_caller_split() {
     done < <(block_body "$caller" "$on_line")
   fi
 
+  # A CALLER LEFT WITH NO TRIGGER AT ALL IS NOT A DIFFERENTLY-TRIGGERED
+  # CALLER, IT IS AN UNPARSEABLE ONE (claude-bot §1). Both keys this step
+  # takes out of the `on:` block are triggers, so on a caller declaring
+  # nothing else there — the shape the published stub itself has — performing
+  # the plan exactly leaves `on:` with no value. actionlint reads that as
+  # "string should not be empty" and GitHub rejects the file the same way, so
+  # the trigger job that dispatches the sweep caller this run has just created
+  # is dead on a tree the run reported as done. Reached without a guess, by
+  # doing what the plan said, which is the one outcome this step is not
+  # allowed to have: every other way it can be wrong ends at a refusal, and
+  # so does this one. What such a caller is triggered by instead is a
+  # question for the hand procedure, which is a reader's to answer and not
+  # this step's.
+  [ -z "$disp_line" ] || on_deleted=2
+  if [ "$on_key_count" -le "$on_deleted" ]; then
+    on_relocated="the 'schedule:' at line $sched_line"
+    [ -z "$disp_line" ] ||
+      on_relocated="$on_relocated and the bare 'workflow_dispatch:' at line $disp_line"
+    step_refuse \
+      "  THE APPLIED STEP FOR $first_crossed CANNOT RUN ON THIS TREE" \
+      "  $caller's 'on:' block declares nothing but what this step relocates:" \
+      "  $on_relocated." \
+      "  Deleting those keys leaves 'on:' with no value at all — not a caller" \
+      "  triggered differently but one GitHub cannot parse, and the trigger" \
+      "  job that dispatches the new sweep caller goes with it. What triggers" \
+      "  the labels caller once its cron has moved is a decision this step" \
+      "  has no anchored way to make."
+  fi
+
   # --- the labels caller's `permissions:` block ---
   IFS=$'\t' read -r perm_line perm_rest < <(top_level_key "$caller" "permissions") || true
   if [ -z "${perm_line:-}" ]; then
@@ -1136,7 +1180,11 @@ step_0_4_1_two_caller_split() {
       "  This step rewrites an 'actions: read' grant, or inserts the key where" \
       "  the block has none. It does not overwrite a grant someone else chose" \
       "  — including a write already granted by hand, which is that hand's" \
-      "  decision to keep and this step's to leave alone."
+      "  decision to keep and this step's to leave alone." \
+      "  THE VALUE IS COMPARED AS WRITTEN, which is worth saying when the two" \
+      "  sides of that sentence are the same word: a quoted 'read' is not the" \
+      "  bare read this step rewrites, though YAML resolves them alike. A line" \
+      "  it cannot recognise byte for byte is a line it will not rewrite."
   fi
 
   # --- the labels caller's name, and its `with:` block ---
@@ -1390,17 +1438,25 @@ step_0_4_1_two_caller_split() {
 # ... }` the colon opens a nested mapping, a comma opens a second pair, a
 # brace closes the mapping early and a ` #` truncates the line — so what a
 # consumer gets is not a differently-routed sweep caller but an unparseable
-# one. Plain where plain is safe, so the ordinary name is written the ordinary
-# way; single-quoted otherwise, which is YAML's one style with no escapes
-# except the doubled quote and therefore the one that cannot be got wrong.
+# one.
+#
+# SINGLE-QUOTED ALWAYS, and the plain path that used to carry the ordinary
+# name as ordinary bytes is gone (codex-bot, round 2). Parsing was only half
+# the question: `name: "true"` is a valid workflow name whose plain form YAML
+# resolves to a BOOLEAN, and the sweep caller declares pr_workflow_name as a
+# string — so the consumer is handed neither their name nor its type. `"123"`
+# is an int, `"1_000"` and `"0x1f"` are ints, `"1.0"` is a float and
+# `"2001-12-14"` is a timestamp, every one of them spelled out of characters
+# an ordinary workflow name is made of. A plain path narrow enough to be safe
+# is YAML 1.1's implicit resolver reimplemented in shell, and each of its
+# families this file failed to reproduce would be this same defect again on a
+# shape nobody thought of. The single-quoted style has exactly one escape —
+# the doubled quote — and resolves to a string unconditionally, so the name
+# that lands is the name that was read. The cost is that the ordinary name
+# reads 'board' rather than board, in the style the routing value beside it
+# is already written in.
 flow_scalar() {
   local v="$1"
-  case "$v" in
-    *[!A-Za-z0-9\ ._-]*) ;;
-    [!A-Za-z0-9]* | *' ') ;;
-    "") ;;
-    *) printf '%s\n' "$v"; return 0 ;;
-  esac
   printf "'%s'\n" "${v//\'/\'\'}"
 }
 
