@@ -1499,10 +1499,11 @@ They are written by `--fix` and do **not** exist in ceremony's own copy of
 the file, which is what keeps the comparison exact: the block's bytes and the
 source's bytes are one thing to diff, not two.
 
-`ceremony-upgrade` mechanises the `0.7.8` crossing: its plan names this
-guarded-scaffold edit, and the mirror re-sync at the end of the run writes the
-block through `docs-sync --fix` rather than giving the upgrade command a
-second writer or a second reader of the scaffold manifest.
+**[`ceremony-upgrade`](#ceremony-upgrade--the-bump-run-for-you) mechanises the
+`0.7.8` crossing**: its plan names this guarded-scaffold edit, and the mirror
+re-sync at the end of the run writes the block through `docs-sync --fix`
+rather than giving the upgrade command a second writer or a second reader of
+the scaffold manifest.
 
 - **`--fix`** replaces the block and touches nothing outside it. A
   *"Deployment notes"* section you added below, a house preamble above —
