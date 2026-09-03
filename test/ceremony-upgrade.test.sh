@@ -2645,10 +2645,10 @@ check_absent "and it does not say both" 0 "both of them" refusals_row
 guarded_scaffold_section() {
   guide_section '### The guarded scaffold — ceremony owns a block, you own the rest'
 }
-guarded_route='`ceremony-upgrade` mechanises the `0.7.8` crossing'
+guarded_route="\`ceremony-upgrade\` mechanises the \`0.7.8\` crossing"
 check "the guarded-scaffold section names ceremony-upgrade" 0 \
   "$guarded_route" guarded_scaffold_section
-guarded_writer='writes the block through `docs-sync --fix`'
+guarded_writer="writes the block through \`docs-sync --fix\`"
 check "the guarded-scaffold section keeps docs-sync as the writer" 0 \
   "$guarded_writer" guarded_scaffold_section
 
