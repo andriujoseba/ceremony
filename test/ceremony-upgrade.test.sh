@@ -2436,6 +2436,9 @@ check "the separate plan clause says refs-not-closing becomes available" 0 \
 check "the refs clause says this command writes no caller" 0 \
   "this command writes no" \
   in_consumer doctrine060 --check --source "$SRC_060" 0.6.0
+check "the refs clause joins that no-write promise to the optional caller" 0 \
+  "caller for it; adopting .github/workflows/refs-guard.yml is your call" \
+  in_consumer doctrine060 --check --source "$SRC_060" 0.6.0
 check "the refs clause names the bootstrap guide section" 0 \
   'docs/CONSUMERS.md § "Bootstrap a new repo"' \
   in_consumer doctrine060 --check --source "$SRC_060" 0.6.0
