@@ -462,20 +462,20 @@ unchanged "the stepable refusal leaves the WHOLE tree byte-identical (--fix)" "$
 # The first crossed tag is the next rung. Falling back to the current tag
 # would emit a command that exits zero while doing nothing, so this branch
 # must carry only the explicit wall and never a runnable step line (#588).
-consumer atwall 0.7.7
-check "the at-wall refusal names its first crossed tag" 1 "FIRST CROSSED TAG: 0.7.8" \
-  in_consumer atwall --check --source "$SRC" 0.7.8
+consumer atwall 0.6.3
+check "the at-wall refusal names its first crossed tag" 1 "FIRST CROSSED TAG: 0.7.0" \
+  in_consumer atwall --check --source "$SRC" 0.7.0
 check "the at-wall refusal says no shorter move exists" 1 \
-  "NO SHORTER MOVE: the first crossed tag 0.7.8 is the next tag on the ladder" \
-  in_consumer atwall --check --source "$SRC" 0.7.8
+  "NO SHORTER MOVE: the first crossed tag 0.7.0 is the next tag on the ladder" \
+  in_consumer atwall --check --source "$SRC" 0.7.0
 check_absent "the at-wall refusal carries no runnable step line" 0 "SHORTER MOVE:" \
-  runnable_step_lines atwall 0.7.8
+  runnable_step_lines atwall 0.7.0
 check_absent "the at-wall refusal contains no dead then-re-run remedy" 1 "then re-run" \
-  in_consumer atwall --check --source "$SRC" 0.7.8
+  in_consumer atwall --check --source "$SRC" 0.7.0
 unchanged "the at-wall refusal leaves the WHOLE tree byte-identical (--check)" "$TMP/atwall" \
-  in_consumer atwall --check --source "$SRC" 0.7.8
+  in_consumer atwall --check --source "$SRC" 0.7.0
 unchanged "the at-wall refusal leaves the WHOLE tree byte-identical (--fix)" "$TMP/atwall" \
-  in_consumer atwall --fix --source "$SRC" 0.7.8
+  in_consumer atwall --fix --source "$SRC" 0.7.0
 
 # --- 0.4.1 in particular ------------------------------------------------------
 #
@@ -2387,8 +2387,8 @@ check "and it says the two values differ in their line endings" 1 \
 check "it names the remedy in the reader's own file" 1 \
   "to LF endings and run this again" \
   in_consumer crlf --check --source "$SRC" 0.4.1
-# The defect itself, as an absence: the message must never print the two sides
-# as the same word. This is the row a mutation dropping the clause reds.
+# The defect itself, as an absence: the message must never print the invisible
+# carriage return as a bare word. Stripping its escaped rendering reds this row.
 check_absent "the message never prints the invisible byte as a bare read" 1 \
   "already grants 'actions: read'." \
   in_consumer crlf --check --source "$SRC" 0.4.1
