@@ -381,7 +381,7 @@ in_consumer_with_override() {
   (
     cd "$TMP/$name" || return
     CEREMONY_UPGRADE_MIGRATIONS_DONE=1 \
-      bash "$SCRIPT" --check --source "$SRC" 0.7.8
+      bash "$SCRIPT" --check --source "$SRC" 0.7.0
   )
 }
 
