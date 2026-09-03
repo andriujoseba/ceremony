@@ -180,6 +180,20 @@ unchanged() {
   fi
 }
 
+# capture_run / replay_run — a write-capable command happens once, while any
+# number of rows may inspect the one output and its one exit status.
+capture_run() { # <outfile> <cmd...>
+  local out="$1"
+  shift
+  "$@" >"$out" 2>&1
+  printf '%s\n' "$?" >"$out.rc"
+}
+replay_run() { # <outfile>
+  local out="$1"
+  cat "$out"
+  return "$(cat "$out.rc")"
+}
+
 # in_consumer <name> <args...> — run the command from inside a consumer tree,
 # the way an operator runs it: from the root of the checkout.
 in_consumer() {
@@ -903,6 +917,89 @@ mkdir -p "$SRC_SCAF/.github"
 printf '.github/pull_request_template.md\n' >"$SRC_SCAF/docs/SCAFFOLDED.txt"
 printf '## Checklist\n\n- [ ] a thing\n' >"$SRC_SCAF/.github/pull_request_template.md"
 
+# --- the 0.7.8 step: the plan names the byte docs-sync already writes -------
+
+consumer scaffold-created 0.7.7
+check "0.7.8 is announced as an applied step" 0 \
+  "0.7.8 is an APPLIED STEP, so this run performs 0.7.7 -> 0.7.8 and stops there" \
+  in_consumer scaffold-created --check --source "$SRC_SCAF" 0.7.8
+check "the 0.7.8 plan names the guarded-scaffold edit" 0 \
+  "edit .github/pull_request_template.md — add or refresh the guarded-scaffold block" \
+  in_consumer scaffold-created --check --source "$SRC_SCAF" 0.7.8
+check "the 0.7.8 plan names the writer" 0 \
+  "mirror re-sync at the end of this run writes it through docs-sync --fix" \
+  in_consumer scaffold-created --check --source "$SRC_SCAF" 0.7.8
+check "the 0.7.8 plan names the guide section" 0 \
+  'docs/CONSUMERS.md § "The guarded scaffold — ceremony owns a block, you own the rest"' \
+  in_consumer scaffold-created --check --source "$SRC_SCAF" 0.7.8
+check_absent "the 0.7.8 plan is not a fault" 0 "FAULT" \
+  in_consumer scaffold-created --check --source "$SRC_SCAF" 0.7.8
+check_absent "the 0.7.8 plan is not hand-only" 0 "THE CROSSING IS HAND-ONLY" \
+  in_consumer scaffold-created --check --source "$SRC_SCAF" 0.7.8
+
+SCAFFOLD_CREATED_RUN="$TMP/scaffold-created-run"
+capture_run "$SCAFFOLD_CREATED_RUN" \
+  in_consumer scaffold-created --fix --source "$SRC_SCAF" 0.7.8
+check "the 0.7.8 crossing completes" 0 \
+  "0.7.7 -> 0.7.8 done, including the applied step for 0.7.8" \
+  replay_run "$SCAFFOLD_CREATED_RUN"
+check "the completed crossing advances every ref" 0 "$PIN_COUNT 0.7.8" \
+  refs scaffold-created
+check "the completed crossing re-syncs the mirror" 0 "router v1" \
+  cat "$TMP/scaffold-created/.ceremony/AGENTS.md"
+check "the completed crossing creates the scaffold block" 0 \
+  "<!-- ceremony:pr-template:start -->" \
+  cat "$TMP/scaffold-created/.github/pull_request_template.md"
+check "the created scaffold carries the source bytes" 0 "a thing" \
+  cat "$TMP/scaffold-created/.github/pull_request_template.md"
+check "the created scaffold closes its owned block" 0 \
+  "<!-- ceremony:pr-template:end -->" \
+  cat "$TMP/scaffold-created/.github/pull_request_template.md"
+
+consumer scaffold-appended 0.7.7
+printf 'Our own template.\n\nDeployment notes stay ours.\n' \
+  >"$TMP/scaffold-appended/.github/pull_request_template.md"
+SCAFFOLD_APPEND_BEFORE="$TMP/scaffold-appended-before"
+cp "$TMP/scaffold-appended/.github/pull_request_template.md" "$SCAFFOLD_APPEND_BEFORE"
+SCAFFOLD_APPENDED_RUN="$TMP/scaffold-appended-run"
+capture_run "$SCAFFOLD_APPENDED_RUN" \
+  in_consumer scaffold-appended --fix --source "$SRC_SCAF" 0.7.8
+check "the existing-template crossing completes" 0 \
+  "0.7.7 -> 0.7.8 done, including the applied step for 0.7.8" \
+  replay_run "$SCAFFOLD_APPENDED_RUN"
+template_prefix_survives() {
+  local bytes
+  bytes="$(wc -c <"$SCAFFOLD_APPEND_BEFORE")"
+  head -c "$bytes" "$TMP/scaffold-appended/.github/pull_request_template.md" |
+    cmp -s "$SCAFFOLD_APPEND_BEFORE" - && echo "pre-existing-bytes-survive"
+}
+check "appending the block preserves every pre-existing byte" 0 \
+  "pre-existing-bytes-survive" template_prefix_survives
+check "the block is appended to the existing template" 0 "a thing" \
+  cat "$TMP/scaffold-appended/.github/pull_request_template.md"
+
+consumer scaffold-broken 0.7.7
+printf 'Our own template.\n\n<!-- ceremony:pr-template:start -->\n\nnever closed\n' \
+  >"$TMP/scaffold-broken/.github/pull_request_template.md"
+SCAFFOLD_BROKEN_BEFORE="$(fingerprint "$TMP/scaffold-broken")"
+SCAFFOLD_BROKEN_RUN="$TMP/scaffold-broken-run"
+capture_run "$SCAFFOLD_BROKEN_RUN" \
+  in_consumer scaffold-broken --fix --source "$SRC_SCAF" 0.7.8
+check "an unbalanced marker reaches the docs-sync refusal" 1 \
+  "cannot fix .github/pull_request_template.md" replay_run "$SCAFFOLD_BROKEN_RUN"
+check "the refused 0.7.8 crossing reports its rollback" 1 "rolled back" \
+  replay_run "$SCAFFOLD_BROKEN_RUN"
+scaffold_broken_unchanged() {
+  [ "$SCAFFOLD_BROKEN_BEFORE" = "$(fingerprint "$TMP/scaffold-broken")" ] &&
+    echo "byte-identical-after-rollback"
+}
+check "the refused 0.7.8 crossing is byte-identical after rollback" 0 \
+  "byte-identical-after-rollback" scaffold_broken_unchanged
+check "the rollback keeps every ref at 0.7.7" 0 "$PIN_COUNT 0.7.7" \
+  refs scaffold-broken
+check_absent "the rollback leaves no mirror behind" 1 "router v1" \
+  cat "$TMP/scaffold-broken/.ceremony/AGENTS.md"
+
 # One start marker and no end: `unbalanced`, which docs-sync refuses rather
 # than guessing where the consumer's own bytes resume.
 consumer broken-marker 0.7.6
@@ -1263,18 +1360,6 @@ unchanged "the partial-move plan writes nothing either" "$TMP/bshoplong" \
 # Here the rows grade a SEQUENCE — run one's output, then run two's — and a
 # `check` that re-invoked --fix would climb a third rung under the row below
 # it. So each run happens exactly once and the rows replay what it said.
-capture_run() { # <outfile> <cmd...>
-  local out="$1"
-  shift
-  "$@" >"$out" 2>&1
-  printf '%s\n' "$?" >"$out.rc"
-}
-replay_run() { # <outfile> — its output, and its exit status as the row's
-  local out="$1"
-  cat "$out"
-  return "$(cat "$out.rc")"
-}
-
 RUN1="$TMP/bshoplong-run1"
 capture_run "$RUN1" in_consumer bshoplong --fix --source "$SRC" 0.7.8
 
@@ -2547,11 +2632,50 @@ check "the refusals row names 0.4.1's applied step" 0 \
   "[\`0.4.1\`](#labels-automation)'s two-caller split" refusals_row
 check "the refusals row names 0.5.0's" 0 \
   "[\`0.5.0\`](#labels-automation)'s panel rows" refusals_row
+check "the refusals row names 0.7.8's" 0 \
+  "[\`0.7.8\`](#the-guarded-scaffold--ceremony-owns-a-block-you-own-the-rest)'s guarded scaffold" \
+  refusals_row
 # "the tags mechanised so far" and not "both" or "two": a count is the thing
 # the NEXT rung falsifies again, and this row is what stops one being written.
 check "the refusals row claims no count the next rung would falsify" 0 \
   "the tags mechanised so far" refusals_row
 check_absent "it does not say two" 0 "the two tags" refusals_row
 check_absent "and it does not say both" 0 "both of them" refusals_row
+
+guarded_scaffold_section() {
+  guide_section '### The guarded scaffold — ceremony owns a block, you own the rest'
+}
+guarded_route='`ceremony-upgrade` mechanises the `0.7.8` crossing'
+check "the guarded-scaffold section names ceremony-upgrade" 0 \
+  "$guarded_route" guarded_scaffold_section
+guarded_writer='writes the block through `docs-sync --fix`'
+check "the guarded-scaffold section keeps docs-sync as the writer" 0 \
+  "$guarded_writer" guarded_scaffold_section
+
+migration_step_field() { # <tag>
+  sed -n "s/^  \"$1|[^|]*|[^|]*|\([^\"]*\)\"$/[\1]/p" "$SCRIPT"
+}
+check "the 0.7.8 migration row names its step" 0 \
+  "[step_0_7_8_guarded_scaffold]" migration_step_field 0.7.8
+for unmechanised in 0.1.0 0.2.0 0.3.0 0.6.0 0.7.0; do
+  check "$unmechanised remains unmechanised" 0 "[]" \
+    migration_step_field "$unmechanised"
+done
+
+guarded_step_body() {
+  sed -n '/^step_0_7_8_guarded_scaffold() {$/,/^}$/p' "$SCRIPT"
+}
+check "the 0.7.8 step carries a non-empty plan" 0 "step_plan+=(" \
+  guarded_step_body
+check_absent "the 0.7.8 step has no refusal" 0 "step_refuse" \
+  guarded_step_body
+check_absent "the 0.7.8 step declares no new file" 0 "step_new_file" \
+  guarded_step_body
+check_absent "the 0.7.8 step declares no edited file" 0 "step_edit_file" \
+  guarded_step_body
+check_absent "the 0.7.8 step declares no edit operations" 0 "step_edit_ops" \
+  guarded_step_body
+check_absent "the 0.7.8 step does not read the scaffold manifest" 0 \
+  "SCAFFOLDED.txt" guarded_step_body
 
 summary
