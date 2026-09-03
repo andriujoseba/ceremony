@@ -100,13 +100,12 @@ CHANGELOG_NAME="CHANGELOG.md"
 # performed exactly one migration and named which; both were true when written
 # and both were repaired here. THEY ARE DESCRIBED AND NOT QUOTED, because a
 # comment carrying such a sentence verbatim is one more site claiming it, and
-# the suite's own scan for that claim would find this file. After 0.5.0 the
-# rows a forward move can cross with no step are 0.2.0, 0.3.0, 0.6.0, 0.7.0
-# and 0.7.8 — 0.1.0 is the sixth such row and no forward move crosses it,
-# being the first release. Whoever
-# mints the third re-reads the refusal message and the guide's clauses AS THEY
-# STAND THEN and never as an issue body quotes them, because this comment goes
-# stale in exactly the way it is describing.
+# the suite's own scan for that claim would find this file. After 0.7.8 the
+# rows a forward move can cross with no step are 0.2.0, 0.3.0, 0.6.0 and
+# 0.7.0 — 0.1.0 is the fifth such row and no forward move crosses it, being
+# the first release. Whoever mints the fourth re-reads the refusal message and
+# the guide's clauses AS THEY STAND THEN and never as an issue body quotes
+# them, because this comment goes stale in exactly the way it is describing.
 #
 # IT IS A LIST OF TAGS, NOT A LIST OF DESTRUCTIVE TAGS. Some of these notes
 # announce a capability a consumer may ignore; others take a board down. The
@@ -136,11 +135,12 @@ CHANGELOG_NAME="CHANGELOG.md"
 # on, and the 0.7.8 cut cleared that marker to its own tag (#221) exactly as
 # this comment said it would. It is the `0.7.8` row below. Note what changed
 # with it: while it was markered, `--fix` would have written the block itself
-# on the way past, through the docs-sync call below; as a row it is a
-# REFUSAL, and no crossing of it is automatic. That is the table's rule
-# doing its job rather than an oversight — a tag whose note asks a consumer
-# tree for a byte it does not have is a row, and whether this command could
-# have supplied that byte is not the question the table asks.
+# on the way past, through the docs-sync call below, but as a row it first
+# refused every crossing. Its applied step now makes that crossing automatic:
+# the planner names the edit and the existing docs-sync call remains its only
+# writer. That is the table's rule doing its job rather than an oversight — a
+# tag whose note asks a consumer tree for a byte it does not have is a row,
+# and only its field 4 decides whether this command may supply that byte.
 #
 # test/ceremony-upgrade.test.sh re-derives this tag set from docs/CONSUMERS.md
 # and fails when a note names a tag no row carries — a ratchet against the
