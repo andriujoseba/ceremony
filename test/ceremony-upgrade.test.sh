@@ -2805,16 +2805,18 @@ check_absent "the 0.6.0 step does not read the doctrine manifest" 0 \
   "VENDORED.txt" doctrine_step_body
 
 unexpected_vendored_hits() {
-  awk '
-    /VENDORED/ {
-      if ($0 ~ /^[[:space:]]*#/) next
-      if ($0 ~ /^  "0\.1\.0\|Read the manifest/) next
-      print NR ":" $0
-    }
-  ' "$SCRIPT"
+  printf '[%s]\n' "$(
+    awk '
+      /VENDORED/ {
+        if ($0 ~ /^[[:space:]]*#/) next
+        if ($0 ~ /^  "0\.1\.0\|Read the manifest/) next
+        print NR ":" $0
+      }
+    ' "$SCRIPT"
+  )"
 }
 check "every VENDORED hit is comment prose or the migration-row description" 0 \
-  "" unexpected_vendored_hits
+  "[]" unexpected_vendored_hits
 
 stepable_disclosure() {
   sed -n '/THE NEXT MINT OWES A DECISION/,/changing the fixture/p' "$SCRIPT"
@@ -2839,14 +2841,16 @@ check "the atwall override probe is byte-identical to 5677d46" 0 \
   "byte-identical-to-5677d46" unchanged_fixture_block 638 640
 
 added_consumer_numeric_refs() {
-  git -C "$ROOT" diff --unified=0 5677d46 -- \
-    bin/ceremony-upgrade docs/CONSUMERS.md |
-    sed -n 's/^+//p' |
-    awk '!/^[[:space:]]*#/' |
-    grep -E '#[0-9]+' || true
+  printf '[%s]\n' "$(
+    git -C "$ROOT" diff --unified=0 5677d46 -- \
+      bin/ceremony-upgrade docs/CONSUMERS.md |
+      sed -n 's/^+//p' |
+      awk '!/^[[:space:]]*#/' |
+      grep -E '#[0-9]+' || true
+  )"
 }
 check "new messages, plan lines and guide prose carry no issue number" 0 \
-  "" added_consumer_numeric_refs
+  "[]" added_consumer_numeric_refs
 
 guarded_step_body() {
   sed -n '/^step_0_7_8_guarded_scaffold() {$/,/^}$/p' "$SCRIPT"
