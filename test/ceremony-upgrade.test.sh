@@ -2427,6 +2427,9 @@ check "the plan names RELEASES.md as the crossing's edit" 0 \
 check "the plan names the existing mirror re-sync as its writer" 0 \
   "mirror re-sync at the end of this run" \
   in_consumer doctrine060 --check --source "$SRC_060" 0.6.0
+check "the plan names docs-sync --fix as that mirror writer" 0 \
+  "writes it through docs-sync --fix" \
+  in_consumer doctrine060 --check --source "$SRC_060" 0.6.0
 check "the mirror plan line names its guide section" 0 \
   'docs/CONSUMERS.md § "Doctrine mirror"' \
   in_consumer doctrine060 --check --source "$SRC_060" 0.6.0
@@ -2821,6 +2824,29 @@ check "the 0.7.0 disclosure says the last stepable ladder position disappears" 0
   stepable_disclosure
 check "the 0.7.0 disclosure requires a decision instead of a re-base" 0 \
   "OWES A DECISION, NOT A RE-BASE" stepable_disclosure
+
+unchanged_fixture_block() { # <start> <end>
+  diff \
+    <(git -C "$ROOT" show 5677d46:test/ceremony-upgrade.test.sh | sed -n "$1,${2}p") \
+    <(sed -n "$1,${2}p" "$ROOT/test/ceremony-upgrade.test.sh") &&
+    echo "byte-identical-to-5677d46"
+}
+check "the stepable block is byte-identical to 5677d46" 0 \
+  "byte-identical-to-5677d46" unchanged_fixture_block 447 474
+check "the atwall block is byte-identical to 5677d46" 0 \
+  "byte-identical-to-5677d46" unchanged_fixture_block 479 492
+check "the atwall override probe is byte-identical to 5677d46" 0 \
+  "byte-identical-to-5677d46" unchanged_fixture_block 638 640
+
+added_consumer_numeric_refs() {
+  git -C "$ROOT" diff --unified=0 5677d46 -- \
+    bin/ceremony-upgrade docs/CONSUMERS.md |
+    sed -n 's/^+//p' |
+    awk '!/^[[:space:]]*#/' |
+    grep -E '#[0-9]+' || true
+}
+check "new messages, plan lines and guide prose carry no issue number" 0 \
+  "" added_consumer_numeric_refs
 
 guarded_step_body() {
   sed -n '/^step_0_7_8_guarded_scaffold() {$/,/^}$/p' "$SCRIPT"
