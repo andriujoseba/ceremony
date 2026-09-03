@@ -1499,6 +1499,12 @@ They are written by `--fix` and do **not** exist in ceremony's own copy of
 the file, which is what keeps the comparison exact: the block's bytes and the
 source's bytes are one thing to diff, not two.
 
+**[`ceremony-upgrade`](#ceremony-upgrade--the-bump-run-for-you) mechanises the
+`0.7.8` crossing**: its plan names this guarded-scaffold edit, and the mirror
+re-sync at the end of the run writes the block through `docs-sync --fix`
+rather than giving the upgrade command a second writer or a second reader of
+the scaffold manifest.
+
 - **`--fix`** replaces the block and touches nothing outside it. A
   *"Deployment notes"* section you added below, a house preamble above —
   both survive every future bump, byte for byte. Where the file exists with
@@ -1836,7 +1842,7 @@ The refusals, and what each one means:
 | **the refs are not all at one ref** | two ceremony refs in one tree, so it has no single pin — usually a bump that moved some lines and not others | put them on one ref by hand, then re-run; the message names the files that differ |
 | **the current pin is not a released tag** | a branch or a commit SHA cannot be placed on the release ladder, so which migrations the move crosses is unknowable | pin to a released tag first |
 | **the target tag does not exist** | the tag was never cut — check it against the [releases page](https://github.com/heavy-duty/ceremony/releases), or pass `--source` to preview an unreleased tree | — |
-| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | it depends on the first crossed tag. Where that tag carries an **applied step** — [`0.4.1`](#labels-automation)'s two-caller split and [`0.5.0`](#labels-automation)'s panel rows, the tags mechanised so far — the command performs that tag for you, the refs and whatever edits that tag needs in one pass, then stops there and names the pin it left you at and what still stands between that pin and the tag you asked for; run it again from the new pin for the next rung. Where the first crossed tag has no applied step, and where a step cannot anchor one of its edits in your tree, the crossing is hand-only: perform the first crossed tag's edits and move the ceremony refs to that tag in the same commit, because tree edits alone do not change the pinned interval. When a released tag exists between the current pin and that first crossing, the message emits that shorter runnable move; otherwise it says no shorter move exists |
+| **the move crosses a migration** | the interval between your pin and the target contains a tag whose note in this guide asks something of your tree | it depends on the first crossed tag. Where that tag carries an **applied step** — [`0.4.1`](#labels-automation)'s two-caller split, [`0.5.0`](#labels-automation)'s panel rows, and [`0.7.8`](#the-guarded-scaffold--ceremony-owns-a-block-you-own-the-rest)'s guarded scaffold, the tags mechanised so far — the command performs that tag for you, the refs and whatever edits that tag needs in one pass, then stops there and names the pin it left you at and what still stands between that pin and the tag you asked for; run it again from the new pin for the next rung. Where the first crossed tag has no applied step, and where a step cannot anchor one of its edits in your tree, the crossing is hand-only: perform the first crossed tag's edits and move the ceremony refs to that tag in the same commit, because tree edits alone do not change the pinned interval. When a released tag exists between the current pin and that first crossing, the message emits that shorter runnable move; otherwise it says no shorter move exists |
 | **the move is backwards** | a downgrade; this guide's notes are written forwards and none of them says how to undo a tag | undo the crossed migrations deliberately and move the refs by hand |
 
 Every refusal names the tags it is refusing over and the section of this
